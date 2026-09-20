@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WorldMesh</title>
+    <meta name="description" content="A lightweight open network for independently hosted 3D worlds." />
+    <style>
+      :root {
+        --bg: #06080d;
+        --panel: rgba(255, 255, 255, 0.04);
+        --line: rgba(255, 255, 255, 0.12);
+        --text: #eef3f9;
+        --muted: rgba(238, 243, 249, 0.55);
+        --accent: #6cf0ff;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; }
+      body {
+        background:
+          radial-gradient(900px 500px at 50% -15%, rgba(108, 240, 255, 0.14), transparent 70%),
+          var(--bg);
+        color: var(--text);
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        display: flex;
+        justify-content: center;
+        padding: 10vh 20px 80px;
+      }
+      main { width: 100%; max-width: 640px; }
+      h1 {
+        font-size: clamp(30px, 7vw, 48px);
+        letter-spacing: 0.26em;
+        font-weight: 600;
+        margin: 0 0 10px;
+      }
+      .tagline { color: var(--muted); font-size: 15px; margin: 0 0 40px; line-height: 1.5; }
+      form { display: flex; gap: 10px; margin-bottom: 10px; }
+      input {
+        flex: 1;
+        padding: 14px 16px;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: var(--panel);
+        color: var(--text);
+        font-size: 15px;
+        font-family: inherit;
+      }
+      input::placeholder { color: rgba(238, 243, 249, 0.35); }
+      input:focus { outline: none; border-color: var(--accent); }
+      button {
+        padding: 14px 20px;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: var(--panel);
+        color: var(--text);
+        font-size: 14px;
+        font-family: inherit;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      button:hover { border-color: var(--accent); color: var(--accent); }
+      .status { min-height: 20px; font-size: 13px; color: var(--muted); margin-bottom: 34px; }
+      .status[data-error="true"] { color: #ff9a8a; }
+      h2 {
+        font-size: 11px;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: var(--muted);
+        font-weight: 600;
+        margin: 30px 0 12px;
+      }
+      ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+      li a {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 14px 16px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--panel);
+        text-decoration: none;
+        color: inherit;
+      }
+      li a:hover { border-color: var(--accent); }
+      .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+      .meta { min-width: 0; }
+      .name { font-size: 15px; font-weight: 600; }
+      .desc { font-size: 13px; color: var(--muted); margin-top: 2px; }
+      .host {
+        margin-left: auto;
+        font-size: 11px;
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+        flex: none;
+      }
+      .remove {
+        margin-left: 10px;
+        padding: 6px 10px;
+        font-size: 11px;
+      }
+      .row { display: flex; align-items: center; }
+      .empty { color: var(--muted); font-size: 13px; }
+      footer { margin-top: 50px; font-size: 12px; color: var(--muted); line-height: 1.7; }
+      footer code {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        padding: 1px 5px;
+        font-size: 11px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>WORLD MESH</h1>
+      <p class="tagline">
+        A lightweight open network for independently hosted 3D worlds.
+        You host the world. WorldMesh just makes it navigable.
+      </p>
+
+      <form id="add-form">
+        <input
+          id="url"
+          type="url"
+          placeholder="Paste your 3D world URL"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <button type="submit">Add world</button>
+      </form>
+      <div class="status" id="status"></div>
+
+      <h2>Demo worlds</h2>
+      <ul id="demo-worlds"></ul>
+
+      <h2>Your worlds</h2>
+      <ul id="your-worlds"></ul>
+
+      <footer>
+        Every world above runs the same <code>@worldmesh/runtime</code>:
+        WASD to move, mouse to look, <code>Space</code> to jump,
+        <code>Shift</code> to sprint, <code>E</code> to interact,
+        <code>V</code> to switch camera.
+      </footer>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "worldmesh": 1,
+  "name": "Forest",
+  "description": "A quiet pine clearing with a few things worth climbing.",
+  "author": "WorldMesh demo",
+  "spawn": [0, 2, 8],
+  "abilities": { "doubleJump": true },
+  "portals": [
+    { "label": "Mars", "url": "http://localhost:5172/" },
+    { "label": "Space Station", "url": "http://localhost:5175/" }
+  ]
+}

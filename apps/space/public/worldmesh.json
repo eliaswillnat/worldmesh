@@ -1,0 +1,12 @@
+{
+  "worldmesh": 1,
+  "name": "Space Station",
+  "description": "An open deck in low orbit. Flying and crouching enabled; step off the edge at your own risk.",
+  "author": "WorldMesh demo",
+  "spawn": [0, 2, 14],
+  "abilities": { "flying": true, "crouching": true, "doubleJump": true },
+  "portals": [
+    { "label": "Forest", "url": "http://localhost:5171/" },
+    { "label": "Medieval Village", "url": "http://localhost:5174/" }
+  ]
+}

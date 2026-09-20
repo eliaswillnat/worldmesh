@@ -1,0 +1,24 @@
+{
+  "name": "@worldmesh/runtime",
+  "version": "0.1.0",
+  "description": "The shared WorldMesh navigation runtime: controls, movement, camera, player, abilities and portals.",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "files": ["src"],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "peerDependencies": {
+    "three": ">=0.160.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.169.0",
+    "three": "^0.169.0"
+  }
+}

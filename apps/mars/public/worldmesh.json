@@ -1,0 +1,12 @@
+{
+  "worldmesh": 1,
+  "name": "Mars",
+  "description": "A thin-air canyon floor. Low gravity, long jumps.",
+  "author": "WorldMesh demo",
+  "spawn": [0, 2, 10],
+  "abilities": { "doubleJump": true, "dash": true },
+  "portals": [
+    { "label": "Neon City", "url": "http://localhost:5173/" },
+    { "label": "Forest", "url": "http://localhost:5171/" }
+  ]
+}

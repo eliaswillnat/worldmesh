@@ -1,0 +1,12 @@
+{
+  "worldmesh": 1,
+  "name": "Medieval Village",
+  "description": "A muddy village square with a well. Baseline movement, no extra abilities.",
+  "author": "WorldMesh demo",
+  "spawn": [0, 2, 12],
+  "abilities": {},
+  "portals": [
+    { "label": "Space Station", "url": "http://localhost:5175/" },
+    { "label": "Neon City", "url": "http://localhost:5173/" }
+  ]
+}

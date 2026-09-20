@@ -1,0 +1,12 @@
+{
+  "worldmesh": 1,
+  "name": "Neon City",
+  "description": "A rain-slick neon block after midnight. Dash and double jump to the catwalk.",
+  "author": "WorldMesh demo",
+  "spawn": [0, 2, 6],
+  "abilities": { "doubleJump": true, "dash": true, "crouching": true },
+  "portals": [
+    { "label": "Medieval Village", "url": "http://localhost:5174/" },
+    { "label": "Mars", "url": "http://localhost:5172/" }
+  ]
+}

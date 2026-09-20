@@ -1,0 +1,26 @@
+{
+  "name": "worldmesh",
+  "private": true,
+  "version": "0.1.0",
+  "description": "A lightweight open network for independently hosted 3D worlds.",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=apps/hub",
+    "dev:hub": "npm run dev --workspace=apps/hub",
+    "dev:forest": "npm run dev --workspace=apps/forest",
+    "dev:mars": "npm run dev --workspace=apps/mars",
+    "dev:city": "npm run dev --workspace=apps/city",
+    "dev:medieval": "npm run dev --workspace=apps/medieval",
+    "dev:space": "npm run dev --workspace=apps/space",
+    "dev:all": "npm run dev --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
+  }
+}

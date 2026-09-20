@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "hub", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev:hub"], "port": 5170 },
+    { "name": "forest", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev:forest"], "port": 5171 },
+    { "name": "mars", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev:mars"], "port": 5172 },
+    { "name": "city", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev:city"], "port": 5173 },
+    { "name": "medieval", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev:medieval"], "port": 5174 },
+    { "name": "space", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev:space"], "port": 5175 }
+  ]
+}
