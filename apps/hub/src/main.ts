@@ -73,6 +73,7 @@ const DEMO_WORLDS: WorldEntry[] = [
 
 const form = document.querySelector<HTMLFormElement>('#add-form')!;
 const input = document.querySelector<HTMLInputElement>('#url')!;
+const botTrap = document.querySelector<HTMLInputElement>('#bot-trap');
 const statusEl = document.querySelector<HTMLDivElement>('#status')!;
 const demoList = document.querySelector<HTMLUListElement>('#demo-worlds')!;
 const yourList = document.querySelector<HTMLUListElement>('#your-worlds')!;
@@ -82,6 +83,13 @@ render();
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
+  // Honeypot check: If the hidden bot field is filled, discard silently.
+  if (botTrap?.value?.trim()) {
+    input.value = '';
+    setStatus('Submitted! Your world will appear once approved.');
+    return;
+  }
+
   const raw = input.value.trim();
   if (!raw) return;
 

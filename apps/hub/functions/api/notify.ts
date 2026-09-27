@@ -10,6 +10,39 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
+// In-memory rate limiting map: ip -> timestamps[]
+const rateLimits = new Map<string, number[]>();
+const MAX_REQUESTS_PER_WINDOW = 5;
+const WINDOW_MS = 10 * 60 * 1000; // 10 minutes
+
+function isRateLimited(ip: string): boolean {
+  const now = Date.now();
+  const timestamps = rateLimits.get(ip) || [];
+  const valid = timestamps.filter((t) => now - t < WINDOW_MS);
+  if (valid.length >= MAX_REQUESTS_PER_WINDOW) {
+    rateLimits.set(ip, valid);
+    return true;
+  }
+  valid.push(now);
+  rateLimits.set(ip, valid);
+  return false;
+}
+
+// Suspicious bot/crawler User-Agent fragments
+const BLOCKED_UA_PATTERNS = [
+  /curl\//i,
+  /python-requests/i,
+  /aiohttp/i,
+  /scrapy/i,
+  /wget\//i,
+  /httpclient/i,
+  /java\//i,
+  /libwww/i,
+  /postman/i,
+  /insomnia/i,
+  /go-http-client/i,
+];
+
 export async function onRequestOptions(): Promise<Response> {
   return new Response(null, {
     status: 204,
@@ -22,6 +55,33 @@ export async function onRequestPost(context: {
   env: Env;
 }): Promise<Response> {
   const { request, env } = context;
+
+  // 1. Bot check: Cloudflare Threat Score
+  const threatScore = parseInt(request.headers.get('cf-threat-score') || '0', 10);
+  if (threatScore > 20) {
+    return new Response(JSON.stringify({ error: 'Blocked by security policy.' }), {
+      status: 403,
+      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+    });
+  }
+
+  // 2. Bot check: User-Agent validation
+  const userAgent = request.headers.get('user-agent') || '';
+  if (!userAgent || BLOCKED_UA_PATTERNS.some((pattern) => pattern.test(userAgent))) {
+    return new Response(JSON.stringify({ error: 'Automated agent request forbidden.' }), {
+      status: 403,
+      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+    });
+  }
+
+  // 3. Bot check: Rate Limiting by Client IP
+  const clientIp = request.headers.get('cf-connecting-ip') || 'unknown';
+  if (clientIp !== 'unknown' && isRateLimited(clientIp)) {
+    return new Response(JSON.stringify({ error: 'Rate limit exceeded. Please try again later.' }), {
+      status: 429,
+      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+    });
+  }
 
   const apiKey = env.RESEND_API_KEY;
   if (!apiKey) {
@@ -41,6 +101,7 @@ export async function onRequestPost(context: {
     cover?: string;
     creator?: string;
     submittedAt?: string;
+    botTrap?: string;
   };
 
   try {
@@ -53,6 +114,15 @@ export async function onRequestPost(context: {
         headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
       },
     );
+  }
+
+  // 4. Bot check: Honeypot trap (bots fill hidden fields, humans never do)
+  if (body.botTrap && body.botTrap.trim().length > 0) {
+    // Return a fake success so bots don't adapt, but silently discard the submission
+    return new Response(JSON.stringify({ success: true, fake: true }), {
+      status: 200,
+      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+    });
   }
 
   if (!body.url || !body.name) {
@@ -105,7 +175,7 @@ export async function onRequestPost(context: {
       </div>` : ''}
 
       <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #222; font-size: 12px; color: #666;">
-        Submitted at ${escapeHtml(body.submittedAt || new Date().toISOString())} via worldmesh.net
+        Submitted at ${escapeHtml(body.submittedAt || new Date().toISOString())} from IP ${escapeHtml(clientIp)}
       </div>
     </div>
   `;
@@ -136,7 +206,7 @@ export async function onRequestPost(context: {
       );
     }
 
-    const data = await resendResponse.json() as { id: string };
+    const data = (await resendResponse.json()) as { id: string };
     return new Response(JSON.stringify({ success: true, id: data.id }), {
       status: 200,
       headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
