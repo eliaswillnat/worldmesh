@@ -434,44 +434,6 @@
       }
       .card-clicks svg { opacity: 0.5; }
 
-      /* ── Remove button ─────────────────────────────────────────── */
-      .card-remove {
-        position: absolute;
-        top: 8px;
-        right: 8px;
-        z-index: 10;
-        width: 28px;
-        height: 28px;
-        border-radius: 50%;
-        border: 1px solid rgba(255, 255, 255, 0.2);
-        background: rgba(8, 11, 16, 0.7);
-        backdrop-filter: blur(4px);
-        color: rgba(255, 255, 255, 0.7);
-        font-size: 14px;
-        line-height: 1;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        opacity: 0;
-        transition: opacity .15s ease;
-        padding: 0;
-      }
-      .card:hover .card-remove { opacity: 1; }
-      .card-remove:hover { color: #ff9a8a; border-color: #ff9a8a; }
-
-      /* ── Pending state ────────────────────────────────────────── */
-      .card-pending { opacity: 0.55; pointer-events: none; }
-      .card-pending .card-remove { pointer-events: auto; }
-      .card-pending-badge {
-        display: inline-block;
-        font-size: 11px;
-        font-weight: 600;
-        letter-spacing: 0.06em;
-        color: var(--subtle);
-        margin-bottom: 8px;
-      }
-
       .empty { color: var(--muted); font-size: 13px; }
       footer { margin-top: 50px; font-size: 12px; color: var(--muted); line-height: 1.7; }
       footer a { color: var(--subtle); text-decoration: none; transition: color .15s ease; }
@@ -551,9 +513,6 @@
 
       <!-- <h2>Demo worlds</h2> -->
       <ul class="card-grid" id="demo-worlds"></ul>
-
-      <h2 id="your-worlds-heading" style="display:none">Your worlds</h2>
-      <ul class="card-grid" id="your-worlds"></ul>
 
       <footer>
         <a href="/privacy.html">Privacy</a> · <a href="/terms.html">Terms</a>

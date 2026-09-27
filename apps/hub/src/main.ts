@@ -14,21 +14,20 @@ interface WorldEntry {
   creator?: string;
   portfolio?: string;
   email?: string;
-  pending?: boolean;
   submittedAt?: string;
 }
 
 import communityWorlds from './community.json';
 
-const STORAGE_KEY = 'worldmesh.worlds';
 const VIEWS_ENDPOINT = import.meta.env.VITE_VIEWS_ENDPOINT as string | undefined;
 const viewCounts: Record<string, number> = {};
 const sessionViewed = new Map<string, number>();
 const COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes
 
-// Clean up legacy local click counter from prototype
+// Clean up legacy local click counter and saved worlds from prototype
 try {
   localStorage.removeItem('worldmesh.clicks');
+  localStorage.removeItem('worldmesh.worlds');
 } catch {
   // Ignore
 }
@@ -123,8 +122,6 @@ const creatorPortfolioInput = document.querySelector<HTMLInputElement>('#creator
 const creatorDescriptionInput = document.querySelector<HTMLInputElement>('#creator-description')!;
 const submitWorldBtn = document.querySelector<HTMLButtonElement>('#submit-world')!;
 const demoList = document.querySelector<HTMLUListElement>('#demo-worlds')!;
-const yourList = document.querySelector<HTMLUListElement>('#your-worlds')!;
-const yourHeading = document.querySelector<HTMLHeadingElement>('#your-worlds-heading')!;
 
 // Cover upload & cropper elements
 const coverFileInput = document.querySelector<HTMLInputElement>('#cover-file-input')!;
@@ -260,10 +257,7 @@ window.addEventListener('keydown', (e) => {
 render();
 
 // Fetch server-side view counts for all known worlds
-const allWorldUrls = [
-  ...ALL_WORLDS.map((w) => w.url),
-  ...load().filter((w) => !w.pending).map((w) => w.url),
-];
+const allWorldUrls = ALL_WORLDS.map((w) => w.url);
 fetchViewCounts(allWorldUrls);
 
 form.addEventListener('submit', async (event) => {
@@ -285,9 +279,8 @@ form.addEventListener('submit', async (event) => {
     return;
   }
 
-  const saved = load();
-  if (saved.some((world) => world.url === url.toString())) {
-    setStatus('That world is already on your list.', true);
+  if (ALL_WORLDS.some((world) => world.url === url.toString())) {
+    setStatus('That world is already listed.', true);
     return;
   }
 
@@ -380,15 +373,11 @@ submitWorldBtn.addEventListener('click', async () => {
     creator: creatorName,
     portfolio,
     email,
-    pending: true,
     submittedAt: new Date().toISOString(),
   };
 
-  save([...load(), entry]);
-
   setAddingMode(false);
   setStatus('Submitted! Your world will appear once approved.');
-  render();
 
   saveSubmissionRecord(entry);
   requestScreenshot(entry);
@@ -429,22 +418,11 @@ async function requestScreenshot(entry: WorldEntry): Promise<void> {
   if (entry.cover) return; // Custom cover already provided
   const endpoint = SCREENSHOT_ENDPOINT || '/api/screenshot';
   try {
-    const res = await fetch(endpoint, {
+    await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url: entry.url }),
     });
-    if (res.ok) {
-      const data = (await res.json()) as { url?: string };
-      if (data.url) {
-        const saved = load();
-        const idx = saved.findIndex((w) => w.url === entry.url);
-        if (idx !== -1) {
-          saved[idx].cover = data.url;
-          save(saved);
-        }
-      }
-    }
   } catch {
     // Screenshot is best-effort.
   }
@@ -474,37 +452,16 @@ async function notifySubmission(entry: WorldEntry): Promise<void> {
 }
 
 function render(): void {
-  demoList.replaceChildren(...ALL_WORLDS.map((world) => renderCard(world, false)));
-
-  const saved = load();
-  const featuredUrls = new Set(ALL_WORLDS.map((w) => w.url));
-  const yourWorlds = saved.filter((w) => !featuredUrls.has(w.url));
-
-  const items: HTMLLIElement[] = [];
-  for (const world of yourWorlds) items.push(renderCard(world, true));
-
-  if (items.length === 0) {
-    yourHeading.style.display = 'none';
-    yourList.replaceChildren();
-    return;
-  }
-  yourHeading.style.display = '';
-  yourList.replaceChildren(...items);
+  demoList.replaceChildren(...ALL_WORLDS.map((world) => renderCard(world)));
 }
 
-function renderCard(world: WorldEntry, removable: boolean): HTMLLIElement {
+function renderCard(world: WorldEntry): HTMLLIElement {
   const item = document.createElement('li');
   item.className = 'card';
-  if (world.pending) item.classList.add('card-pending');
 
   const link = document.createElement('a');
-  link.href = world.pending ? '#' : world.url;
-  if (world.pending) {
-    link.addEventListener('click', (e) => e.preventDefault());
-    link.style.cursor = 'default';
-  } else {
-    link.addEventListener('click', () => trackClick(world.url));
-  }
+  link.href = world.url;
+  link.addEventListener('click', () => trackClick(world.url));
 
   if (world.cover) {
     const img = document.createElement('img');
@@ -547,12 +504,7 @@ function renderCard(world: WorldEntry, removable: boolean): HTMLLIElement {
     body.appendChild(creatorEl);
   }
 
-  if (world.pending) {
-    const badge = document.createElement('span');
-    badge.className = 'card-pending-badge';
-    badge.textContent = 'Pending approval';
-    body.appendChild(badge);
-  } else if (world.description) {
+  if (world.description) {
     const desc = document.createElement('p');
     desc.className = 'card-desc';
     desc.textContent = world.description;
@@ -567,36 +519,19 @@ function renderCard(world: WorldEntry, removable: boolean): HTMLLIElement {
   host.textContent = hostOf(world.url);
   footer.appendChild(host);
 
-  if (!world.pending) {
-    const clicks = viewCounts[world.url] ?? 0;
-    if (clicks > 0) {
-      const clickBadge = document.createElement('span');
-      clickBadge.className = 'card-clicks';
-      clickBadge.innerHTML =
-        `<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M8 3C4.5 3 2 8 2 8s2.5 5 6 5 6-5 6-5-2.5-5-6-5Z" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.4"/></svg>` +
-        `${clicks}`;
-      footer.appendChild(clickBadge);
-    }
+  const clicks = viewCounts[world.url] ?? 0;
+  if (clicks > 0) {
+    const clickBadge = document.createElement('span');
+    clickBadge.className = 'card-clicks';
+    clickBadge.innerHTML =
+      `<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M8 3C4.5 3 2 8 2 8s2.5 5 6 5 6-5 6-5-2.5-5-6-5Z" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.4"/></svg>` +
+      `${clicks}`;
+    footer.appendChild(clickBadge);
   }
 
   body.appendChild(footer);
   link.appendChild(body);
   item.appendChild(link);
-
-  if (removable) {
-    const remove = document.createElement('button');
-    remove.className = 'card-remove';
-    remove.type = 'button';
-    remove.textContent = '×';
-    remove.title = 'Remove';
-    remove.addEventListener('click', (e) => {
-      e.stopPropagation();
-      save(load().filter((entry) => entry.url !== world.url));
-      setStatus(`Removed ${world.name}.`);
-      render();
-    });
-    item.appendChild(remove);
-  }
 
   return item;
 }
@@ -622,23 +557,6 @@ function hostOf(url: string): string {
 function setStatus(message: string, isError = false): void {
   statusEl.textContent = message;
   statusEl.dataset.error = String(isError);
-}
-
-function load(): WorldEntry[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as WorldEntry[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function save(worlds: WorldEntry[]): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(worlds));
-  } catch {
-    setStatus('Could not save to this browser, but the link still works.', true);
-  }
 }
 
 function trackClick(url: string): void {
