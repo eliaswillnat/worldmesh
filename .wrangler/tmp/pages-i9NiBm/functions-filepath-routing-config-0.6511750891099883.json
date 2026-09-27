@@ -1,0 +1,21 @@
+{
+  "routes": [
+    {
+      "routePath": "/api/notify",
+      "mountPath": "/api",
+      "method": "OPTIONS",
+      "module": [
+        "api/notify.ts:onRequestOptions"
+      ]
+    },
+    {
+      "routePath": "/api/notify",
+      "mountPath": "/api",
+      "method": "POST",
+      "module": [
+        "api/notify.ts:onRequestPost"
+      ]
+    }
+  ],
+  "baseURL": "/"
+}

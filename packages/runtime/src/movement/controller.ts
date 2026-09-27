@@ -91,8 +91,8 @@ export class MovementController {
     // Rotate local input into world space using the camera heading.
     const sin = Math.sin(yaw);
     const cos = Math.cos(yaw);
-    const wishX = axis.x * cos - axis.z * sin;
-    const wishZ = axis.x * sin + axis.z * cos;
+    const wishX = axis.x * cos + axis.z * sin;
+    const wishZ = -axis.x * sin + axis.z * cos;
 
     const speed = this.currentSpeed();
     const targetX = wishX * speed;
