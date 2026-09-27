@@ -460,6 +460,7 @@ function trackClick(url: string): void {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ url }),
+    keepalive: true,
   })
     .then((res) => res.json() as Promise<{ views?: number }>)
     .then((data) => {
