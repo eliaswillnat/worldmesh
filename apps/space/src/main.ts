@@ -29,6 +29,7 @@ const world = createWorldMesh({
   },
   ui: {
     title: 'Space Station',
+    badge: false,
     hubUrl:
       import.meta.env.VITE_WORLDMESH_HUB ??
       (import.meta.env.DEV

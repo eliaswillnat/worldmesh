@@ -23,6 +23,7 @@ const world = createWorldMesh({
   },
   ui: {
     title: 'Neon City',
+    badge: false,
     hubUrl:
       import.meta.env.VITE_WORLDMESH_HUB ??
       (import.meta.env.DEV

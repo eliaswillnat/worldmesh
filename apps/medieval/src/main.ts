@@ -20,6 +20,7 @@ const world = createWorldMesh({
   view: { mode: 'third' },
   ui: {
     title: 'Medieval Village',
+    badge: false,
     hubUrl:
       import.meta.env.VITE_WORLDMESH_HUB ??
       (import.meta.env.DEV

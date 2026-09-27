@@ -28,6 +28,7 @@ const world = createWorldMesh({
   },
   ui: {
     title: 'Mars',
+    badge: false,
     hubUrl:
       import.meta.env.VITE_WORLDMESH_HUB ??
       (import.meta.env.DEV
