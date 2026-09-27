@@ -44,6 +44,7 @@ export default {
       cover?: string;
       creator?: string;
       portfolio?: string;
+      email?: string;
       submittedAt?: string;
     };
 
@@ -88,6 +89,14 @@ export default {
           <div style="color: #eee; margin-top: 4px;">${escapeHtml(body.creator)}</div>
         </div>` : ''}
 
+        ${body.email ? `
+        <div style="margin: 16px 0;">
+          <span style="color: #888; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em;">Creator Email</span>
+          <div style="margin-top: 4px;">
+            <a href="mailto:${escapeHtml(body.email)}" style="color: #70aaff; text-decoration: underline;">${escapeHtml(body.email)}</a>
+          </div>
+        </div>` : ''}
+
         ${body.portfolio ? `
         <div style="margin: 16px 0;">
           <span style="color: #888; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em;">Portfolio</span>
@@ -117,18 +126,23 @@ export default {
     `;
 
     try {
+      const resendPayload: Record<string, unknown> = {
+        from: fromEmail,
+        to: [toEmail],
+        subject: `[WorldMesh] New World Submission: ${body.name}`,
+        html: htmlContent,
+      };
+      if (body.email) {
+        resendPayload.reply_to = body.email;
+      }
+
       const resendRes = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          from: fromEmail,
-          to: [toEmail],
-          subject: `[WorldMesh] New World Submission: ${body.name}`,
-          html: htmlContent,
-        }),
+        body: JSON.stringify(resendPayload),
       });
 
       if (!resendRes.ok) {

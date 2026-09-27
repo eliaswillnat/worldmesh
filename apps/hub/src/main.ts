@@ -12,6 +12,7 @@ interface WorldEntry {
   cover?: string;
   creator?: string;
   portfolio?: string;
+  email?: string;
   pending?: boolean;
   submittedAt?: string;
 }
@@ -97,6 +98,7 @@ const botTrap = document.querySelector<HTMLInputElement>('#bot-trap');
 const statusEl = document.querySelector<HTMLDivElement>('#status')!;
 const creatorFields = document.querySelector<HTMLDivElement>('#creator-fields')!;
 const creatorNameInput = document.querySelector<HTMLInputElement>('#creator-name')!;
+const creatorEmailInput = document.querySelector<HTMLInputElement>('#creator-email')!;
 const creatorPortfolioInput = document.querySelector<HTMLInputElement>('#creator-portfolio')!;
 const creatorDescriptionInput = document.querySelector<HTMLInputElement>('#creator-description')!;
 const submitWorldBtn = document.querySelector<HTMLButtonElement>('#submit-world')!;
@@ -157,6 +159,13 @@ form.addEventListener('submit', async (event) => {
 submitWorldBtn.addEventListener('click', () => {
   if (!pendingUrl) return;
 
+  const email = creatorEmailInput.value.trim();
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    setStatus('Please enter a valid email address (required to manage or remove your world).', true);
+    creatorEmailInput.focus();
+    return;
+  }
+
   const creatorName = creatorNameInput.value.trim() || undefined;
   const portfolioRaw = creatorPortfolioInput.value.trim();
   let portfolio: string | undefined;
@@ -171,6 +180,7 @@ submitWorldBtn.addEventListener('click', () => {
     cover: pendingManifest?.cover,
     creator: creatorName,
     portfolio,
+    email,
     pending: true,
     submittedAt: new Date().toISOString(),
   };
@@ -179,6 +189,7 @@ submitWorldBtn.addEventListener('click', () => {
 
   input.value = '';
   creatorNameInput.value = '';
+  creatorEmailInput.value = '';
   creatorPortfolioInput.value = '';
   creatorDescriptionInput.value = '';
   creatorFields.style.display = 'none';
@@ -245,6 +256,7 @@ async function notifySubmission(entry: WorldEntry): Promise<void> {
         cover: entry.cover ?? null,
         creator: entry.creator ?? null,
         portfolio: entry.portfolio ?? null,
+        email: entry.email ?? null,
         submittedAt: entry.submittedAt,
       }),
     });

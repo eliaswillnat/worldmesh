@@ -73,7 +73,8 @@
       }
       .tagline { color: var(--muted); font-size: 15px; margin: 0 0 20px; line-height: 1.5; }
       form { display: flex; gap: 10px; margin-bottom: 10px; }
-      input[type="text"] {
+      input[type="text"],
+      input[type="email"] {
         flex: 1;
         padding: 14px 16px;
         border-radius: 25px;
@@ -98,7 +99,12 @@
         transition: border-color .15s ease, color .15s ease;
       }
       button:hover { border-color: var(--accent); color: var(--accent); }
-      .creator-fields { display: flex; gap: 10px; margin-bottom: 10px; }
+      .creator-fields { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+      .creator-fields input { min-width: 170px; }
+      @media (max-width: 600px) {
+        form, .creator-fields { flex-direction: column; }
+        .creator-fields input, .creator-fields button { width: 100%; min-width: 0; }
+      }
       .status { min-height: 20px; font-size: 13px; color: var(--muted); margin-bottom: 16px; }
       .status[data-error="true"] { color: #ff9a8a; }
       h2 {
@@ -330,7 +336,8 @@
         <button type="submit" id="add-btn">Add world</button>
       </form>
       <div class="creator-fields" id="creator-fields" style="display:none">
-        <input id="creator-name" type="text" placeholder="Your name" autocomplete="off" />
+        <input id="creator-name" type="text" placeholder="Your name" autocomplete="name" />
+        <input id="creator-email" type="email" placeholder="Your email (required to manage/remove)" required autocomplete="email" />
         <input id="creator-portfolio" type="text" placeholder="Portfolio link (optional)" autocomplete="off" />
         <input id="creator-description" type="text" placeholder="Short description (optional)" autocomplete="off" />
         <button type="button" id="submit-world">Submit world</button>
