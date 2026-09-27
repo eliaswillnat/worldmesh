@@ -13,7 +13,7 @@ bucket_name = "worldmesh-screenshots"
 [vars]
 # Public URL prefix for the R2 bucket (set up a custom domain or use r2.dev)
 # e.g. https://screenshots.worldmesh.net
-R2_PUBLIC_URL = ""
+R2_PUBLIC_URL = "https://pub-b622cf770b414a1c9869157e73dab3c1.r2.dev"
 
 # Set secrets in Cloudflare with:
 # npx wrangler secret put SCREENSHOT_SECRET

@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Privacy Policy — WorldMesh</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      :root { color-scheme: light dark; }
+      * { box-sizing: border-box; margin: 0; }
+      body {
+        background: #000; color: #ccc;
+        font-family: "Urbanist", system-ui, sans-serif;
+        padding: 4vh 20px 80px;
+        display: flex; justify-content: center;
+        -webkit-font-smoothing: antialiased;
+      }
+      @media (prefers-color-scheme: light) {
+        body { background: #fff; color: #222; }
+        a { color: #444; }
+      }
+      main { max-width: 640px; width: 100%; }
+      h1 { font-size: 24px; font-weight: 600; margin: 0 0 8px; color: #fff; }
+      @media (prefers-color-scheme: light) { h1 { color: #111; } }
+      .back { font-size: 13px; color: #888; text-decoration: none; display: inline-block; margin-bottom: 24px; }
+      .back:hover { color: #fff; }
+      .updated { font-size: 12px; color: #666; margin-bottom: 32px; }
+      h2 { font-size: 15px; font-weight: 600; margin: 28px 0 8px; color: #eee; }
+      @media (prefers-color-scheme: light) { h2 { color: #222; } }
+      p, ul { font-size: 14px; line-height: 1.7; margin: 0 0 12px; }
+      ul { padding-left: 20px; }
+      a { color: #999; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <a class="back" href="/">← Back to WorldMesh</a>
+      <h1>Privacy Policy</h1>
+      <p class="updated">Last updated: September 27, 2026</p>
+
+      <h2>What we collect</h2>
+      <p>WorldMesh collects minimal data to operate the service:</p>
+      <ul>
+        <li><strong>World submissions:</strong> the URL, name, description, creator name, and portfolio link you provide when submitting a world.</li>
+        <li><strong>View counts:</strong> we count views per world using your IP address, hashed and stored temporarily (24 hours) to prevent duplicate counting. We do not store raw IP addresses permanently.</li>
+        <li><strong>Local storage:</strong> your browser stores your submitted worlds and click history locally. This data never leaves your device unless you submit a world.</li>
+      </ul>
+
+      <h2>How we use it</h2>
+      <ul>
+        <li>To display worlds and their view counts on the hub.</li>
+        <li>To notify us when a new world is submitted for approval.</li>
+        <li>To generate preview screenshots of submitted worlds.</li>
+      </ul>
+
+      <h2>Third-party services</h2>
+      <ul>
+        <li><strong>Cloudflare:</strong> hosting, R2 storage, Workers, and KV for view tracking.</li>
+        <li><strong>Resend:</strong> transactional email for submission notifications (sent only to the WorldMesh admin).</li>
+        <li><strong>Google Fonts:</strong> the Urbanist typeface is loaded from Google's CDN.</li>
+      </ul>
+
+      <h2>No cookies</h2>
+      <p>WorldMesh does not use cookies or any tracking scripts.</p>
+
+      <h2>Data retention</h2>
+      <p>Submitted world data is retained as long as the world is listed. View deduplication records are automatically deleted after 24 hours. You can remove your submitted worlds at any time from the hub.</p>
+
+      <h2>Contact</h2>
+      <p>Questions? Reach out at <strong>elias.willnat@gmail.com</strong>.</p>
+    </main>
+  </body>
+</html>

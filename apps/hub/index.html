@@ -292,13 +292,8 @@
 
       .empty { color: var(--muted); font-size: 13px; }
       footer { margin-top: 50px; font-size: 12px; color: var(--muted); line-height: 1.7; }
-      footer code {
-        background: var(--input-bg);
-        border: 1px solid var(--border);
-        border-radius: 5px;
-        padding: 1px 5px;
-        font-size: 11px;
-      }
+      footer a { color: var(--subtle); text-decoration: none; transition: color .15s ease; }
+      footer a:hover { color: var(--text); }
     </style>
   </head>
   <body>
@@ -341,12 +336,9 @@
       <h2 id="your-worlds-heading" style="display:none">Your worlds</h2>
       <ul class="card-grid" id="your-worlds"></ul>
 
-      <!-- <footer>
-        Every world above runs the same <code>@worldmesh/runtime</code>:
-        WASD to move, mouse to look, <code>Space</code> to jump,
-        <code>Shift</code> to sprint, <code>E</code> to interact,
-        <code>V</code> to switch camera.
-      </footer> -->
+      <footer>
+        <a href="/privacy.html">Privacy</a> · <a href="/terms.html">Terms</a>
+      </footer>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>
