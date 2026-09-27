@@ -33,28 +33,42 @@ const CSS = `
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 18px;
-  background: rgba(8,11,16,0.65);
-  backdrop-filter: blur(4px);
+  justify-content: flex-start;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  background: rgba(8,11,16,0.72);
+  backdrop-filter: blur(6px);
   pointer-events: auto;
   cursor: pointer;
   text-align: center;
-  padding: 24px;
+  padding: max(20px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  box-sizing: border-box;
   -webkit-tap-highlight-color: transparent;
 }
 .wm-overlay[data-locked="true"] .wm-lock { display: none; }
+.wm-lock-content {
+  margin: auto 0;
+  width: 100%;
+  max-width: 440px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 0;
+  box-sizing: border-box;
+}
 .wm-lock-title {
-  font-size: clamp(22px, 4vw, 34px);
+  font-size: clamp(22px, 5vw, 34px);
   font-weight: 600;
   letter-spacing: .01em;
   margin: 0;
 }
 .wm-lock-cta {
-  font-size: 14px;
+  font-size: 13.5px;
   letter-spacing: .14em;
   text-transform: uppercase;
-  padding: 12px 26px;
+  padding: 12px 28px;
   border: 1px solid rgba(255,255,255,0.35);
   border-radius: 999px;
   background: rgba(255,255,255,0.1);
@@ -77,16 +91,26 @@ const CSS = `
 }
 .wm-keys {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 6px 22px;
-  max-width: 560px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 14px;
+  width: 100%;
+  max-width: 420px;
   font-size: 13px;
-  opacity: .85;
+  opacity: .9;
+  box-sizing: border-box;
+  padding: 0 4px;
 }
-.wm-keys div { display: flex; gap: 8px; align-items: center; justify-content: flex-start; }
+.wm-keys-item {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 0;
+}
 .wm-key {
-  min-width: 22px;
-  padding: 2px 6px;
+  flex-shrink: 0;
+  min-width: 20px;
+  padding: 2.5px 6px;
   border-radius: 5px;
   border: 1px solid rgba(255,255,255,0.28);
   background: rgba(255,255,255,0.08);
@@ -94,6 +118,15 @@ const CSS = `
   font-weight: 600;
   text-align: center;
   white-space: nowrap;
+  line-height: 1.25;
+}
+.wm-key-desc {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: rgba(255,255,255,0.85);
 }
 .wm-prompt {
   position: absolute;
@@ -121,8 +154,8 @@ const CSS = `
 .wm-overlay[data-locked="true"] .wm-prompt[data-visible="true"] { display: block; }
 .wm-badge {
   position: absolute;
-  left: 14px;
-  bottom: 12px;
+  left: max(14px, env(safe-area-inset-left));
+  bottom: max(12px, env(safe-area-inset-bottom));
   display: flex;
   align-items: center;
   gap: 8px;
@@ -147,8 +180,8 @@ const CSS = `
 }
 .wm-hint {
   position: absolute;
-  right: 14px;
-  bottom: 12px;
+  right: max(14px, env(safe-area-inset-right));
+  bottom: max(12px, env(safe-area-inset-bottom));
   font-size: 11px;
   letter-spacing: .1em;
   color: rgba(255,255,255,0.5);
@@ -156,25 +189,71 @@ const CSS = `
   transition: opacity .2s ease;
 }
 .wm-overlay[data-locked="true"] .wm-hint { opacity: 1; }
+
+@media (max-width: 400px) {
+  .wm-lock {
+    padding: max(14px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  }
+  .wm-lock-content {
+    gap: 12px;
+  }
+  .wm-lock-title {
+    font-size: 20px;
+  }
+  .wm-lock-cta {
+    padding: 10px 22px;
+    font-size: 12px;
+  }
+  .wm-keys {
+    gap: 6px 8px;
+  }
+  .wm-keys-item {
+    gap: 5px;
+  }
+  .wm-key {
+    font-size: 10px;
+    padding: 2px 5px;
+  }
+  .wm-key-desc {
+    font-size: 11px;
+  }
+}
+
+@media (max-height: 520px) {
+  .wm-lock {
+    padding: max(8px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+  }
+  .wm-lock-content {
+    gap: 10px;
+  }
+  .wm-lock-title {
+    font-size: 18px;
+  }
+  .wm-lock-cta {
+    padding: 8px 20px;
+    font-size: 12px;
+  }
+  .wm-keys {
+    gap: 4px 10px;
+  }
+  .wm-key {
+    font-size: 9.5px;
+    padding: 2px 4px;
+  }
+  .wm-key-desc {
+    font-size: 11px;
+  }
+}
 `;
 
 const KEY_LEGEND: [string, string][] = [
   ['WASD / ↑←↓→', 'Move'],
-  ['Mouse', 'Look'],
-  ['Space', 'Jump'],
+  ['Mouse / Drag', 'Look'],
+  ['Space / ▲', 'Jump'],
   ['Shift', 'Sprint'],
   ['E', 'Interact'],
   ['V', 'Camera'],
-  ['Esc', 'Release cursor'],
-];
-
-const TOUCH_LEGEND: [string, string][] = [
-  ['Left drag', 'Move'],
-  ['Right drag', 'Look'],
-  ['▲ button', 'Jump'],
-  ['E / Prompt', 'Interact / Portal'],
-  ['V button', 'Camera mode'],
-  ['⏸ button', 'Menu / Pause'],
+  ['Esc / ⏸', 'Menu / Pause'],
 ];
 
 /**
@@ -211,16 +290,19 @@ export class Overlay {
     const lock = document.createElement('div');
     lock.className = 'wm-lock';
 
+    const content = document.createElement('div');
+    content.className = 'wm-lock-content';
+
     const title = document.createElement('h1');
     title.className = 'wm-lock-title';
     title.textContent = options.title ?? 'WorldMesh';
-    lock.appendChild(title);
+    content.appendChild(title);
 
     const cta = document.createElement('button');
     cta.type = 'button';
     cta.className = 'wm-lock-cta';
     cta.textContent = isTouch ? 'Tap to enter' : 'Click to enter';
-    lock.appendChild(cta);
+    content.appendChild(cta);
 
     const handleEnter = (e: Event) => {
       e.preventDefault();
@@ -239,19 +321,24 @@ export class Overlay {
     if (options.controlsHint !== false) {
       const keys = document.createElement('div');
       keys.className = 'wm-keys';
-      const legend = isTouch ? TOUCH_LEGEND : KEY_LEGEND;
+      const legend = isTouch
+        ? [...KEY_LEGEND, ['Touch', 'On-screen controls'] as [string, string]]
+        : KEY_LEGEND;
       for (const [key, label] of legend) {
         const row = document.createElement('div');
+        row.className = 'wm-keys-item';
         const badge = document.createElement('span');
         badge.className = 'wm-key';
         badge.textContent = key;
         const text = document.createElement('span');
+        text.className = 'wm-key-desc';
         text.textContent = label;
         row.append(badge, text);
         keys.appendChild(row);
       }
-      lock.appendChild(keys);
+      content.appendChild(keys);
     }
+    lock.appendChild(content);
     this.root.appendChild(lock);
 
     this.prompt = document.createElement('div');
