@@ -44,9 +44,13 @@ export default {
         return json({ error: 'Missing url' }, 400);
       }
 
+const COOLDOWN_SECONDS = 1800; // 30 minutes
+
       const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
-      const day = new Date().toISOString().slice(0, 10);
-      const dedupKey = `dedup:${ip}:${body.url}:${day}`;
+      const ua = request.headers.get('User-Agent') || 'unknown';
+      const clientHash = await hashClient(ip, ua);
+
+      const dedupKey = `dedup:${clientHash}:${body.url}`;
       const countKey = `count:${body.url}`;
 
       const [already, currentVal] = await Promise.all([
@@ -62,7 +66,7 @@ export default {
       const newCount = current + 1;
       await Promise.all([
         env.VIEWS.put(countKey, String(newCount)),
-        env.VIEWS.put(dedupKey, '1', { expirationTtl: 86400 }),
+        env.VIEWS.put(dedupKey, '1', { expirationTtl: COOLDOWN_SECONDS }),
       ]);
 
       return json({ counted: true, views: newCount });
@@ -77,4 +81,11 @@ function json(data: Record<string, unknown>, status = 200): Response {
     status,
     headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
   });
+}
+
+async function hashClient(ip: string, ua: string): Promise<string> {
+  const data = new TextEncoder().encode(`${ip}::${ua}`);
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  const arr = Array.from(new Uint8Array(digest));
+  return arr.slice(0, 16).map((b) => b.toString(16).padStart(2, '0')).join('');
 }

@@ -20,7 +20,8 @@ interface WorldEntry {
 const STORAGE_KEY = 'worldmesh.worlds';
 const VIEWS_ENDPOINT = import.meta.env.VITE_VIEWS_ENDPOINT as string | undefined;
 const viewCounts: Record<string, number> = {};
-const sessionViewed = new Set<string>();
+const sessionViewed = new Map<string, number>();
+const COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes
 
 // Clean up legacy local click counter from prototype
 try {
@@ -439,9 +440,10 @@ function save(worlds: WorldEntry[]): void {
 }
 
 function trackClick(url: string): void {
-  // Server-side deduped view (one per IP per day)
-  if (sessionViewed.has(url)) return;
-  sessionViewed.add(url);
+  // Client-side debounce (30-minute session cooldown)
+  const last = sessionViewed.get(url);
+  if (last && Date.now() - last < COOLDOWN_MS) return;
+  sessionViewed.set(url, Date.now());
 
   const endpoint = VIEWS_ENDPOINT || '/api/views';
   fetch(`${endpoint}/view`, {
