@@ -170,7 +170,7 @@
         background: var(--hover-overlay);
       }
 
-      .card a {
+      .card > a {
         display: block;
         text-decoration: none;
         color: inherit;
@@ -201,31 +201,37 @@
       /* ── Card body — overlaid at the bottom via gradient fade ── */
       .card-body {
         position: absolute;
-        inset-inline: 0;
+        left: 0;
+        right: 0;
         bottom: 0;
         z-index: 4;
         display: flex;
         flex-direction: column;
+        justify-content: flex-end;
         gap: 2px;
-        padding: 48px 14px 14px;
+        padding: 24px 14px 14px;
+        max-height: 100%;
+        overflow: hidden;
         background: linear-gradient(
           to top,
           var(--card) 0%,
-          color-mix(in srgb, var(--card) 85%, transparent) 40%,
+          var(--card) 50%,
+          color-mix(in srgb, var(--card) 90%, transparent) 70%,
           transparent 100%
         );
       }
-      .card-name { font-size: 14px; font-weight: 600; margin: 0; }
-      .card-creator { font-size: 11px; color: var(--subtle); margin: 0; }
+      .card-name { font-size: 14px; font-weight: 600; margin: 0; flex: none; }
+      .card-creator { font-size: 11px; color: var(--muted); margin: 0; flex: none; }
       .card-creator-link {
         color: var(--text);
         text-decoration: none;
+        display: inline;
         position: relative;
         z-index: 6;
         transition: opacity .15s ease;
       }
       .card-creator-link:hover { opacity: 0.7; }
-      .card-desc { font-size: 12px; color: var(--muted); margin: 0; line-height: 1.35; }
+      .card-desc { font-size: 12px; color: var(--muted); margin: 0; line-height: 1.35; flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .card-footer {
         display: flex;
         align-items: center;
