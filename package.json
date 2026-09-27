@@ -17,6 +17,13 @@
     "dev:space": "npm run dev --workspace=apps/space",
     "dev:all": "npm run dev --workspaces --if-present",
     "build": "npm run build --workspaces --if-present",
+    "build:all": "npm run build --workspaces --if-present",
+    "build:hub": "npm run build --workspace=apps/hub",
+    "build:forest": "npm run build --workspace=apps/forest",
+    "build:mars": "npm run build --workspace=apps/mars",
+    "build:city": "npm run build --workspace=apps/city",
+    "build:medieval": "npm run build --workspace=apps/medieval",
+    "build:space": "npm run build --workspace=apps/space",
     "typecheck": "npm run typecheck --workspaces --if-present"
   },
   "devDependencies": {

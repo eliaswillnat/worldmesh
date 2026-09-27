@@ -28,7 +28,13 @@ const world = createWorldMesh({
   },
   ui: {
     title: 'Mars',
-    hubUrl: import.meta.env.VITE_WORLDMESH_HUB ?? 'http://localhost:5170/',
+    hubUrl:
+      import.meta.env.VITE_WORLDMESH_HUB ??
+      (import.meta.env.DEV
+        ? 'http://localhost:5170/'
+        : import.meta.env.VITE_WORLDS_BASE_DOMAIN
+          ? `https://${import.meta.env.VITE_WORLDS_BASE_DOMAIN}/`
+          : 'https://worldmesh-hub.pages.dev/'),
   },
   // Portals disabled for now — URL-paste in the hub is the primary navigation.
   // portals: [
