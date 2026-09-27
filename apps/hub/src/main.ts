@@ -5,6 +5,7 @@
  */
 
 interface WorldEntry {
+  id?: string;
   name: string;
   url: string;
   description?: string;
@@ -16,6 +17,8 @@ interface WorldEntry {
   pending?: boolean;
   submittedAt?: string;
 }
+
+import communityWorlds from './community.json';
 
 const STORAGE_KEY = 'worldmesh.worlds';
 const VIEWS_ENDPOINT = import.meta.env.VITE_VIEWS_ENDPOINT as string | undefined;
@@ -36,7 +39,9 @@ try {
  * serverless function. Leave unset to skip notifications.
  */
 const NOTIFY_WEBHOOK = import.meta.env.VITE_NOTIFY_WEBHOOK as string | undefined;
-const SCREENSHOT_ENDPOINT = import.meta.env.VITE_SCREENSHOT_ENDPOINT as string | undefined;
+const SCREENSHOT_ENDPOINT =
+  (import.meta.env.VITE_SCREENSHOT_ENDPOINT as string | undefined) ||
+  'https://worldmesh-screenshot.elias-willnat.workers.dev';
 
 function getDemoWorldUrl(envKey: string, localPort: number, defaultSubdomain: string): string {
   const envVal = import.meta.env[envKey] as string | undefined;
@@ -99,8 +104,16 @@ const DEMO_WORLDS: WorldEntry[] = [
   },
 ];
 
+const ALL_WORLDS: WorldEntry[] = [
+  ...DEMO_WORLDS,
+  ...(communityWorlds as WorldEntry[]),
+];
+
+import { ImageCropper } from './cropper';
+
 const form = document.querySelector<HTMLFormElement>('#add-form')!;
 const input = document.querySelector<HTMLInputElement>('#url')!;
+const addBtn = document.querySelector<HTMLButtonElement>('#add-btn')!;
 const botTrap = document.querySelector<HTMLInputElement>('#bot-trap');
 const statusEl = document.querySelector<HTMLDivElement>('#status')!;
 const creatorFields = document.querySelector<HTMLDivElement>('#creator-fields')!;
@@ -113,14 +126,142 @@ const demoList = document.querySelector<HTMLUListElement>('#demo-worlds')!;
 const yourList = document.querySelector<HTMLUListElement>('#your-worlds')!;
 const yourHeading = document.querySelector<HTMLHeadingElement>('#your-worlds-heading')!;
 
+// Cover upload & cropper elements
+const coverFileInput = document.querySelector<HTMLInputElement>('#cover-file-input')!;
+const coverUploadTrigger = document.querySelector<HTMLButtonElement>('#cover-upload-trigger')!;
+const cropperContainer = document.querySelector<HTMLDivElement>('#cropper-container')!;
+const cropperCanvas = document.querySelector<HTMLCanvasElement>('#cropper-canvas')!;
+const zoomSlider = document.querySelector<HTMLInputElement>('#zoom-slider')!;
+const zoomInBtn = document.querySelector<HTMLButtonElement>('#zoom-in-btn')!;
+const zoomOutBtn = document.querySelector<HTMLButtonElement>('#zoom-out-btn')!;
+const cropperResetBtn = document.querySelector<HTMLButtonElement>('#cropper-reset-btn')!;
+const cropperChangeBtn = document.querySelector<HTMLButtonElement>('#cropper-change-btn')!;
+const cropperRemoveBtn = document.querySelector<HTMLButtonElement>('#cropper-remove-btn')!;
+
+const cropper = new ImageCropper(cropperCanvas, {
+  onZoomChange: (z) => {
+    zoomSlider.value = z.toString();
+  },
+  onImageLoaded: () => {
+    cropperContainer.style.display = 'flex';
+    coverUploadTrigger.style.display = 'none';
+    zoomSlider.value = '1';
+  },
+  onClear: () => {
+    cropperContainer.style.display = 'none';
+    coverUploadTrigger.style.display = '';
+    coverFileInput.value = '';
+  },
+});
+
+coverUploadTrigger.addEventListener('click', () => coverFileInput.click());
+cropperChangeBtn.addEventListener('click', () => coverFileInput.click());
+
+coverFileInput.addEventListener('change', async () => {
+  const file = coverFileInput.files?.[0];
+  if (!file) return;
+  if (!file.type.startsWith('image/')) {
+    setStatus('Please select an image file.', true);
+    return;
+  }
+  try {
+    await cropper.loadFile(file);
+    setStatus('Drag the image to adjust position, use slider or mouse wheel to zoom.');
+  } catch {
+    setStatus('Failed to load image. Please try another one.', true);
+  }
+});
+
+for (const dropTarget of [coverUploadTrigger, cropperContainer]) {
+  dropTarget.addEventListener('dragover', (e: Event) => {
+    e.preventDefault();
+    coverUploadTrigger.classList.add('drag-over');
+  });
+  dropTarget.addEventListener('dragleave', () => {
+    coverUploadTrigger.classList.remove('drag-over');
+  });
+  dropTarget.addEventListener('drop', async (e: Event) => {
+    e.preventDefault();
+    coverUploadTrigger.classList.remove('drag-over');
+    const dragEvent = e as DragEvent;
+    const file = dragEvent.dataTransfer?.files?.[0];
+    if (file && file.type.startsWith('image/')) {
+      try {
+        await cropper.loadFile(file);
+        setStatus('Drag the image to adjust position, use slider or mouse wheel to zoom.');
+      } catch {
+        setStatus('Failed to load image. Please try another one.', true);
+      }
+    }
+  });
+}
+
+zoomSlider.addEventListener('input', () => {
+  cropper.setZoom(parseFloat(zoomSlider.value));
+});
+
+zoomInBtn.addEventListener('click', () => {
+  cropper.setZoom(cropper.getZoom() + 0.25);
+});
+
+zoomOutBtn.addEventListener('click', () => {
+  cropper.setZoom(cropper.getZoom() - 0.25);
+});
+
+cropperResetBtn.addEventListener('click', () => {
+  cropper.resetTransform();
+});
+
+cropperRemoveBtn.addEventListener('click', () => {
+  cropper.clear();
+});
+
 let pendingUrl: URL | null = null;
 let pendingManifest: { name?: string; description?: string; cover?: string; creator?: string } | null = null;
+
+function setAddingMode(active: boolean): void {
+  if (active) {
+    creatorFields.style.display = '';
+    addBtn.textContent = 'Cancel';
+    addBtn.type = 'button';
+    addBtn.classList.add('btn-cancel');
+  } else {
+    creatorFields.style.display = 'none';
+    addBtn.textContent = 'Add world';
+    addBtn.type = 'submit';
+    addBtn.classList.remove('btn-cancel');
+    input.value = '';
+    creatorNameInput.value = '';
+    creatorEmailInput.value = '';
+    creatorPortfolioInput.value = '';
+    creatorDescriptionInput.value = '';
+    cropper.clear();
+    pendingUrl = null;
+    pendingManifest = null;
+  }
+}
+
+addBtn.addEventListener('click', () => {
+  if (addBtn.type === 'button') {
+    setAddingMode(false);
+    setStatus('');
+    input.focus();
+  }
+});
+
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && creatorFields.style.display !== 'none') {
+    setAddingMode(false);
+    setStatus('');
+    input.focus();
+  }
+});
 
 render();
 
 // Fetch server-side view counts for all known worlds
 const allWorldUrls = [
-  ...DEMO_WORLDS.map((w) => w.url),
+  ...ALL_WORLDS.map((w) => w.url),
   ...load().filter((w) => !w.pending).map((w) => w.url),
 ];
 fetchViewCounts(allWorldUrls);
@@ -158,12 +299,39 @@ form.addEventListener('submit', async (event) => {
 
   if (manifest?.creator) creatorNameInput.value = manifest.creator;
   if (manifest?.description) creatorDescriptionInput.value = manifest.description;
-  creatorFields.style.display = '';
+  if (manifest?.cover) {
+    cropper.loadUrl(manifest.cover).catch(() => {
+      // CORS might block canvas read; manifest.cover remains as fallback.
+    });
+  }
+  setAddingMode(true);
   creatorNameInput.focus();
   setStatus('Almost there — add your details below.');
 });
 
-submitWorldBtn.addEventListener('click', () => {
+async function uploadCoverImage(webpData: string, worldUrl: string): Promise<string | null> {
+  const endpoint = SCREENSHOT_ENDPOINT || '/api/screenshot';
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: webpData, url: worldUrl }),
+    });
+    if (res.ok) {
+      const data = (await res.json()) as { url?: string };
+      if (data.url) return data.url;
+    }
+  } catch {
+    // Best-effort upload fallback to webpData
+  }
+  return null;
+}
+
+function slugify(str: string): string {
+  return str.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase();
+}
+
+submitWorldBtn.addEventListener('click', async () => {
   if (!pendingUrl) return;
 
   const email = creatorEmailInput.value.trim();
@@ -180,11 +348,35 @@ submitWorldBtn.addEventListener('click', () => {
     portfolio = /^https?:\/\//i.test(portfolioRaw) ? portfolioRaw : `https://${portfolioRaw}`;
   }
 
+  const baseName = pendingManifest?.name ?? pendingUrl.hostname;
+  const slug = slugify(baseName) || 'world';
+  const id = `${slug}-${Math.random().toString(36).substring(2, 8)}`;
+
+  let coverToUse = pendingManifest?.cover;
+
+  if (cropper.hasImage()) {
+    submitWorldBtn.disabled = true;
+    submitWorldBtn.textContent = 'Processing…';
+    setStatus('Converting cover image to WebP…');
+
+    try {
+      const webpData = cropper.exportWebP(0.85);
+      const uploadedUrl = await uploadCoverImage(webpData, pendingUrl.toString());
+      coverToUse = uploadedUrl || webpData;
+    } catch {
+      // Best-effort fallback
+    } finally {
+      submitWorldBtn.disabled = false;
+      submitWorldBtn.textContent = 'Submit world';
+    }
+  }
+
   const entry: WorldEntry = {
-    name: pendingManifest?.name ?? pendingUrl.hostname,
+    id,
+    name: baseName,
     url: pendingUrl.toString(),
     description: creatorDescriptionInput.value.trim() || pendingManifest?.description,
-    cover: pendingManifest?.cover,
+    cover: coverToUse,
     creator: creatorName,
     portfolio,
     email,
@@ -194,20 +386,27 @@ submitWorldBtn.addEventListener('click', () => {
 
   save([...load(), entry]);
 
-  input.value = '';
-  creatorNameInput.value = '';
-  creatorEmailInput.value = '';
-  creatorPortfolioInput.value = '';
-  creatorDescriptionInput.value = '';
-  creatorFields.style.display = 'none';
-  pendingUrl = null;
-  pendingManifest = null;
+  setAddingMode(false);
   setStatus('Submitted! Your world will appear once approved.');
   render();
 
+  saveSubmissionRecord(entry);
   requestScreenshot(entry);
   notifySubmission(entry);
 });
+
+async function saveSubmissionRecord(entry: WorldEntry): Promise<void> {
+  const endpoint = SCREENSHOT_ENDPOINT || '/api/screenshot';
+  try {
+    await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ submission: entry }),
+    });
+  } catch {
+    // Best-effort storage in R2
+  }
+}
 
 async function readManifest(
   url: URL,
@@ -227,6 +426,7 @@ async function readManifest(
 }
 
 async function requestScreenshot(entry: WorldEntry): Promise<void> {
+  if (entry.cover) return; // Custom cover already provided
   const endpoint = SCREENSHOT_ENDPOINT || '/api/screenshot';
   try {
     const res = await fetch(endpoint, {
@@ -257,6 +457,7 @@ async function notifySubmission(entry: WorldEntry): Promise<void> {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        id: entry.id,
         name: entry.name,
         url: entry.url,
         description: entry.description ?? null,
@@ -273,13 +474,14 @@ async function notifySubmission(entry: WorldEntry): Promise<void> {
 }
 
 function render(): void {
-  demoList.replaceChildren(...DEMO_WORLDS.map((world) => renderCard(world, false)));
+  demoList.replaceChildren(...ALL_WORLDS.map((world) => renderCard(world, false)));
 
   const saved = load();
-  const approved = saved.filter((w) => !w.pending);
+  const featuredUrls = new Set(ALL_WORLDS.map((w) => w.url));
+  const yourWorlds = saved.filter((w) => !featuredUrls.has(w.url));
 
   const items: HTMLLIElement[] = [];
-  for (const world of approved) items.push(renderCard(world, true));
+  for (const world of yourWorlds) items.push(renderCard(world, true));
 
   if (items.length === 0) {
     yourHeading.style.display = 'none';

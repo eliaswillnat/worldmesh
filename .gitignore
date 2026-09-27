@@ -5,3 +5,5 @@ dist/
 .firebase/
 .vite/
 .wrangler/
+.env*.local
+*.local
