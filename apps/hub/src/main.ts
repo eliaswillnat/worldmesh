@@ -18,10 +18,16 @@ interface WorldEntry {
 }
 
 const STORAGE_KEY = 'worldmesh.worlds';
-const CLICKS_KEY = 'worldmesh.clicks';
 const VIEWS_ENDPOINT = import.meta.env.VITE_VIEWS_ENDPOINT as string | undefined;
 const viewCounts: Record<string, number> = {};
 const sessionViewed = new Set<string>();
+
+// Clean up legacy local click counter from prototype
+try {
+  localStorage.removeItem('worldmesh.clicks');
+} catch {
+  // Ignore
+}
 
 /**
  * Set VITE_NOTIFY_WEBHOOK to a URL that accepts POST { name, url, description }
@@ -359,7 +365,7 @@ function renderCard(world: WorldEntry, removable: boolean): HTMLLIElement {
   footer.appendChild(host);
 
   if (!world.pending) {
-    const clicks = viewCounts[world.url] ?? getClicks(world.url);
+    const clicks = viewCounts[world.url] ?? 0;
     if (clicks > 0) {
       const clickBadge = document.createElement('span');
       clickBadge.className = 'card-clicks';
@@ -432,25 +438,7 @@ function save(worlds: WorldEntry[]): void {
   }
 }
 
-function getClicks(url: string): number {
-  try {
-    const all = JSON.parse(localStorage.getItem(CLICKS_KEY) ?? '{}') as Record<string, number>;
-    return all[url] ?? 0;
-  } catch {
-    return 0;
-  }
-}
-
 function trackClick(url: string): void {
-  // Local fallback
-  try {
-    const all = JSON.parse(localStorage.getItem(CLICKS_KEY) ?? '{}') as Record<string, number>;
-    all[url] = (all[url] ?? 0) + 1;
-    localStorage.setItem(CLICKS_KEY, JSON.stringify(all));
-  } catch {
-    // Best effort.
-  }
-
   // Server-side deduped view (one per IP per day)
   if (sessionViewed.has(url)) return;
   sessionViewed.add(url);
@@ -483,6 +471,6 @@ async function fetchViewCounts(urls: string[]): Promise<void> {
     }
     render();
   } catch {
-    // Fall back to localStorage counts.
+    // Network or server error — keep existing counts.
   }
 }
