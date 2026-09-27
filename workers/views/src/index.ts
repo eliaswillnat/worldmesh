@@ -47,21 +47,23 @@ export default {
       const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
       const day = new Date().toISOString().slice(0, 10);
       const dedupKey = `dedup:${ip}:${body.url}:${day}`;
+      const countKey = `count:${body.url}`;
 
-      const already = await env.VIEWS.get(dedupKey);
-      if (already) {
-        const current = await env.VIEWS.get(`count:${body.url}`);
-        return json({ counted: false, views: current ? parseInt(current, 10) : 0 });
+      const [already, currentVal] = await Promise.all([
+        env.VIEWS.get(dedupKey),
+        env.VIEWS.get(countKey),
+      ]);
+      const current = currentVal ? parseInt(currentVal, 10) : 0;
+
+      if (already && current > 0) {
+        return json({ counted: false, views: current });
       }
 
-      // Mark this IP as having viewed today (expires in 24h)
-      await env.VIEWS.put(dedupKey, '1', { expirationTtl: 86400 });
-
-      // Increment the count
-      const countKey = `count:${body.url}`;
-      const current = await env.VIEWS.get(countKey);
-      const newCount = (current ? parseInt(current, 10) : 0) + 1;
-      await env.VIEWS.put(countKey, String(newCount));
+      const newCount = current + 1;
+      await Promise.all([
+        env.VIEWS.put(countKey, String(newCount)),
+        env.VIEWS.put(dedupKey, '1', { expirationTtl: 86400 }),
+      ]);
 
       return json({ counted: true, views: newCount });
     }
