@@ -15,6 +15,7 @@ import type {
   WorldMeshOptions,
 } from '../types';
 import { Overlay } from '../ui/overlay';
+import { isTouchDevice } from '../controls/touch';
 import { Emitter } from './events';
 
 /** Never simulate more than this per substep, so a stall cannot tunnel the player. */
@@ -42,7 +43,14 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
 
   const overlay = new Overlay({
     ...options.ui,
-    onEnter: () => input.requestPointerLock(),
+    onEnter: (touch) => input.requestPointerLock(touch),
+    onInteract: () => {
+      if (activePortal) {
+        activatePortal(activePortal);
+      } else {
+        input.triggerAction('interact');
+      }
+    },
   });
 
   const input = new Input({
@@ -197,7 +205,8 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
       return;
     }
 
-    overlay.setPrompt(`Press E to enter ${nearest.label}`);
+    const isTouch = isTouchDevice();
+    overlay.setPrompt(isTouch ? `Tap to enter ${nearest.label}` : `Press E to enter ${nearest.label}`);
     if (input.locked && input.consume('interact')) activatePortal(nearest);
   }
 

@@ -1,5 +1,6 @@
 import type { InputAction, Keymap } from '../types';
 import { resolveKeymap } from './keymap';
+import { TouchControls, isTouchDevice } from './touch';
 
 export interface InputOptions {
   /** The element that receives pointer lock. */
@@ -9,9 +10,9 @@ export interface InputOptions {
 }
 
 /**
- * Keyboard + pointer-lock mouse input. This is the only place in WorldMesh
- * that reads raw browser events, so the control convention lives in one file
- * instead of being copy-pasted into every world.
+ * Keyboard + pointer-lock mouse input with mobile touch controls support.
+ * This is the only place in WorldMesh that reads raw browser events, so the
+ * control convention lives in one file instead of being copy-pasted into every world.
  */
 export class Input {
   readonly keymap: Keymap;
@@ -28,6 +29,7 @@ export class Input {
   private justPressed = new Set<InputAction>();
   private codeToActions = new Map<string, InputAction[]>();
   private onPointerLockChange?: (locked: boolean) => void;
+  private touch?: TouchControls;
   private disposed = false;
 
   constructor(options: InputOptions) {
@@ -43,32 +45,84 @@ export class Input {
       }
     }
 
+    // Touch controls on mobile / touchscreens
+    this.element.style.touchAction = 'none';
+    if (typeof window !== 'undefined') {
+      this.touch = new TouchControls({
+        element: this.element,
+        onExit: () => this.exitPointerLock(),
+      });
+    }
+
     window.addEventListener('keydown', this.handleKeyDown);
     window.addEventListener('keyup', this.handleKeyUp);
     window.addEventListener('blur', this.handleBlur);
     document.addEventListener('pointerlockchange', this.handlePointerLockChange);
+    document.addEventListener('pointerlockerror', this.handlePointerLockError);
     this.element.addEventListener('mousemove', this.handleMouseMove);
     this.element.addEventListener('wheel', this.handleWheel, { passive: true });
   }
 
-  requestPointerLock(): void {
+  requestPointerLock(touchTriggered = false): void {
     if (this.disposed || this.locked) return;
-    // Some embedders refuse pointer lock; a rejected promise must not surface
-    // as an uncaught error in the world's console.
-    Promise.resolve(this.element.requestPointerLock?.()).catch(() => {});
+
+    // Mobile / touch devices do not support pointer lock. Enter directly.
+    if (touchTriggered || isTouchDevice()) {
+      this.setLocked(true);
+      return;
+    }
+
+    if (typeof this.element.requestPointerLock === 'function') {
+      try {
+        const promise = this.element.requestPointerLock();
+        if (promise && typeof (promise as unknown as Promise<void>).then === 'function') {
+          (promise as unknown as Promise<void>).catch(() => {
+            // Pointer lock rejected (e.g. mobile Safari, tablet, iframe restrictions)
+            this.setLocked(true);
+          });
+          return;
+        }
+      } catch {
+        this.setLocked(true);
+        return;
+      }
+    } else {
+      this.setLocked(true);
+    }
+  }
+
+  setLocked(locked: boolean): void {
+    if (this.locked === locked) return;
+    this.locked = locked;
+    if (!locked) {
+      this.pressed.clear();
+      this.justPressed.clear();
+      this.touch?.reset();
+    }
+    this.touch?.setVisible(locked && isTouchDevice());
+    this.onPointerLockChange?.(this.locked);
   }
 
   exitPointerLock(): void {
-    if (document.pointerLockElement === this.element) document.exitPointerLock();
+    if (document.pointerLockElement === this.element) {
+      document.exitPointerLock();
+    }
+    this.setLocked(false);
+  }
+
+  triggerAction(action: InputAction): void {
+    this.justPressed.add(action);
   }
 
   isDown(action: InputAction): boolean {
+    if (this.touch?.isDown(action)) return true;
     for (const code of this.keymap[action]) if (this.pressed.has(code)) return true;
     return false;
   }
 
   /** True once per key press. Reading it clears the flag. */
   consume(action: InputAction): boolean {
+    if (this.touch?.consume(action)) return true;
     if (!this.justPressed.has(action)) return false;
     this.justPressed.delete(action);
     return true;
@@ -76,16 +130,31 @@ export class Input {
 
   /** Movement intent on the local XZ plane, already normalized. */
   getMoveAxis(): { x: number; z: number } {
-    const x = (this.isDown('right') ? 1 : 0) - (this.isDown('left') ? 1 : 0);
-    const z = (this.isDown('backward') ? 1 : 0) - (this.isDown('forward') ? 1 : 0);
+    let x = (this.isDown('right') ? 1 : 0) - (this.isDown('left') ? 1 : 0);
+    let z = (this.isDown('backward') ? 1 : 0) - (this.isDown('forward') ? 1 : 0);
+
+    if (this.touch) {
+      const touchAxis = this.touch.getMoveAxis();
+      x += touchAxis.x;
+      z += touchAxis.z;
+    }
+
     const length = Math.hypot(x, z);
     if (length === 0) return { x: 0, z: 0 };
-    return { x: x / length, z: z / length };
+    if (length > 1) return { x: x / length, z: z / length };
+    return { x, z };
   }
 
-  /** Read and reset the mouse/wheel accumulators. Call once per frame. */
+  /** Read and reset the mouse/wheel/touch accumulators. Call once per frame. */
   readLook(): { dx: number; dy: number; wheel: number } {
-    const look = { dx: this.mouseDeltaX, dy: this.mouseDeltaY, wheel: this.wheelDelta };
+    let dx = this.mouseDeltaX;
+    let dy = this.mouseDeltaY;
+    if (this.touch) {
+      const touchLook = this.touch.readLook();
+      dx += touchLook.dx;
+      dy += touchLook.dy;
+    }
+    const look = { dx, dy, wheel: this.wheelDelta };
     this.mouseDeltaX = 0;
     this.mouseDeltaY = 0;
     this.wheelDelta = 0;
@@ -99,10 +168,12 @@ export class Input {
 
   dispose(): void {
     this.disposed = true;
+    this.touch?.dispose();
     window.removeEventListener('keydown', this.handleKeyDown);
     window.removeEventListener('keyup', this.handleKeyUp);
     window.removeEventListener('blur', this.handleBlur);
     document.removeEventListener('pointerlockchange', this.handlePointerLockChange);
+    document.removeEventListener('pointerlockerror', this.handlePointerLockError);
     this.element.removeEventListener('mousemove', this.handleMouseMove);
     this.element.removeEventListener('wheel', this.handleWheel);
     this.pressed.clear();
@@ -142,12 +213,20 @@ export class Input {
   };
 
   private handlePointerLockChange = (): void => {
-    this.locked = document.pointerLockElement === this.element;
-    if (!this.locked) {
-      this.pressed.clear();
-      this.justPressed.clear();
+    const isLocked = document.pointerLockElement === this.element;
+    if (isLocked) {
+      this.setLocked(true);
+    } else if (!isTouchDevice()) {
+      // On non-touch desktop, losing pointer lock releases controls
+      this.setLocked(false);
     }
-    this.onPointerLockChange?.(this.locked);
+  };
+
+  private handlePointerLockError = (): void => {
+    // If pointer lock failed on desktop / iframe, still let the user enter
+    if (!this.locked) {
+      this.setLocked(true);
+    }
   };
 }
 

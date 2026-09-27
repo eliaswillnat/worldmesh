@@ -1,6 +1,7 @@
 export { createWorldMesh } from './core/worldmesh';
 export { Emitter } from './core/events';
 export { Input } from './controls/input';
+export { TouchControls, isTouchDevice } from './controls/touch';
 export { DEFAULT_KEYMAP, resolveKeymap } from './controls/keymap';
 export { DEFAULT_ABILITIES, resolveAbilities } from './abilities/abilities';
 export { CollisionWorld } from './movement/collision';

@@ -1,4 +1,5 @@
 import type { UiOptions } from '../types';
+import { isTouchDevice } from '../controls/touch';
 
 const STYLE_ID = 'worldmesh-overlay-style';
 
@@ -34,12 +35,13 @@ const CSS = `
   align-items: center;
   justify-content: center;
   gap: 18px;
-  background: rgba(8,11,16,0.55);
-  backdrop-filter: blur(3px);
+  background: rgba(8,11,16,0.65);
+  backdrop-filter: blur(4px);
   pointer-events: auto;
   cursor: pointer;
   text-align: center;
   padding: 24px;
+  -webkit-tap-highlight-color: transparent;
 }
 .wm-overlay[data-locked="true"] .wm-lock { display: none; }
 .wm-lock-title {
@@ -52,10 +54,26 @@ const CSS = `
   font-size: 14px;
   letter-spacing: .14em;
   text-transform: uppercase;
-  padding: 10px 20px;
+  padding: 12px 26px;
   border: 1px solid rgba(255,255,255,0.35);
   border-radius: 999px;
-  background: rgba(255,255,255,0.06);
+  background: rgba(255,255,255,0.1);
+  color: #fff;
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: all .15s ease;
+}
+.wm-lock-cta:hover, .wm-lock-cta:active {
+  background: rgba(255,255,255,0.22);
+  border-color: rgba(255,255,255,0.6);
+  transform: scale(1.02);
 }
 .wm-keys {
   display: grid;
@@ -82,13 +100,23 @@ const CSS = `
   left: 50%;
   top: 58%;
   transform: translateX(-50%);
-  padding: 8px 14px;
-  border-radius: 8px;
-  background: rgba(8,11,16,0.7);
-  border: 1px solid rgba(255,255,255,0.16);
+  padding: 10px 18px;
+  border-radius: 999px;
+  background: rgba(8,11,16,0.85);
+  border: 1px solid rgba(255,255,255,0.3);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
   font-size: 14px;
   display: none;
   white-space: nowrap;
+  pointer-events: auto;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition: transform .12s ease, border-color .12s ease;
+}
+.wm-prompt:hover, .wm-prompt:active {
+  transform: translateX(-50%) scale(1.04);
+  border-color: rgba(255,255,255,0.6);
 }
 .wm-overlay[data-locked="true"] .wm-prompt[data-visible="true"] { display: block; }
 .wm-badge {
@@ -140,19 +168,35 @@ const KEY_LEGEND: [string, string][] = [
   ['Esc', 'Release cursor'],
 ];
 
+const TOUCH_LEGEND: [string, string][] = [
+  ['Left drag', 'Move'],
+  ['Right drag', 'Look'],
+  ['▲ button', 'Jump'],
+  ['E / Prompt', 'Interact / Portal'],
+  ['V button', 'Camera mode'],
+  ['⏸ button', 'Menu / Pause'],
+];
+
 /**
  * The shared chrome of a WorldMesh world. Every world shows the same
- * click-to-enter panel, the same control legend and the same interact prompt,
- * which is what makes an unfamiliar world navigable on sight.
+ * click/tap-to-enter panel, the same control legend and the same interact prompt,
+ * which is what makes an unfamiliar world navigable on sight across desktop and mobile.
  */
 export class Overlay {
   readonly root: HTMLDivElement;
   private prompt: HTMLDivElement;
-  private onEnter: () => void;
+  private onEnter: (touch?: boolean) => void;
 
-  constructor(options: UiOptions & { onEnter: () => void }) {
+  constructor(
+    options: UiOptions & {
+      onEnter: (touch?: boolean) => void;
+      onInteract?: () => void;
+    },
+  ) {
     injectStyles();
     this.onEnter = options.onEnter;
+
+    const isTouch = isTouchDevice();
 
     this.root = document.createElement('div');
     this.root.className = 'wm-overlay';
@@ -166,22 +210,37 @@ export class Overlay {
 
     const lock = document.createElement('div');
     lock.className = 'wm-lock';
-    lock.addEventListener('click', () => this.onEnter());
 
     const title = document.createElement('h1');
     title.className = 'wm-lock-title';
     title.textContent = options.title ?? 'WorldMesh';
     lock.appendChild(title);
 
-    const cta = document.createElement('div');
+    const cta = document.createElement('button');
+    cta.type = 'button';
     cta.className = 'wm-lock-cta';
-    cta.textContent = 'Click to enter';
+    cta.textContent = isTouch ? 'Tap to enter' : 'Click to enter';
     lock.appendChild(cta);
+
+    const handleEnter = (e: Event) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const touchInitiated =
+        ('pointerType' in e && (e as PointerEvent).pointerType === 'touch') ||
+        e.type === 'touchend' ||
+        isTouch;
+      this.onEnter(touchInitiated);
+    };
+
+    cta.addEventListener('click', handleEnter);
+    cta.addEventListener('pointerup', handleEnter);
+    lock.addEventListener('click', handleEnter);
 
     if (options.controlsHint !== false) {
       const keys = document.createElement('div');
       keys.className = 'wm-keys';
-      for (const [key, label] of KEY_LEGEND) {
+      const legend = isTouch ? TOUCH_LEGEND : KEY_LEGEND;
+      for (const [key, label] of legend) {
         const row = document.createElement('div');
         const badge = document.createElement('span');
         badge.className = 'wm-key';
@@ -198,6 +257,10 @@ export class Overlay {
     this.prompt = document.createElement('div');
     this.prompt.className = 'wm-prompt';
     this.prompt.dataset.visible = 'false';
+    this.prompt.addEventListener('click', (e) => {
+      e.stopPropagation();
+      options.onInteract?.();
+    });
     this.root.appendChild(this.prompt);
 
     if (options.badge !== false) {
@@ -214,7 +277,7 @@ export class Overlay {
 
     const hint = document.createElement('div');
     hint.className = 'wm-hint';
-    hint.textContent = 'ESC to release cursor';
+    hint.textContent = isTouch ? 'Tap ⏸ to pause' : 'ESC to release cursor';
     this.root.appendChild(hint);
 
     document.body.appendChild(this.root);
