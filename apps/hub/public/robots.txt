@@ -1,5 +1,6 @@
 User-agent: *
 Disallow: /api/
+Sitemap: https://worldmesh.net/sitemap.xml
 
 # Block AI crawlers, automated scrapers, and LLM collectors
 User-agent: GPTBot
