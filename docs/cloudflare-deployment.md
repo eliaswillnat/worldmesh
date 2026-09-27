@@ -68,3 +68,32 @@ To receive notifications for new world submissions via Discord, Slack, Zapier, M
 Cloudflare Pages automatically reads the `_headers` and `_redirects` files in `apps/*/public`:
 - **`_headers`**: Sets `Access-Control-Allow-Origin: *` so the Hub can fetch manifests (`worldmesh.json`) from any world cross-origin.
 - **`_redirects`**: Automatically rewrites requests from `/.well-known/worldmesh.json` to `/worldmesh.json`.
+
+---
+
+## 4. Email Notifications via Resend
+
+The Hub automatically routes world submission alerts to `/api/notify`, which is handled by a Cloudflare Pages Function at `functions/api/notify.ts`.
+
+### Setup in 2 Minutes:
+
+1. **Get your API Key from [Resend](https://resend.com/)**:
+   - Sign up / log in at [resend.com](https://resend.com/).
+   - Go to **API Keys** > **Create API Key** (e.g. `worldmesh-notifications`).
+   - Copy the key (`re_...`).
+
+2. **Add Environment Variables to `worldmesh-hub` in Cloudflare Pages**:
+   - In Cloudflare Pages, open your **`worldmesh-hub`** project.
+   - Go to **Settings** > **Environment variables**.
+   - Add:
+     - `RESEND_API_KEY`: your `re_...` key (encrypt as Secret).
+     - `NOTIFICATION_EMAIL`: `elias.willnat@gmail.com` (or your chosen notification email).
+     - `FROM_EMAIL`: `WorldMesh <onboarding@resend.dev>` *(default until domain is verified)*.
+
+3. **Verify `worldmesh.net` in Resend (Optional for custom sender address)**:
+   - In Resend, go to **Domains** > **Add Domain** > enter `worldmesh.net`.
+   - Resend will show you 3 DNS records (DKIM TXT, SPF TXT, MX).
+   - Because your DNS is on Cloudflare, you can add those 3 records into Cloudflare DNS in 30 seconds.
+   - Once verified, update `FROM_EMAIL` in Cloudflare Pages to:
+     `WorldMesh <notifications@worldmesh.net>`
+

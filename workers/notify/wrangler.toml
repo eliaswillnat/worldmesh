@@ -1,0 +1,10 @@
+name = "worldmesh-notify"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+[vars]
+NOTIFICATION_EMAIL = "elias.willnat@gmail.com"
+FROM_EMAIL = "WorldMesh <onboarding@resend.dev>"
+
+# Set the secret in Cloudflare with:
+# npx wrangler secret put RESEND_API_KEY

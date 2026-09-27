@@ -139,9 +139,9 @@ async function readManifest(
 }
 
 async function notifySubmission(entry: WorldEntry): Promise<void> {
-  if (!NOTIFY_WEBHOOK) return;
+  const endpoint = NOTIFY_WEBHOOK || '/api/notify';
   try {
-    await fetch(NOTIFY_WEBHOOK, {
+    await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
