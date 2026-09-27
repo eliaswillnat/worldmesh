@@ -4,3 +4,4 @@ dist/
 *.log
 .firebase/
 .vite/
+.wrangler/
