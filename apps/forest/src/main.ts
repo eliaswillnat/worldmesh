@@ -25,10 +25,11 @@ const world = createWorldMesh({
     title: 'Forest',
     hubUrl: import.meta.env.VITE_WORLDMESH_HUB ?? 'http://localhost:5170/',
   },
-  portals: [
-    { url: 'http://localhost:5172/', label: 'Mars', position: [6, 0, -6], color: 0xff8a5c },
-    { url: 'http://localhost:5175/', label: 'Space Station', position: [-4, 0, -12], color: 0xb08cff },
-  ],
+  // Portals disabled for now — URL-paste in the hub is the primary navigation.
+  // portals: [
+  //   { url: 'http://localhost:5172/', label: 'Mars', position: [6, 0, -6], color: 0xff8a5c },
+  //   { url: 'http://localhost:5175/', label: 'Space Station', position: [-4, 0, -12], color: 0xb08cff },
+  // ],
 });
 
 if (import.meta.env.DEV) {

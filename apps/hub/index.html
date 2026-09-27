@@ -5,61 +5,99 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>WorldMesh</title>
     <meta name="description" content="A lightweight open network for independently hosted 3D worlds." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <style>
       :root {
-        --bg: #06080d;
-        --panel: rgba(255, 255, 255, 0.04);
-        --line: rgba(255, 255, 255, 0.12);
-        --text: #eef3f9;
-        --muted: rgba(238, 243, 249, 0.55);
-        --accent: #6cf0ff;
+        color-scheme: light;
+        --bg: #ffffff;
+        --card: #ffffff;
+        --text: oklch(0.13 0 0);
+        --muted: oklch(0.55 0 0);
+        --subtle: oklch(0.69 0 0);
+        --border: oklch(0.92 0 0);
+        --input-bg: oklch(0.97 0 0);
+        --accent: #ffffff;
+        --hover-overlay: rgba(0, 0, 0, 0.04);
+        --gradient-border-color: oklch(0.69 0 0);
       }
-      * { box-sizing: border-box; }
-      html, body { margin: 0; min-height: 100%; }
+
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]) {
+          color-scheme: dark;
+          --bg: #000000;
+          --card: oklch(0.16 0 0);
+          --text: oklch(0.985 0 0);
+          --muted: oklch(0.65 0 0);
+          --subtle: oklch(0.5 0 0);
+          --border: oklch(1 0 0 / 10%);
+          --input-bg: oklch(1 0 0 / 4%);
+          --accent: #ffffff;
+          --hover-overlay: rgba(255, 255, 255, 0.04);
+          --gradient-border-color: oklch(0.5 0 0);
+        }
+      }
+      :root[data-theme="dark"] {
+        color-scheme: dark;
+        --bg: #000000;
+        --card: oklch(0.16 0 0);
+        --text: oklch(0.985 0 0);
+        --muted: oklch(0.65 0 0);
+        --subtle: oklch(0.5 0 0);
+        --border: oklch(1 0 0 / 10%);
+        --input-bg: oklch(1 0 0 / 4%);
+        --accent: #ffffff;
+        --hover-overlay: rgba(255, 255, 255, 0.04);
+        --gradient-border-color: oklch(0.5 0 0);
+      }
+
+      * { box-sizing: border-box; margin: 0; }
+      html, body { min-height: 100%; }
       body {
-        background:
-          radial-gradient(900px 500px at 50% -15%, rgba(108, 240, 255, 0.14), transparent 70%),
-          var(--bg);
+        background: var(--bg);
         color: var(--text);
-        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        font-family: "Urbanist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
         display: flex;
         justify-content: center;
-        padding: 10vh 20px 80px;
+        padding: 4vh 20px 80px;
+        -webkit-font-smoothing: antialiased;
       }
-      main { width: 100%; max-width: 640px; }
+      main { width: 100%; max-width: 880px; }
       h1 {
         font-size: clamp(30px, 7vw, 48px);
         letter-spacing: 0.26em;
         font-weight: 600;
         margin: 0 0 10px;
       }
-      .tagline { color: var(--muted); font-size: 15px; margin: 0 0 40px; line-height: 1.5; }
+      .tagline { color: var(--muted); font-size: 15px; margin: 0 0 20px; line-height: 1.5; }
       form { display: flex; gap: 10px; margin-bottom: 10px; }
-      input {
+      input[type="text"] {
         flex: 1;
         padding: 14px 16px;
         border-radius: 10px;
-        border: 1px solid var(--line);
-        background: var(--panel);
+        border: 1px solid var(--border);
+        background: var(--input-bg);
         color: var(--text);
         font-size: 15px;
         font-family: inherit;
       }
-      input::placeholder { color: rgba(238, 243, 249, 0.35); }
+      input::placeholder { color: var(--subtle); opacity: 0.6; }
       input:focus { outline: none; border-color: var(--accent); }
       button {
         padding: 14px 20px;
         border-radius: 10px;
-        border: 1px solid var(--line);
-        background: var(--panel);
+        border: 1px solid var(--border);
+        background: var(--input-bg);
         color: var(--text);
         font-size: 14px;
         font-family: inherit;
         cursor: pointer;
         white-space: nowrap;
+        transition: border-color .15s ease, color .15s ease;
       }
       button:hover { border-color: var(--accent); color: var(--accent); }
-      .status { min-height: 20px; font-size: 13px; color: var(--muted); margin-bottom: 34px; }
+      .status { min-height: 20px; font-size: 13px; color: var(--muted); margin-bottom: 16px; }
       .status[data-error="true"] { color: #ff9a8a; }
       h2 {
         font-size: 11px;
@@ -67,45 +105,187 @@
         text-transform: uppercase;
         color: var(--muted);
         font-weight: 600;
-        margin: 30px 0 12px;
+        margin: 30px 0 16px;
       }
-      ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-      li a {
-        flex: 1;
-        min-width: 0;
-        display: flex;
-        align-items: center;
-        gap: 14px;
-        padding: 14px 16px;
-        border: 1px solid var(--line);
-        border-radius: 12px;
-        background: var(--panel);
+
+      /* ── Card grid ─────────────────────────────────────────────── */
+      .card-grid {
+        list-style: none;
+        padding: 0;
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+        gap: 16px;
+      }
+
+      /* ── Card ──────────────────────────────────────────────────── */
+      .card {
+        position: relative;
+        border-radius: 16px;
+        overflow: hidden;
+        background: var(--card);
+        cursor: pointer;
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
+        transition: opacity .2s ease;
+      }
+      .card:active { opacity: 0.9; }
+
+      /* Gradient border — fades from edges toward center */
+      .card::before {
+        content: "";
+        pointer-events: none;
+        position: absolute;
+        inset: 0;
+        z-index: 5;
+        border-radius: inherit;
+        padding: 1px;
+        background: linear-gradient(
+          to bottom,
+          var(--gradient-border-color) 0%,
+          transparent 50%,
+          var(--gradient-border-color) 100%
+        );
+        -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+        -webkit-mask-composite: xor;
+        mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+        mask-composite: exclude;
+        opacity: 0.2;
+      }
+
+      /* Hover overlay */
+      .card::after {
+        content: "";
+        pointer-events: none;
+        position: absolute;
+        inset: 0;
+        z-index: 5;
+        border-radius: inherit;
+        background: transparent;
+        transition: background .2s ease;
+      }
+      .card:hover::after {
+        background: var(--hover-overlay);
+      }
+
+      .card a {
+        display: block;
         text-decoration: none;
         color: inherit;
+        position: relative;
+        aspect-ratio: 3 / 4;
       }
-      li a:hover { border-color: var(--accent); }
-      .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
-      .meta { min-width: 0; }
-      .name { font-size: 15px; font-weight: 600; }
-      .desc { font-size: 13px; color: var(--muted); margin-top: 2px; }
-      .host {
-        margin-left: auto;
-        font-size: 11px;
+
+      /* ── Cover ─────────────────────────────────────────────────── */
+      .card-cover {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+      .card-cover-gradient {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 28px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
         color: var(--muted);
-        font-variant-numeric: tabular-nums;
-        flex: none;
+        opacity: 0.7;
       }
-      .remove {
-        margin-left: 10px;
-        padding: 6px 10px;
+
+      /* ── Card body — overlaid at the bottom via gradient fade ── */
+      .card-body {
+        position: absolute;
+        inset-inline: 0;
+        bottom: 0;
+        z-index: 4;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        padding: 48px 14px 14px;
+        background: linear-gradient(
+          to top,
+          var(--card) 0%,
+          color-mix(in srgb, var(--card) 85%, transparent) 40%,
+          transparent 100%
+        );
+      }
+      .card-name { font-size: 14px; font-weight: 600; margin: 0; }
+      .card-creator { font-size: 11px; color: var(--subtle); margin: 0; }
+      .card-desc { font-size: 12px; color: var(--muted); margin: 0; line-height: 1.35; }
+      .card-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-top: 2px;
+      }
+      .card-host {
         font-size: 11px;
+        color: var(--subtle);
+        font-variant-numeric: tabular-nums;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
-      .row { display: flex; align-items: center; }
+      .card-clicks {
+        font-size: 11px;
+        color: var(--subtle);
+        white-space: nowrap;
+        flex: none;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .card-clicks svg { opacity: 0.5; }
+
+      /* ── Remove button ─────────────────────────────────────────── */
+      .card-remove {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        z-index: 10;
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: rgba(8, 11, 16, 0.7);
+        backdrop-filter: blur(4px);
+        color: rgba(255, 255, 255, 0.7);
+        font-size: 14px;
+        line-height: 1;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0;
+        transition: opacity .15s ease;
+        padding: 0;
+      }
+      .card:hover .card-remove { opacity: 1; }
+      .card-remove:hover { color: #ff9a8a; border-color: #ff9a8a; }
+
+      /* ── Pending state ────────────────────────────────────────── */
+      .card-pending { opacity: 0.55; pointer-events: none; }
+      .card-pending .card-remove { pointer-events: auto; }
+      .card-pending-badge {
+        display: inline-block;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        color: var(--subtle);
+        margin-bottom: 8px;
+      }
+
       .empty { color: var(--muted); font-size: 13px; }
       footer { margin-top: 50px; font-size: 12px; color: var(--muted); line-height: 1.7; }
       footer code {
-        background: var(--panel);
-        border: 1px solid var(--line);
+        background: var(--input-bg);
+        border: 1px solid var(--border);
         border-radius: 5px;
         padding: 1px 5px;
         font-size: 11px;
@@ -114,17 +294,16 @@
   </head>
   <body>
     <main>
-      <h1>WORLD MESH</h1>
+      <h1>WORLDMESH</h1>
       <p class="tagline">
-        A lightweight open network for independently hosted 3D worlds.
-        You host the world. WorldMesh just makes it navigable.
+        An open network of independently hosted 3D worlds. Walk between them.
       </p>
 
       <form id="add-form">
         <input
           id="url"
-          type="url"
-          placeholder="Paste your 3D world URL"
+          type="text"
+          placeholder="Paste a world URL"
           autocomplete="off"
           spellcheck="false"
         />
@@ -132,18 +311,18 @@
       </form>
       <div class="status" id="status"></div>
 
-      <h2>Demo worlds</h2>
-      <ul id="demo-worlds"></ul>
+      <!-- <h2>Demo worlds</h2> -->
+      <ul class="card-grid" id="demo-worlds"></ul>
 
-      <h2>Your worlds</h2>
-      <ul id="your-worlds"></ul>
+      <h2 id="your-worlds-heading" style="display:none">Your worlds</h2>
+      <ul class="card-grid" id="your-worlds"></ul>
 
-      <footer>
+      <!-- <footer>
         Every world above runs the same <code>@worldmesh/runtime</code>:
         WASD to move, mouse to look, <code>Space</code> to jump,
         <code>Shift</code> to sprint, <code>E</code> to interact,
         <code>V</code> to switch camera.
-      </footer>
+      </footer> -->
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>

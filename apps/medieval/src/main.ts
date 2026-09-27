@@ -22,10 +22,11 @@ const world = createWorldMesh({
     title: 'Medieval Village',
     hubUrl: import.meta.env.VITE_WORLDMESH_HUB ?? 'http://localhost:5170/',
   },
-  portals: [
-    { url: 'http://localhost:5175/', label: 'Space Station', position: [-8, 0, 4], color: 0xb08cff },
-    { url: 'http://localhost:5173/', label: 'Neon City', position: [8, 0, 4], color: 0xff4fd8 },
-  ],
+  // Portals disabled for now — URL-paste in the hub is the primary navigation.
+  // portals: [
+  //   { url: 'http://localhost:5175/', label: 'Space Station', position: [-8, 0, 4], color: 0xb08cff },
+  //   { url: 'http://localhost:5173/', label: 'Neon City', position: [8, 0, 4], color: 0xff4fd8 },
+  // ],
 });
 
 if (import.meta.env.DEV) {
