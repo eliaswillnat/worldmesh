@@ -65,7 +65,7 @@
       }
       main { width: 100%; max-width: 880px; }
       h1 {
-        font-size: clamp(30px, 7vw, 48px);
+        font-size: clamp(22px, 4vw, 32px);
         letter-spacing: 0.26em;
         font-weight: 600;
         margin: 0 0 10px;
@@ -75,7 +75,7 @@
       input[type="text"] {
         flex: 1;
         padding: 14px 16px;
-        border-radius: 10px;
+        border-radius: 12px;
         border: 1px solid var(--border);
         background: var(--input-bg);
         color: var(--text);
@@ -86,7 +86,7 @@
       input:focus { outline: none; border-color: var(--accent); }
       button {
         padding: 14px 20px;
-        border-radius: 10px;
+        border-radius: 12px;
         border: 1px solid var(--border);
         background: var(--input-bg);
         color: var(--text);
@@ -97,6 +97,7 @@
         transition: border-color .15s ease, color .15s ease;
       }
       button:hover { border-color: var(--accent); color: var(--accent); }
+      .creator-fields { display: flex; gap: 10px; margin-bottom: 10px; }
       .status { min-height: 20px; font-size: 13px; color: var(--muted); margin-bottom: 16px; }
       .status[data-error="true"] { color: #ff9a8a; }
       h2 {
@@ -215,6 +216,14 @@
       }
       .card-name { font-size: 14px; font-weight: 600; margin: 0; }
       .card-creator { font-size: 11px; color: var(--subtle); margin: 0; }
+      .card-creator-link {
+        color: var(--text);
+        text-decoration: none;
+        position: relative;
+        z-index: 6;
+        transition: opacity .15s ease;
+      }
+      .card-creator-link:hover { opacity: 0.7; }
       .card-desc { font-size: 12px; color: var(--muted); margin: 0; line-height: 1.35; }
       .card-footer {
         display: flex;
@@ -296,7 +305,7 @@
     <main>
       <h1>WORLDMESH</h1>
       <p class="tagline">
-        An open network of independently hosted 3D worlds. Walk between them.
+        A free open network of independently hosted 3D worlds. Walk between them.
       </p>
 
       <form id="add-form">
@@ -316,8 +325,14 @@
           autocomplete="off"
           aria-hidden="true"
         />
-        <button type="submit">Add world</button>
+        <button type="submit" id="add-btn">Add world</button>
       </form>
+      <div class="creator-fields" id="creator-fields" style="display:none">
+        <input id="creator-name" type="text" placeholder="Your name" autocomplete="off" />
+        <input id="creator-portfolio" type="text" placeholder="Portfolio link (optional)" autocomplete="off" />
+        <input id="creator-description" type="text" placeholder="Short description (optional)" autocomplete="off" />
+        <button type="button" id="submit-world">Submit world</button>
+      </div>
       <div class="status" id="status"></div>
 
       <!-- <h2>Demo worlds</h2> -->

@@ -43,6 +43,7 @@ export default {
       description?: string;
       cover?: string;
       creator?: string;
+      portfolio?: string;
       submittedAt?: string;
     };
 
@@ -85,6 +86,14 @@ export default {
         <div style="margin: 16px 0;">
           <span style="color: #888; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em;">Creator</span>
           <div style="color: #eee; margin-top: 4px;">${escapeHtml(body.creator)}</div>
+        </div>` : ''}
+
+        ${body.portfolio ? `
+        <div style="margin: 16px 0;">
+          <span style="color: #888; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em;">Portfolio</span>
+          <div style="margin-top: 4px;">
+            <a href="${escapeHtml(body.portfolio)}" style="color: #70aaff; text-decoration: underline; word-break: break-all;" target="_blank">${escapeHtml(body.portfolio)}</a>
+          </div>
         </div>` : ''}
 
         ${body.description ? `

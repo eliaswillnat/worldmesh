@@ -1,0 +1,11 @@
+name = "worldmesh-views"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+[[kv_namespaces]]
+binding = "VIEWS"
+id = "f0816126ec6b4790ae02b0c258f8ff3d"
+# Create with: npx wrangler kv namespace create VIEWS
+# Then paste the id above.
+
+# Rate-limit dedup keys expire after 24h

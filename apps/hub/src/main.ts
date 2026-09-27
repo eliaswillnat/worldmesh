@@ -11,12 +11,16 @@ interface WorldEntry {
   color?: string;
   cover?: string;
   creator?: string;
+  portfolio?: string;
   pending?: boolean;
   submittedAt?: string;
 }
 
 const STORAGE_KEY = 'worldmesh.worlds';
 const CLICKS_KEY = 'worldmesh.clicks';
+const VIEWS_ENDPOINT = import.meta.env.VITE_VIEWS_ENDPOINT as string | undefined;
+const viewCounts: Record<string, number> = {};
+const sessionViewed = new Set<string>();
 
 /**
  * Set VITE_NOTIFY_WEBHOOK to a URL that accepts POST { name, url, description }
@@ -24,6 +28,7 @@ const CLICKS_KEY = 'worldmesh.clicks';
  * serverless function. Leave unset to skip notifications.
  */
 const NOTIFY_WEBHOOK = import.meta.env.VITE_NOTIFY_WEBHOOK as string | undefined;
+const SCREENSHOT_ENDPOINT = import.meta.env.VITE_SCREENSHOT_ENDPOINT as string | undefined;
 
 function getDemoWorldUrl(envKey: string, localPort: number, defaultSubdomain: string): string {
   const envVal = import.meta.env[envKey] as string | undefined;
@@ -75,15 +80,29 @@ const form = document.querySelector<HTMLFormElement>('#add-form')!;
 const input = document.querySelector<HTMLInputElement>('#url')!;
 const botTrap = document.querySelector<HTMLInputElement>('#bot-trap');
 const statusEl = document.querySelector<HTMLDivElement>('#status')!;
+const creatorFields = document.querySelector<HTMLDivElement>('#creator-fields')!;
+const creatorNameInput = document.querySelector<HTMLInputElement>('#creator-name')!;
+const creatorPortfolioInput = document.querySelector<HTMLInputElement>('#creator-portfolio')!;
+const creatorDescriptionInput = document.querySelector<HTMLInputElement>('#creator-description')!;
+const submitWorldBtn = document.querySelector<HTMLButtonElement>('#submit-world')!;
 const demoList = document.querySelector<HTMLUListElement>('#demo-worlds')!;
 const yourList = document.querySelector<HTMLUListElement>('#your-worlds')!;
 const yourHeading = document.querySelector<HTMLHeadingElement>('#your-worlds-heading')!;
 
+let pendingUrl: URL | null = null;
+let pendingManifest: { name?: string; description?: string; cover?: string; creator?: string } | null = null;
+
 render();
+
+// Fetch server-side view counts for all known worlds
+const allWorldUrls = [
+  ...DEMO_WORLDS.map((w) => w.url),
+  ...load().filter((w) => !w.pending).map((w) => w.url),
+];
+fetchViewCounts(allWorldUrls);
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
-  // Honeypot check: If the hidden bot field is filled, discard silently.
   if (botTrap?.value?.trim()) {
     input.value = '';
     setStatus('Submitted! Your world will appear once approved.');
@@ -110,22 +129,50 @@ form.addEventListener('submit', async (event) => {
   setStatus('Looking for a world manifest…');
   const manifest = await readManifest(url);
 
+  pendingUrl = url;
+  pendingManifest = manifest;
+
+  if (manifest?.creator) creatorNameInput.value = manifest.creator;
+  if (manifest?.description) creatorDescriptionInput.value = manifest.description;
+  creatorFields.style.display = '';
+  creatorNameInput.focus();
+  setStatus('Almost there — add your details below.');
+});
+
+submitWorldBtn.addEventListener('click', () => {
+  if (!pendingUrl) return;
+
+  const creatorName = creatorNameInput.value.trim() || undefined;
+  const portfolioRaw = creatorPortfolioInput.value.trim();
+  let portfolio: string | undefined;
+  if (portfolioRaw) {
+    portfolio = /^https?:\/\//i.test(portfolioRaw) ? portfolioRaw : `https://${portfolioRaw}`;
+  }
+
   const entry: WorldEntry = {
-    name: manifest?.name ?? url.hostname,
-    url: url.toString(),
-    description: manifest?.description,
-    cover: manifest?.cover,
-    creator: manifest?.creator,
+    name: pendingManifest?.name ?? pendingUrl.hostname,
+    url: pendingUrl.toString(),
+    description: creatorDescriptionInput.value.trim() || pendingManifest?.description,
+    cover: pendingManifest?.cover,
+    creator: creatorName,
+    portfolio,
     pending: true,
     submittedAt: new Date().toISOString(),
   };
 
-  save([...saved, entry]);
+  save([...load(), entry]);
 
   input.value = '';
+  creatorNameInput.value = '';
+  creatorPortfolioInput.value = '';
+  creatorDescriptionInput.value = '';
+  creatorFields.style.display = 'none';
+  pendingUrl = null;
+  pendingManifest = null;
   setStatus('Submitted! Your world will appear once approved.');
   render();
 
+  requestScreenshot(entry);
   notifySubmission(entry);
 });
 
@@ -146,6 +193,30 @@ async function readManifest(
   return null;
 }
 
+async function requestScreenshot(entry: WorldEntry): Promise<void> {
+  const endpoint = SCREENSHOT_ENDPOINT || '/api/screenshot';
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: entry.url }),
+    });
+    if (res.ok) {
+      const data = (await res.json()) as { url?: string };
+      if (data.url) {
+        const saved = load();
+        const idx = saved.findIndex((w) => w.url === entry.url);
+        if (idx !== -1) {
+          saved[idx].cover = data.url;
+          save(saved);
+        }
+      }
+    }
+  } catch {
+    // Screenshot is best-effort.
+  }
+}
+
 async function notifySubmission(entry: WorldEntry): Promise<void> {
   const endpoint = NOTIFY_WEBHOOK || '/api/notify';
   try {
@@ -158,6 +229,7 @@ async function notifySubmission(entry: WorldEntry): Promise<void> {
         description: entry.description ?? null,
         cover: entry.cover ?? null,
         creator: entry.creator ?? null,
+        portfolio: entry.portfolio ?? null,
         submittedAt: entry.submittedAt,
       }),
     });
@@ -221,10 +293,22 @@ function renderCard(world: WorldEntry, removable: boolean): HTMLLIElement {
   body.appendChild(name);
 
   if (world.creator) {
-    const creator = document.createElement('p');
-    creator.className = 'card-creator';
-    creator.textContent = `by ${world.creator}`;
-    body.appendChild(creator);
+    const creatorEl = document.createElement('p');
+    creatorEl.className = 'card-creator';
+    if (world.portfolio) {
+      creatorEl.textContent = 'by ';
+      const creatorLink = document.createElement('a');
+      creatorLink.href = world.portfolio;
+      creatorLink.target = '_blank';
+      creatorLink.rel = 'noopener';
+      creatorLink.className = 'card-creator-link';
+      creatorLink.textContent = world.creator;
+      creatorLink.addEventListener('click', (e) => e.stopPropagation());
+      creatorEl.appendChild(creatorLink);
+    } else {
+      creatorEl.textContent = `by ${world.creator}`;
+    }
+    body.appendChild(creatorEl);
   }
 
   if (world.pending) {
@@ -248,7 +332,7 @@ function renderCard(world: WorldEntry, removable: boolean): HTMLLIElement {
   footer.appendChild(host);
 
   if (!world.pending) {
-    const clicks = getClicks(world.url);
+    const clicks = viewCounts[world.url] ?? getClicks(world.url);
     if (clicks > 0) {
       const clickBadge = document.createElement('span');
       clickBadge.className = 'card-clicks';
@@ -331,11 +415,46 @@ function getClicks(url: string): number {
 }
 
 function trackClick(url: string): void {
+  // Local fallback
   try {
     const all = JSON.parse(localStorage.getItem(CLICKS_KEY) ?? '{}') as Record<string, number>;
     all[url] = (all[url] ?? 0) + 1;
     localStorage.setItem(CLICKS_KEY, JSON.stringify(all));
   } catch {
     // Best effort.
+  }
+
+  // Server-side deduped view (one per IP per day)
+  if (sessionViewed.has(url)) return;
+  sessionViewed.add(url);
+
+  const endpoint = VIEWS_ENDPOINT || '/api/views';
+  fetch(`${endpoint}/view`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+  })
+    .then((res) => res.json() as Promise<{ views?: number }>)
+    .then((data) => {
+      if (data.views != null) {
+        viewCounts[url] = data.views;
+        render();
+      }
+    })
+    .catch(() => {});
+}
+
+async function fetchViewCounts(urls: string[]): Promise<void> {
+  if (urls.length === 0) return;
+  const endpoint = VIEWS_ENDPOINT || '/api/views';
+  try {
+    const res = await fetch(`${endpoint}/views?urls=${encodeURIComponent(urls.join(','))}`);
+    const counts = (await res.json()) as Record<string, number>;
+    for (const [url, count] of Object.entries(counts)) {
+      viewCounts[url] = count;
+    }
+    render();
+  } catch {
+    // Fall back to localStorage counts.
   }
 }
