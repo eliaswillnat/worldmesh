@@ -256,9 +256,6 @@ window.addEventListener('keydown', (e) => {
 
 render();
 
-// Experiment: live iframe previews (remove this line to disable)
-import('./iframe-preview').then((m) => m.enableIframePreviews());
-
 fetchCommunityWorlds();
 
 async function fetchCommunityWorlds(): Promise<void> {
