@@ -434,6 +434,33 @@
       }
       .card-clicks svg { opacity: 0.5; }
 
+      @media (max-width: 600px) {
+        html {
+          scroll-snap-type: y proximity;
+        }
+        body { padding: 0; }
+        main { max-width: 100%; }
+        h1, .tagline, form, .creator-fields, .status, footer { padding-left: 16px; padding-right: 16px; }
+        h1 { padding-top: 4vh; }
+        footer { padding-bottom: 40px; }
+        .card-grid {
+          display: flex;
+          flex-direction: column;
+          gap: 0;
+        }
+        .card-grid > .card {
+          scroll-snap-align: start;
+          scroll-snap-stop: always;
+          flex-shrink: 0;
+          border-radius: 0;
+          height: 85dvh;
+          min-height: 85dvh;
+        }
+        .card-grid > .card > a { aspect-ratio: unset; height: 100%; }
+        .card-grid > .card::before { border-radius: 0; }
+        .card-grid > .card::after { border-radius: 0; }
+      }
+
       .empty { color: var(--muted); font-size: 13px; }
       footer { margin-top: 50px; font-size: 12px; color: var(--muted); line-height: 1.7; }
       footer a { color: var(--subtle); text-decoration: none; transition: color .15s ease; }
