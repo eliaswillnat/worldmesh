@@ -259,8 +259,8 @@ async function fetchCommunityWorlds(): Promise<void> {
     const res = await fetch('/api/worlds');
     if (!res.ok) return;
     communityWorlds = (await res.json()) as WorldEntry[];
-    ALL_WORLDS.length = DEMO_WORLDS.length;
-    ALL_WORLDS.push(...communityWorlds);
+    ALL_WORLDS.length = 0;
+    ALL_WORLDS.push(...communityWorlds, ...DEMO_WORLDS);
     render();
     fetchViewCounts(ALL_WORLDS.map((w) => w.url));
   } catch {

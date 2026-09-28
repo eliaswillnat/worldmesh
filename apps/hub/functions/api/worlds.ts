@@ -42,6 +42,12 @@ export async function onRequestGet(context: {
     cursor = list.list_complete ? undefined : (list as any).cursor;
   } while (cursor);
 
+  worlds.sort((a, b) => {
+    const ta = (b as any).approvedAt || '';
+    const tb = (a as any).approvedAt || '';
+    return ta > tb ? 1 : ta < tb ? -1 : 0;
+  });
+
   return new Response(JSON.stringify(worlds), {
     headers: {
       ...CORS_HEADERS,
