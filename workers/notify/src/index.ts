@@ -2,6 +2,8 @@ interface Env {
   RESEND_API_KEY: string;
   NOTIFICATION_EMAIL?: string;
   FROM_EMAIL?: string;
+  TELEGRAM_BOT_TOKEN?: string;
+  TELEGRAM_CHAT_ID?: string;
 }
 
 const CORS_HEADERS = {
@@ -170,6 +172,9 @@ export default {
       </div>
     `;
 
+    const results: { email?: { success: boolean; id?: string; error?: string }; telegram?: { success: boolean; error?: string } } = {};
+
+    // Send email notification
     try {
       const resendPayload: Record<string, unknown> = {
         from: fromEmail,
@@ -195,25 +200,77 @@ export default {
 
       if (!resendRes.ok) {
         const errorText = await resendRes.text();
-        return new Response(JSON.stringify({ error: 'Resend API error', details: errorText }), {
-          status: resendRes.status,
-          headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
-        });
+        results.email = { success: false, error: errorText };
+      } else {
+        const data = await resendRes.json() as { id: string };
+        results.email = { success: true, id: data.id };
       }
-
-      const data = await resendRes.json() as { id: string };
-      return new Response(JSON.stringify({ success: true, id: data.id }), {
-        status: 200,
-        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
-      });
     } catch (err: any) {
-      return new Response(JSON.stringify({ error: 'Failed to notify via Resend', details: err?.message }), {
-        status: 500,
-        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
-      });
+      results.email = { success: false, error: err?.message };
     }
+
+    // Send Telegram notification
+    if (env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID) {
+      try {
+        results.telegram = await sendTelegramNotification(
+          env.TELEGRAM_BOT_TOKEN,
+          env.TELEGRAM_CHAT_ID,
+          { ...body, id: submissionId },
+        );
+      } catch (err: any) {
+        results.telegram = { success: false, error: err?.message };
+      }
+    }
+
+    const anySuccess = results.email?.success || results.telegram?.success;
+    return new Response(JSON.stringify({ success: anySuccess, results }), {
+      status: anySuccess ? 200 : 500,
+      headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+    });
   },
 };
+
+async function sendTelegramNotification(
+  botToken: string,
+  chatId: string,
+  body: { id?: string; name?: string; url?: string; description?: string; creator?: string; email?: string; portfolio?: string; submittedAt?: string },
+): Promise<{ success: boolean; error?: string }> {
+  const lines: string[] = [
+    `🌐 *New WorldMesh Submission*`,
+    ``,
+    `*ID:* \`${escapeMd(body.id || 'unknown')}\``,
+    `*World:* ${escapeMd(body.name || 'Unnamed')}`,
+    `*URL:* ${escapeMd(body.url || '')}`,
+  ];
+  if (body.creator) lines.push(`*Creator:* ${escapeMd(body.creator)}`);
+  if (body.email) lines.push(`*Email:* ${escapeMd(body.email)}`);
+  if (body.portfolio) lines.push(`*Portfolio:* ${escapeMd(body.portfolio)}`);
+  if (body.description) {
+    lines.push(``, `_${escapeMd(body.description)}_`);
+  }
+  lines.push(``, `📅 ${escapeMd(body.submittedAt || new Date().toISOString())}`);
+
+  const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text: lines.join('\n'),
+      parse_mode: 'MarkdownV2',
+      disable_web_page_preview: false,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    return { success: false, error: err };
+  }
+  return { success: true };
+}
+
+function escapeMd(str: string): string {
+  return str.replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, '\\$1');
+}
 
 function escapeHtml(str: string): string {
   return str

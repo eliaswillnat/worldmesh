@@ -6,5 +6,7 @@ compatibility_date = "2024-01-01"
 NOTIFICATION_EMAIL = "elias.willnat@gmail.com"
 FROM_EMAIL = "WorldMesh <onboarding@resend.dev>"
 
-# Set the secret in Cloudflare with:
+# Set secrets in Cloudflare with:
 # npx wrangler secret put RESEND_API_KEY
+# npx wrangler secret put TELEGRAM_BOT_TOKEN
+# npx wrangler secret put TELEGRAM_CHAT_ID
