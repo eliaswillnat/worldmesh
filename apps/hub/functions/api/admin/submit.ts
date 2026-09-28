@@ -6,7 +6,7 @@ interface Env {
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'POST, PUT, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
@@ -114,6 +114,62 @@ export async function onRequestPost(context: {
     entry,
     manifestFound: !!manifest,
   });
+}
+
+export async function onRequestPut(context: {
+  request: Request;
+  env: Env;
+}): Promise<Response> {
+  const { request, env } = context;
+
+  const authHeader = request.headers.get('Authorization');
+  const secret = env.APPROVE_SECRET;
+  if (!secret || authHeader !== `Bearer ${secret}`) {
+    return jsonResponse({ error: 'Unauthorized.' }, 401);
+  }
+
+  if (!env.WORLDS) {
+    return jsonResponse({ error: 'KV binding not configured.' }, 500);
+  }
+
+  let body: {
+    id: string;
+    name?: string;
+    description?: string;
+    cover?: string;
+    creator?: string;
+    portfolio?: string;
+  };
+
+  try {
+    body = await request.json();
+  } catch {
+    return jsonResponse({ error: 'Invalid JSON.' }, 400);
+  }
+
+  if (!body.id) {
+    return jsonResponse({ error: 'Missing id.' }, 400);
+  }
+
+  const raw = await env.WORLDS.get(`approved:${body.id}`);
+  if (!raw) {
+    return jsonResponse({ error: 'World not found.' }, 404);
+  }
+
+  const existing = JSON.parse(raw);
+  const updated = {
+    ...existing,
+    ...(body.name !== undefined && { name: body.name }),
+    ...(body.description !== undefined && { description: body.description }),
+    ...(body.cover !== undefined && { cover: body.cover }),
+    ...(body.creator !== undefined && { creator: body.creator }),
+    ...(body.portfolio !== undefined && { portfolio: body.portfolio }),
+    updatedAt: new Date().toISOString(),
+  };
+
+  await env.WORLDS.put(`approved:${body.id}`, JSON.stringify(updated));
+
+  return jsonResponse({ success: true, entry: updated });
 }
 
 async function fetchManifest(
