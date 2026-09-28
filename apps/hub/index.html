@@ -436,13 +436,20 @@
 
       @media (max-width: 600px) {
         html {
-          scroll-snap-type: y proximity;
+          scroll-snap-type: y mandatory;
+          -webkit-overflow-scrolling: touch;
         }
         body { padding: 0; }
         main { max-width: 100%; }
         h1, .tagline, form, .creator-fields, .status, footer { padding-left: 16px; padding-right: 16px; }
-        h1 { padding-top: 4vh; }
-        footer { padding-bottom: 40px; }
+        h1 {
+          padding-top: 4vh;
+          scroll-snap-align: start;
+        }
+        footer {
+          padding-bottom: 40px;
+          scroll-snap-align: end;
+        }
         .card-grid {
           display: flex;
           flex-direction: column;
