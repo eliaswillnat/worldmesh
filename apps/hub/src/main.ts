@@ -17,6 +17,8 @@ interface WorldEntry {
   submittedAt?: string;
 }
 
+import communityWorldsStatic from './community.json';
+
 const VIEWS_ENDPOINT = import.meta.env.VITE_VIEWS_ENDPOINT as string | undefined;
 const viewCounts: Record<string, number> = {};
 const sessionViewed = new Map<string, number>();
@@ -101,8 +103,8 @@ const DEMO_WORLDS: WorldEntry[] = [
   },
 ];
 
-let communityWorlds: WorldEntry[] = [];
-const ALL_WORLDS: WorldEntry[] = [...DEMO_WORLDS];
+let communityWorlds: WorldEntry[] = communityWorldsStatic as WorldEntry[];
+const ALL_WORLDS: WorldEntry[] = [...communityWorlds, ...DEMO_WORLDS];
 
 import { ImageCropper } from './cropper';
 
