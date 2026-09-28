@@ -15,6 +15,7 @@ interface WorldEntry {
   portfolio?: string;
   email?: string;
   submittedAt?: string;
+  addedAt?: string;
 }
 
 import communityWorldsStatic from './community.json';
@@ -473,8 +474,25 @@ async function notifySubmission(entry: WorldEntry): Promise<void> {
   }
 }
 
+function worldScore(world: WorldEntry): number {
+  const views = viewCounts[world.url] ?? 0;
+  if (!world.addedAt) return views;
+  const ageMs = Date.now() - new Date(world.addedAt).getTime();
+  const ageDays = ageMs / (1000 * 60 * 60 * 24);
+  const boostDays = 7;
+  const decayDays = 30;
+  let bonus = 0;
+  if (ageDays <= boostDays) {
+    bonus = 50;
+  } else if (ageDays <= decayDays) {
+    bonus = 50 * (1 - (ageDays - boostDays) / (decayDays - boostDays));
+  }
+  return views + bonus;
+}
+
 function render(): void {
-  demoList.replaceChildren(...ALL_WORLDS.map((world) => renderCard(world)));
+  const sorted = [...ALL_WORLDS].sort((a, b) => worldScore(b) - worldScore(a));
+  demoList.replaceChildren(...sorted.map((world) => renderCard(world)));
 }
 
 function renderCard(world: WorldEntry): HTMLLIElement {
