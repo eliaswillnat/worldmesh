@@ -484,16 +484,28 @@
           gap: 0;
         }
         .card-grid > .card {
-          scroll-snap-align: start;
+          scroll-snap-align: center;
           scroll-snap-stop: always;
           flex-shrink: 0;
-          border-radius: 0;
-          height: 85dvh;
-          min-height: 85dvh;
+          border-radius: 12px;
+          height: 100dvh;
+          min-height: 100dvh;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: transparent;
         }
-        .card-grid > .card > a { aspect-ratio: unset; height: 100%; }
-        .card-grid > .card::before { border-radius: 0; }
-        .card-grid > .card::after { border-radius: 0; }
+        .card-grid > .card > a {
+          aspect-ratio: 3 / 4;
+          height: auto;
+          width: 100%;
+          max-height: 92dvh;
+          border-radius: 12px;
+          overflow: hidden;
+          background: var(--card);
+        }
+        .card-grid > .card::before { border-radius: 12px; }
+        .card-grid > .card::after { border-radius: 12px; }
       }
 
       .empty { color: var(--muted); font-size: 13px; }
