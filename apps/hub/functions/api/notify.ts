@@ -2,6 +2,8 @@ interface Env {
   RESEND_API_KEY?: string;
   NOTIFICATION_EMAIL?: string;
   FROM_EMAIL?: string;
+  APPROVE_SECRET?: string;
+  WORLDS: KVNamespace;
 }
 
 const CORS_HEADERS = {
@@ -42,6 +44,12 @@ const BLOCKED_UA_PATTERNS = [
   /insomnia/i,
   /go-http-client/i,
 ];
+
+function generateToken(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
 
 export async function onRequestOptions(): Promise<Response> {
   return new Response(null, {
@@ -121,7 +129,6 @@ export async function onRequestPost(context: {
 
   // 4. Bot check: Honeypot trap (bots fill hidden fields, humans never do)
   if (body.botTrap && body.botTrap.trim().length > 0) {
-    // Return a fake success so bots don't adapt, but silently discard the submission
     return new Response(JSON.stringify({ success: true, fake: true }), {
       status: 200,
       headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
@@ -142,7 +149,9 @@ export async function onRequestPost(context: {
   const fromEmail = env.FROM_EMAIL || 'WorldMesh <onboarding@resend.dev>';
   const submissionId = body.id || `world-${Date.now().toString(36)}`;
 
-  const allowlistEntry = {
+  const approveToken = generateToken();
+
+  const worldEntry = {
     id: submissionId,
     name: body.name,
     url: body.url,
@@ -150,7 +159,18 @@ export async function onRequestPost(context: {
     cover: body.cover || undefined,
     creator: body.creator || undefined,
     portfolio: body.portfolio || undefined,
+    email: body.email || undefined,
+    submittedAt: body.submittedAt || new Date().toISOString(),
+    status: 'pending' as const,
+    approveToken,
   };
+
+  if (env.WORLDS) {
+    await env.WORLDS.put(`pending:${submissionId}`, JSON.stringify(worldEntry));
+  }
+
+  const siteOrigin = new URL(request.url).origin;
+  const approveUrl = `${siteOrigin}/api/approve?id=${encodeURIComponent(submissionId)}&token=${approveToken}`;
 
   let coverAttachment: { filename: string; content: string; content_id: string; content_type: string } | null = null;
   let coverImgSrc: string | null = null;
@@ -175,10 +195,24 @@ export async function onRequestPost(context: {
     }
   }
 
+  const allowlistEntry = {
+    id: submissionId,
+    name: body.name,
+    url: body.url,
+    description: body.description || undefined,
+    cover: body.cover || undefined,
+    creator: body.creator || undefined,
+    portfolio: body.portfolio || undefined,
+  };
+
   const htmlContent = `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; background: #0a0a0a; color: #f0f0f0; border-radius: 8px;">
       <h2 style="margin-top: 0; color: #ffffff; font-size: 20px; border-bottom: 1px solid #222; padding-bottom: 12px;">New WorldMesh Submission</h2>
-      
+
+      <div style="margin: 24px 0; text-align: center;">
+        <a href="${escapeHtml(approveUrl)}" style="display: inline-block; padding: 14px 36px; background: #34d399; color: #000; font-weight: 700; text-decoration: none; border-radius: 25px; font-size: 16px;">Approve World</a>
+      </div>
+
       <div style="background: #141414; padding: 14px 18px; border-radius: 8px; border: 1px solid #2a2a2a; margin: 16px 0;">
         <span style="color: #888; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; display: block; margin-bottom: 4px;">Submission ID</span>
         <code style="font-family: ui-monospace, Menlo, Monaco, monospace; font-size: 16px; color: #70aaff; font-weight: 700; user-select: all;">${escapeHtml(submissionId)}</code>

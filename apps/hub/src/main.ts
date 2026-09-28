@@ -17,8 +17,6 @@ interface WorldEntry {
   submittedAt?: string;
 }
 
-import communityWorlds from './community.json';
-
 const VIEWS_ENDPOINT = import.meta.env.VITE_VIEWS_ENDPOINT as string | undefined;
 const viewCounts: Record<string, number> = {};
 const sessionViewed = new Map<string, number>();
@@ -103,10 +101,8 @@ const DEMO_WORLDS: WorldEntry[] = [
   },
 ];
 
-const ALL_WORLDS: WorldEntry[] = [
-  ...DEMO_WORLDS,
-  ...(communityWorlds as WorldEntry[]),
-];
+let communityWorlds: WorldEntry[] = [];
+const ALL_WORLDS: WorldEntry[] = [...DEMO_WORLDS];
 
 import { ImageCropper } from './cropper';
 
@@ -255,6 +251,22 @@ window.addEventListener('keydown', (e) => {
 });
 
 render();
+
+fetchCommunityWorlds();
+
+async function fetchCommunityWorlds(): Promise<void> {
+  try {
+    const res = await fetch('/api/worlds');
+    if (!res.ok) return;
+    communityWorlds = (await res.json()) as WorldEntry[];
+    ALL_WORLDS.length = DEMO_WORLDS.length;
+    ALL_WORLDS.push(...communityWorlds);
+    render();
+    fetchViewCounts(ALL_WORLDS.map((w) => w.url));
+  } catch {
+    // Fall back to demo worlds only
+  }
+}
 
 // Fetch server-side view counts for all known worlds
 const allWorldUrls = ALL_WORLDS.map((w) => w.url);
