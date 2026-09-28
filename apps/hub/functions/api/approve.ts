@@ -79,11 +79,11 @@ export async function onRequestPost(context: {
       <h2 style="margin-top: 0; color: #ffffff; font-size: 20px; border-bottom: 1px solid #222; padding-bottom: 12px;">Your world is live!</h2>
 
       <p style="color: #ccc; line-height: 1.6; margin: 16px 0;">
-        Hey ${escapeHtml(creatorName)}, great news — <strong style="color: #fff;">${escapeHtml(body.name)}</strong> has been approved and is now live on WorldMesh!
+        Hey ${escapeHtml(creatorName)}, great news! <strong style="color: #fff;">${escapeHtml(body.name)}</strong> has been approved and is now live on WorldMesh.
       </p>
 
       <div style="margin: 24px 0; text-align: center;">
-        <a href="https://worldmesh.net" style="display: inline-block; padding: 12px 28px; background: #70aaff; color: #000; font-weight: 600; text-decoration: none; border-radius: 6px;">View on WorldMesh</a>
+        <a href="https://worldmesh.net" style="display: inline-block; padding: 12px 28px; background: #70aaff; color: #000; font-weight: 600; text-decoration: none; border-radius: 25px;">View on WorldMesh</a>
       </div>
 
       <div style="margin: 16px 0;">
