@@ -119,6 +119,7 @@ const creatorEmailInput = document.querySelector<HTMLInputElement>('#creator-ema
 const creatorPortfolioInput = document.querySelector<HTMLInputElement>('#creator-portfolio')!;
 const creatorDescriptionInput = document.querySelector<HTMLInputElement>('#creator-description')!;
 const submitWorldBtn = document.querySelector<HTMLButtonElement>('#submit-world')!;
+const navConfirmCheckbox = document.querySelector<HTMLInputElement>('#nav-confirm')!;
 const demoList = document.querySelector<HTMLUListElement>('#demo-worlds')!;
 
 // Cover upload & cropper elements
@@ -231,6 +232,7 @@ function setAddingMode(active: boolean): void {
     creatorPortfolioInput.value = '';
     creatorDescriptionInput.value = '';
     cropper.clear();
+    navConfirmCheckbox.checked = false;
     pendingUrl = null;
     pendingManifest = null;
   }
@@ -340,6 +342,12 @@ function slugify(str: string): string {
 
 submitWorldBtn.addEventListener('click', async () => {
   if (!pendingUrl) return;
+
+  if (!navConfirmCheckbox.checked) {
+    setStatus('Please confirm that your world uses familiar PC game navigation controls.', true);
+    navConfirmCheckbox.focus();
+    return;
+  }
 
   const email = creatorEmailInput.value.trim();
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
