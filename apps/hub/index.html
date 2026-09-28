@@ -123,6 +123,34 @@
       }
       .creator-fields { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
       .creator-fields input { min-width: 170px; }
+      .nav-requirement {
+        width: 100%;
+        margin-top: 4px;
+        margin-bottom: 6px;
+      }
+      .nav-requirement-text {
+        font-size: 13px;
+        line-height: 1.5;
+        color: #999;
+        margin-bottom: 8px;
+      }
+      .nav-confirm-label {
+        font-size: 13px;
+        color: #ccc;
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        cursor: pointer;
+      }
+      .nav-confirm-label input[type="checkbox"] {
+        margin-top: 2px;
+        accent-color: #4af;
+        flex-shrink: 0;
+      }
+      @media (prefers-color-scheme: light) {
+        .nav-requirement-text { color: #666; }
+        .nav-confirm-label { color: #333; }
+      }
       .submit-row {
         width: 100%;
         display: flex;
@@ -537,6 +565,16 @@
               </div>
             </div>
           </div>
+        </div>
+
+        <div class="nav-requirement">
+          <p class="nav-requirement-text">
+            WorldMesh worlds should use familiar PC game controls for basic navigation — such as WASD or arrow keys for movement, mouse for looking around, Space for jumping, Shift for sprinting, and familiar interaction keys like E. Mobile support is optional but recommended — touch controls for movement and looking around, tap for interaction, and a portrait-friendly layout. Worlds can add additional controls freely.
+          </p>
+          <label class="nav-confirm-label">
+            <input type="checkbox" id="nav-confirm" />
+            I confirm that my world uses familiar PC game navigation controls.
+          </label>
         </div>
 
         <div class="submit-row">
