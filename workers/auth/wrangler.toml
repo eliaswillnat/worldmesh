@@ -23,7 +23,7 @@ FEDERATION_DOMAIN = "worldmesh.net"
 binding = "DB"
 database_name = "worldmesh"
 # Paste the id printed by `npx wrangler d1 create worldmesh`.
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "4eaef9b3-1429-4f73-b817-eb3da824e7a3"
 migrations_dir = "../../db/migrations"
 
 # Per-IP limit on sign-in, OAuth callbacks and username changes. Counted per

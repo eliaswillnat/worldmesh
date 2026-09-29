@@ -33,7 +33,7 @@ crons = ["*/5 * * * *"]
 binding = "DB"
 database_name = "worldmesh"
 # The same database as workers/auth. Migrations are applied from there.
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "4eaef9b3-1429-4f73-b817-eb3da824e7a3"
 migrations_dir = "../../db/migrations"
 
 # Per-IP limit on inbox POSTs, ahead of signature checks (which may fetch a
