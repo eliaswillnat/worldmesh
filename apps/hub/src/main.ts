@@ -264,6 +264,36 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
+// ── Mobile: the add form opens from a top-right toggle ───────────────────────
+const mobileQuery = window.matchMedia('(max-width: 600px)');
+const mobileAddToggle = document.querySelector<HTMLButtonElement>('#mobile-add-toggle')!;
+let userScrolled = false;
+for (const ev of ['touchstart', 'wheel', 'keydown'] as const) {
+  window.addEventListener(ev, () => { userScrolled = true; }, { once: true, passive: true });
+}
+
+mobileAddToggle.addEventListener('click', () => {
+  userScrolled = true;
+  const open = document.documentElement.classList.toggle('mobile-adding');
+  mobileAddToggle.textContent = open ? 'Close' : 'Add world';
+  mobileAddToggle.setAttribute('aria-expanded', String(open));
+  if (open) {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    input.focus({ preventScroll: true });
+  } else {
+    setAddingMode(false);
+    setStatus('');
+    snapFirstCard();
+  }
+});
+
+// On mobile the page opens with the first card already snapped into view.
+function snapFirstCard(): void {
+  if (!mobileQuery.matches || document.documentElement.classList.contains('mobile-adding')) return;
+  demoList.firstElementChild?.scrollIntoView({ block: 'center' });
+}
+
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
 render();
 
 fetchCommunityWorlds();
@@ -618,6 +648,7 @@ function render(): void {
     ...DEMO_WORLDS.slice().sort(byScore),
   ];
   demoList.replaceChildren(...sorted.map((world) => renderCard(world)));
+  if (!userScrolled) requestAnimationFrame(snapFirstCard);
 }
 
 function renderCard(world: WorldEntry): HTMLLIElement {
