@@ -509,10 +509,16 @@
         body { padding: 0; }
         main { max-width: 100%; }
         h1, .tagline, form, .creator-fields, .status, footer { padding-left: 16px; padding-right: 16px; }
-        h1 {
-          padding-top: 4vh;
-          scroll-snap-align: start;
+        h1 { padding-top: max(20px, env(safe-area-inset-top)); }
+        /* The title stays pinned as the cards scroll under it. */
+        .site-header {
+          position: sticky;
+          top: 0;
+          z-index: 50;
+          background: var(--bg);
         }
+        .tagline { margin-bottom: 12px; }
+        html { scroll-padding-top: var(--header-h, 0px); }
         footer {
           padding-bottom: 40px;
           scroll-snap-align: end;
@@ -523,12 +529,12 @@
           gap: 0;
         }
         .card-grid > .card {
-          scroll-snap-align: center;
+          scroll-snap-align: start;
           scroll-snap-stop: always;
           flex-shrink: 0;
           border-radius: 12px;
-          height: 100dvh;
-          min-height: 100dvh;
+          height: calc(100dvh - var(--header-h, 0px));
+          min-height: calc(100dvh - var(--header-h, 0px));
           display: flex;
           align-items: center;
           justify-content: center;
@@ -538,7 +544,7 @@
           aspect-ratio: 3 / 4;
           height: auto;
           width: 100%;
-          max-height: 92dvh;
+          max-height: calc(100% - 16px);
           border-radius: 12px;
           overflow: hidden;
           background: var(--card);
@@ -553,9 +559,11 @@
         .mobile-add-toggle {
           display: block;
           position: fixed;
-          top: max(16px, env(safe-area-inset-top));
+          top: calc(max(20px, env(safe-area-inset-top)) - 4px);
           right: max(16px, env(safe-area-inset-right));
           z-index: 100;
+          padding: 8px 14px;
+          font-size: 13px;
           background: color-mix(in srgb, var(--bg) 70%, transparent);
           -webkit-backdrop-filter: blur(10px);
           backdrop-filter: blur(10px);
@@ -566,7 +574,7 @@
         html:not(.mobile-adding) #creator-fields,
         html:not(.mobile-adding) #status { display: none !important; }
         /* Keep the title clear of the toggle. */
-        h1 { padding-right: 130px; }
+        h1 { padding-right: 116px; letter-spacing: 0.2em; }
       }
 
       /* ── Walk mode ─────────────────────────────────────────────── */
@@ -752,10 +760,12 @@
     <button type="button" class="mobile-add-toggle" id="mobile-add-toggle" aria-expanded="false">Add world</button>
     <div class="walk-online" id="walk-online" aria-live="polite"></div>
     <main>
-      <h1>WORLDMESH <span class="beta-badge">BETA</span></h1>
-      <p class="tagline">
-        A free open network of independently hosted 3D worlds. Walk between them.
-      </p>
+      <header class="site-header" id="site-header">
+        <h1>WORLDMESH <span class="beta-badge">BETA</span></h1>
+        <p class="tagline">
+          A free open network of independently hosted 3D worlds. Walk between them.
+        </p>
+      </header>
 
       <form id="add-form">
         <input
