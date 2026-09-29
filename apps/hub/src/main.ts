@@ -287,10 +287,16 @@ mobileAddToggle.addEventListener('click', () => {
   }
 });
 
+// Cards fill the space below the pinned header.
+const siteHeader = document.querySelector<HTMLElement>('#site-header')!;
+new ResizeObserver(() => {
+  document.documentElement.style.setProperty('--header-h', `${siteHeader.offsetHeight}px`);
+}).observe(siteHeader);
+
 // On mobile the page opens with the first card already snapped into view.
 function snapFirstCard(): void {
   if (!mobileQuery.matches || document.documentElement.classList.contains('mobile-adding')) return;
-  demoList.firstElementChild?.scrollIntoView({ block: 'center' });
+  demoList.firstElementChild?.scrollIntoView({ block: 'start' });
 }
 
 if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
