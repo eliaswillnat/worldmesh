@@ -1,0 +1,173 @@
+# Accounts and federation
+
+Two separate Workers on the hub's own hostname, sharing one D1 database.
+Neither is on the path of a 3D world, and `@worldmesh/runtime` knows about
+neither.
+
+```
+hub (Cloudflare Pages, worldmesh.net)
+ │  /api/auth/*, /api/account/*        ──►  workers/auth        Better Auth: Google, Apple, GitHub, Discord
+ │  /.well-known/webfinger, /ap/*, /@* ──►  workers/federation  WebFinger + ActivityPub
+ │  everything else                    ──►  Pages (static + existing /api Functions, KV)
+ ▼
+D1 "worldmesh"  (db/migrations)  — canonical WorldMesh data
+ ▲
+ └── workers/federation ──► Mastodon, Pixelfed, … (signed HTTP, SSRF-guarded)
+```
+
+Worker routes take precedence over the Pages project on the same hostname, so
+nothing about the hub's deployment changes.
+
+## Accounts (`workers/auth`)
+
+- **Better Auth 1.7** with its native D1 dialect. Google, Apple, GitHub and
+  Discord; no passwords, no email flows. The dialog shows only providers whose
+  secrets are set (`GET /api/account/providers`).
+- **Apple specifics**: the client secret is an ES256 JWT that Apple limits to
+  six months, so the Worker mints a 2-day one from the `.p8` key itself
+  (`src/apple.ts`); nothing to rotate. Apple posts the callback cross-site
+  (`form_post`), so `https://appleid.apple.com` is a trusted origin and Better
+  Auth bounces the POST to a same-site GET before the state cookie is checked.
+  Apple sends the user's name only on the first sign-in and may hide the email
+  behind a relay address; a missing name falls back to the username.
+- **Sessions**: `__Secure-worldmesh.session_token`, HttpOnly, Secure,
+  SameSite=Lax, host-only (never sent to worlds on subdomains). 30 days,
+  sliding once a day. A signed 5-minute cookie cache means most
+  `/api/account/me` calls never touch D1. A revoked session can stay valid for
+  up to those 5 minutes.
+- **OAuth**: state + PKCE verifier live in an encrypted, browser-bound cookie
+  (no D1 row per attempt). Callback and redirect URLs are checked against the
+  hub origin. Origin/CSRF checks are pinned on (Better Auth turns them off
+  under `NODE_ENV=test`).
+- **Account linking**: identities with the same email become one user only
+  when both providers say the email is verified. Apple relay addresses and
+  unverified Discord emails therefore stay separate accounts.
+- **No provider tokens stored**: a database hook blanks access/refresh/id
+  tokens before they reach D1.
+- **Usernames**: `^[a-z][a-z0-9_]{2,29}$`, reserved words refused, unique,
+  **set once** (it becomes a fediverse identity; renames would strand remote
+  followers). `POST /api/account/username` requires a same-origin request.
+- **Rate limits**: a Cloudflare rate-limit binding per IP on sign-in,
+  callbacks, sign-out and username changes, plus Better Auth's own limiter.
+- **Cost of anonymous visitors: zero.** The hub only asks `/api/account/me`
+  when this browser has signed in before (a `localStorage` hint, not a
+  credential).
+
+Endpoints: Better Auth's under `/api/auth/*` (the hub uses
+`POST /sign-in/social`, `GET /callback/:provider`, `POST /sign-out`), plus
+`GET /api/account/me` and `POST /api/account/username`.
+
+## Data model (`db/migrations`)
+
+| Table | Owner | Holds |
+| --- | --- | --- |
+| `user`, `session`, `account`, `verification` | Better Auth | identity, sessions, one `account` row per linked Google/Apple/GitHub/Discord identity; `user.username` is WorldMesh's handle |
+| `profile` | WorldMesh | optional bio, website, avatar override |
+| `world` | WorldMesh | worlds owned by a user (`draft` → `pending` → `published`) |
+| `ap_actor` | federation | local actors and their keys (private key AES-GCM encrypted) |
+| `ap_remote_actor` | federation | cache of remote actors/keys |
+| `ap_follower` | federation | who follows whom |
+| `ap_object`, `ap_activity` | federation | what we published (the world Note, Create, Accept) |
+| `ap_delivery` | federation | outgoing delivery queue with retries |
+| `ap_inbox_seen` | federation | received activity ids (dedup/replay), pruned after 14 days |
+| `ap_interaction` | federation | likes, boosts, replies (references only) |
+
+The public directory still comes from KV (`/api/worlds`). The `world` table is
+empty until worlds are linked to accounts; nothing is copied automatically.
+Worlds could become actors later (`ap_actor.kind = 'world'` is reserved) without
+changing creator actors.
+
+## Federation (`workers/federation`)
+
+What exists, and is covered by tests against a real D1 and a simulated remote
+server:
+
+- **WebFinger** (`acct:user@worldmesh.net`, also the profile URL), host-meta,
+  NodeInfo 2.1.
+- **Person actors** for creators with a username, with `publicKey`, inbox,
+  outbox, followers, following, shared inbox, icon, `discoverable`,
+  FEP-2c59 `webfinger`. An **instance actor** (Application) signs our GETs, so
+  servers in Mastodon's secure mode answer.
+- **Inbox** (per actor and shared): size cap (256 KiB), content type,
+  plain-JSON parsing with a depth cap (no JSON-LD expansion or remote
+  contexts), draft-cavage **HTTP signature verification** (rsa-sha256/hs2019,
+  Digest required on POST, 12-hour window, host bound, key refetch on
+  rotation), signer must be the actor, activity id on the actor's host,
+  de-duplication by id.
+- **Follow → Accept** (signed, delivered to the follower's inbox),
+  **Undo Follow**, Like/Announce/reply recording and their Undo, account
+  Delete cleanup, Update (key refresh).
+- **Announcing a world**: `Create(Note)` "Elias published Example World" with
+  description, cover image attachment, canonical page
+  (`/@elias/worlds/<id>`) and the world link, delivered to every follower's
+  shared inbox. **Only on explicit request** (below); never automatic.
+- **Outbox** (paged), follower count (list not published), empty following.
+- **Delivery**: rows in `ap_delivery`, sent immediately via `waitUntil`, retried
+  by a 5-minute cron with backoff for ~2 days. Swapping in Cloudflare Queues
+  later means sending `{ deliveryId }` messages and calling `deliverOne` in
+  the consumer.
+- **SSRF guard** on every remote URL and every redirect hop: https only, port
+  443, no IP literals, no private/test TLDs, not ourselves, 8 s timeout,
+  512 KiB cap.
+- **Edge caching** (Cloudflare Cache API) of WebFinger, actors, objects,
+  outbox and profile pages, so repeated fediverse fetches cost no D1 reads.
+
+Not done yet — needed before calling this complete interoperability:
+
+- **RFC 9421 HTTP Message Signatures.** Only draft-cavage is implemented.
+  Mastodon signs with draft-cavage and verifies both; the unreleased 4.7 only
+  retries with RFC 9421 after a cavage signature is refused. Not blocking
+  today, but other servers may move first.
+- **Forwarded activities / LD signatures.** Activities relayed by a third
+  server are refused (signer must be the actor).
+- **Update/Delete of our own objects** (editing or removing a world
+  announcement) and **Update of the actor** when a creator changes name or
+  avatar. Remote servers refresh actors on their own schedule meanwhile.
+- **Account deletion** for WorldMesh users should send `Delete(actor)`; the
+  schema cascades locally but nothing is broadcast yet.
+- **A self-service publish flow.** Linking worlds to accounts in the hub, and
+  calling the announce step when a world is approved, is the next piece.
+- **Moderation**: blocking domains/actors, handling `Flag` reports.
+- **Scale**: the free plan's 10 ms CPU and 50 subrequests per invocation cap a
+  delivery run at ~8 inboxes; followers spread over many servers take several
+  cron runs to reach. Workers Paid ($5/month) removes that limit.
+
+Generating an RSA key takes 50–200 ms of CPU, which exceeds the free plan's
+10 ms per request; Workers tolerate occasional overruns. It happens once per
+creator (and once for the instance actor).
+
+## Announcing a world (for now)
+
+1. The world row must exist in D1, be `published` and owned by a user with a
+   username:
+   ```bash
+   npx wrangler d1 execute worldmesh --remote --config workers/auth/wrangler.toml --command "insert into world (id, owner_user_id, name, url, description, cover_url, status, created_at, updated_at, published_at) values ('example-world-abc123', (select id from \"user\" where username = 'elias'), 'Example World', 'https://example.com/', 'A short description', 'https://…/cover.webp', 'published', unixepoch()*1000, unixepoch()*1000, unixepoch()*1000)"
+   ```
+2. Announce it (idempotent):
+   ```bash
+   curl -X POST https://worldmesh.net/ap/admin/announce -H "Authorization: Bearer $FEDERATION_ADMIN_TOKEN" -H 'Content-Type: application/json' -d '{"worldId":"example-world-abc123"}'
+   ```
+
+## Local development
+
+```bash
+npm run db:migrate:local
+```
+
+```bash
+npm run dev:auth
+```
+
+```bash
+npm run dev:federation
+```
+
+```bash
+npm run dev:hub
+```
+
+Copy `workers/*/.dev.vars.example` to `.dev.vars` first. The hub dev server
+proxies `/api/auth`, `/api/account`, WebFinger, `/ap` and `/@name` to the local
+Workers, so cookies and OAuth callbacks use `http://localhost:5170`.
+
+Tests: `npm run test:workers` (real local D1 via wrangler; no network).

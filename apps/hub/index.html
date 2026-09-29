@@ -587,6 +587,95 @@
         h1 { padding-right: 116px; letter-spacing: 0.2em; }
       }
 
+      /* ── Account ───────────────────────────────────────────────── */
+      /* On mobile the header is sticky, which already anchors the button. */
+      @media (min-width: 601px) { .site-header { position: relative; } }
+      .account-button {
+        position: absolute;
+        top: 0;
+        right: 0;
+        padding: 8px 16px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        max-width: 200px;
+      }
+      .account-avatar {
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        object-fit: cover;
+        flex: none;
+      }
+      .account-avatar.large { width: 48px; height: 48px; }
+      .account-avatar-fallback {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+        font-weight: 700;
+        background: var(--border);
+        color: var(--text);
+      }
+      .account-avatar-fallback.large { font-size: 20px; }
+      .account-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .account-dialog {
+        margin: auto;
+        width: min(360px, calc(100vw - 32px));
+        padding: 24px;
+        border-radius: 20px;
+        border: 1px solid var(--border);
+        background: var(--card);
+        color: var(--text);
+        font-family: inherit;
+      }
+      .account-dialog::backdrop { background: rgba(0, 0, 0, 0.5); }
+      .account-body { display: flex; flex-direction: column; gap: 10px; }
+      .account-title {
+        margin: 0 0 8px;
+        font-size: 11px;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: var(--muted);
+        font-weight: 600;
+      }
+      .account-provider {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        width: 100%;
+      }
+      .account-who { display: flex; align-items: center; gap: 14px; margin-bottom: 6px; }
+      .account-display-name { font-size: 16px; font-weight: 600; }
+      .account-handle { font-size: 13px; color: var(--muted); margin-top: 2px; word-break: break-all; }
+      .account-username { display: flex; flex-direction: column; gap: 8px; }
+      .account-username label { font-size: 13px; color: var(--muted); }
+      .account-username-row { display: flex; gap: 8px; }
+      .account-username-row input { min-width: 0; }
+      .account-hint { font-size: 12px; color: var(--subtle); line-height: 1.5; }
+      .account-logout { color: var(--muted); }
+      .account-message { font-size: 13px; color: var(--muted); }
+      .account-message[data-error="true"] { color: #ff9a8a; }
+      button:disabled { opacity: 0.6; cursor: default; }
+      .account-icon { display: none; width: 18px; height: 18px; }
+      @media (max-width: 600px) {
+        /* A 34px circle at the end of the tagline row: the title row belongs to Add world. */
+        .account-button {
+          top: auto;
+          bottom: 12px;
+          right: max(16px, env(safe-area-inset-right));
+          width: 34px;
+          height: 34px;
+          padding: 0;
+          justify-content: center;
+          border-radius: 50%;
+        }
+        .account-button .account-label, .account-name { display: none; }
+        .account-button .account-icon { display: block; }
+        .tagline { padding-right: 60px; }
+      }
+
       /* ── Walk mode ─────────────────────────────────────────────── */
       .walk-toggle {
         position: fixed;
@@ -771,11 +860,15 @@
     <div class="walk-online" id="walk-online" aria-live="polite"></div>
     <main>
       <header class="site-header" id="site-header">
+        <button type="button" class="account-button" id="account-button">Log in</button>
         <h1>WORLDMESH <span class="beta-badge">BETA</span></h1>
         <p class="tagline">
           A free open network of independently hosted 3D worlds. Walk between them.
         </p>
       </header>
+      <dialog class="account-dialog" id="account-dialog" aria-label="Account">
+        <div class="account-body"></div>
+      </dialog>
 
       <form id="add-form">
         <input

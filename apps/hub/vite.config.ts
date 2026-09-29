@@ -13,6 +13,16 @@ export default defineConfig({
         target: 'https://worldmesh.net',
         changeOrigin: true,
       },
+      // Accounts and federation run as local Workers: npm run dev:auth / dev:federation.
+      // Host stays localhost:5170, so cookies and OAuth callbacks use the hub's origin.
+      '/api/auth': 'http://localhost:8788',
+      '/api/account': 'http://localhost:8788',
+      '/.well-known/webfinger': 'http://localhost:8789',
+      '/.well-known/nodeinfo': 'http://localhost:8789',
+      '/nodeinfo': 'http://localhost:8789',
+      '/ap/': 'http://localhost:8789',
+      // Profile pages (/@name), but not Vite's own /@vite, /@fs and /@id paths.
+      '^/@(?!vite/|fs/|id/)[A-Za-z0-9_]+': 'http://localhost:8789',
     },
   },
   // Walk mode: one copy of three, and let Vite compile the runtime from source.

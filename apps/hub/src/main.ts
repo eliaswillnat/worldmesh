@@ -117,6 +117,9 @@ let communityWorlds: WorldEntry[] = communityWorldsStatic as WorldEntry[];
 const ALL_WORLDS: WorldEntry[] = [...communityWorlds, ...DEMO_WORLDS];
 
 import { ImageCropper } from './cropper';
+import { initAccount } from './account';
+
+initAccount();
 
 const form = document.querySelector<HTMLFormElement>('#add-form')!;
 const input = document.querySelector<HTMLInputElement>('#url')!;

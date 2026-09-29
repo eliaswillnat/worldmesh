@@ -70,6 +70,26 @@
       ],
       "port": 8787,
       "autoPort": false
+    },
+    {
+      "name": "auth",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev:auth"
+      ],
+      "port": 8788,
+      "autoPort": false
+    },
+    {
+      "name": "federation",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev:federation"
+      ],
+      "port": 8789,
+      "autoPort": false
     }
   ]
 }

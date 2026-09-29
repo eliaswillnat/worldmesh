@@ -1,0 +1,47 @@
+name = "worldmesh-auth"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+# Better Auth uses AsyncLocalStorage.
+compatibility_flags = ["nodejs_compat"]
+
+# Same origin as the hub, so the session cookie is first-party and host-only
+# (never sent to worlds on subdomains). Worker routes run in front of the
+# Cloudflare Pages project on the same hostname; everything else under /api
+# keeps going to the hub's Pages Functions.
+routes = [
+  { pattern = "worldmesh.net/api/auth/*", zone_name = "worldmesh.net" },
+  { pattern = "worldmesh.net/api/account/*", zone_name = "worldmesh.net" },
+]
+workers_dev = false
+
+[vars]
+BETTER_AUTH_URL = "https://worldmesh.net"
+# The domain in public handles: @username@worldmesh.net
+FEDERATION_DOMAIN = "worldmesh.net"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "worldmesh"
+# Paste the id printed by `npx wrangler d1 create worldmesh`.
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "../../db/migrations"
+
+# Per-IP limit on sign-in, OAuth callbacks and username changes. Counted per
+# Cloudflare location and deliberately approximate; Better Auth's own
+# in-memory limiter sits behind it.
+[[ratelimits]]
+name = "AUTH_LIMITER"
+namespace_id = "1001"
+simple = { limit = 20, period = 60 }
+
+# Secrets (npx wrangler secret put <NAME>):
+#   BETTER_AUTH_SECRET     random, at least 32 bytes (openssl rand -base64 32)
+#   GOOGLE_CLIENT_ID       GOOGLE_CLIENT_SECRET
+#   GITHUB_CLIENT_ID       GITHUB_CLIENT_SECRET
+#   DISCORD_CLIENT_ID      DISCORD_CLIENT_SECRET
+#   APPLE_CLIENT_ID        the Services ID (e.g. net.worldmesh.signin)
+#   APPLE_TEAM_ID          APPLE_KEY_ID
+#   APPLE_PRIVATE_KEY      contents of AuthKey_<KEY_ID>.p8; the Worker mints
+#                          Apple's short-lived client secret from it
+# A provider appears on the login dialog only once all its secrets are set.
+# Local development reads them from .dev.vars (see .dev.vars.example).

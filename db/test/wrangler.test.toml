@@ -1,0 +1,8 @@
+# Only used by tests: an in-memory D1 for db/test/d1.ts.
+name = "worldmesh-db-test"
+compatibility_date = "2026-09-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "worldmesh-test"
+database_id = "00000000-0000-0000-0000-000000000000"

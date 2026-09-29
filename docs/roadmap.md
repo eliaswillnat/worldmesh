@@ -12,11 +12,16 @@
   shared presence (see who else is in the lobby) through a Durable Object
   relay in `workers/presence`, wired in via the runtime's `NetworkAdapter`.
 
+- Optional accounts (Google/GitHub via Better Auth on D1) with a one-time
+  username, and a minimal ActivityPub foundation: creators are followable as
+  `@name@worldmesh.net`, and a published world can be announced to their
+  followers. See [accounts-and-federation.md](accounts-and-federation.md) for
+  what is and is not interoperable yet.
+
 ## Deliberately not built
 
-Authentication, user profiles, social feeds, chat, friends, a database,
-payments, moderation, AI generation, multiplayer, inventory, creator
-dashboards. None of these are needed to prove the premise, and each one would
+Social feeds, chat, friends, payments, moderation, AI generation,
+multiplayer, inventory, creator dashboards. None of these are needed to prove the premise, and each one would
 push hosting costs onto WorldMesh instead of onto the creators.
 
 ## Likely next, roughly in order
