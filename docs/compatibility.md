@@ -4,6 +4,15 @@ A WorldMesh world is an ordinary web page that renders a Three.js scene and
 calls `createWorldMesh` once. There is nothing else to implement, no account to
 create, and no build tooling to adopt.
 
+The runtime ships as an ESM package with `three` as a peer dependency:
+
+```bash
+npm i @worldmesh/runtime three
+```
+
+It is packaged but not on npm yet, so until it is, clone the repo and use the
+workspace copy. See [publishing.md](publishing.md).
+
 ## Minimum viable world
 
 ```js

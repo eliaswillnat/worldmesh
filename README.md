@@ -68,6 +68,10 @@ separately and know about each other only through URLs.
 npm install
 ```
 
+That also builds `@worldmesh/runtime` into `packages/runtime/dist`, which is
+what the apps import. If you are editing the runtime itself, keep
+`npm run dev:runtime` running beside the dev server.
+
 Then start the hub and as many worlds as you want, each in its own terminal:
 
 ```bash
@@ -83,6 +87,10 @@ are running. To see other visitors in walk mode locally, also run
 `npm run dev:presence`.
 
 ## Making a Three.js project WorldMesh-compatible
+
+The runtime is packaged for npm — `npm i @worldmesh/runtime three` — but not
+published yet, so for now clone this repo. See
+[docs/publishing.md](docs/publishing.md).
 
 If you already have a scene, a camera and a renderer, this is the whole job:
 
@@ -111,6 +119,7 @@ reference and [docs/controls.md](docs/controls.md) for the control convention.
 - [Compatibility](docs/compatibility.md) — the world-facing contract
 - [Controls](docs/controls.md) — the navigation convention
 - [Accounts and federation](docs/accounts-and-federation.md) — login, D1, ActivityPub
+- [Publishing](docs/publishing.md) — how the runtime is built and versioned
 - [Roadmap](docs/roadmap.md) — what is deliberately not built yet
 
 ## License
