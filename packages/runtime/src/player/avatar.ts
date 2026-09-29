@@ -298,6 +298,10 @@ const EYE_X = 0.22;
 const EYE_Y = -0.055;
 const EYE_R = 0.05;
 const LINE = 0.014;
+/** How big the features are drawn, relative to the layout below. */
+const FACE_SCALE = 0.78;
+/** The point between the eyes and the mouth the features shrink toward. */
+const FACE_CENTER_Y = -0.13;
 
 /** Every avatar shares one texture per face, so a crowd costs no more than one visitor. */
 const faceCache = new Map<string, CanvasTexture>();
@@ -313,6 +317,11 @@ function faceTexture(expression: AvatarExpression, blinking: boolean): CanvasTex
   // Draw in metres on the head, y up, origin at the head centre.
   const scale = FACE_SIZE / (2 * FACE_EXTENT);
   ctx.setTransform(scale, 0, 0, -scale, FACE_SIZE / 2, FACE_SIZE / 2);
+  // Shrink the features around the middle of the face, not the head centre,
+  // so the face gets smaller without sliding up the head.
+  ctx.translate(0, FACE_CENTER_Y);
+  ctx.scale(FACE_SCALE, FACE_SCALE);
+  ctx.translate(0, -FACE_CENTER_Y);
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   drawFace(ctx, expression, blinking);
