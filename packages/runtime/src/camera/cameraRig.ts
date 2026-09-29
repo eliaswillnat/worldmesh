@@ -1,6 +1,6 @@
 import { Euler, PerspectiveCamera, Vector3, type Camera } from 'three';
-import type { CollisionWorld } from '../movement/collision';
-import type { ViewMode, ViewOptions } from '../types';
+import type { CollisionWorld } from '../movement/collision.js';
+import type { ViewMode, ViewOptions } from '../types.js';
 
 const HALF_PI = Math.PI / 2;
 const PITCH_LIMIT = HALF_PI - 0.01;

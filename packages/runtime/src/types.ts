@@ -1,4 +1,4 @@
-import type { AvatarExpression } from './player/avatar';
+import type { AvatarExpression } from './player/avatar.js';
 import type { Camera, Object3D, PerspectiveCamera, Scene, WebGLRenderer } from 'three';
 
 export type Vec3Tuple = [number, number, number];

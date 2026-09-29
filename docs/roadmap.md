@@ -26,10 +26,12 @@ push hosting costs onto WorldMesh instead of onto the creators.
 
 ## Likely next, roughly in order
 
-1. **Publish `@worldmesh/runtime` to npm.** Right now compatibility means
-   "clone the monorepo". It should mean `npm i @worldmesh/runtime`. Needs a
-   build step emitting JS + `.d.ts`, and a version policy for
-   `WORLDMESH_PROTOCOL`.
+1. **Publish `@worldmesh/runtime` to npm.** The package is now built rather than
+   shipped as raw TypeScript: `npm run build:runtime` emits ESM + `.d.ts` into
+   `packages/runtime/dist`, and the version policy for `WORLDMESH_PROTOCOL` is
+   written down in [publishing.md](publishing.md). What is left is the publish
+   itself, which needs the `@worldmesh` scope on npm and an account with access
+   to it. Until then, compatibility still means "clone the monorepo".
 2. **A compatibility checker.** Paste a URL, get a report: does it load, does
    it serve a manifest, does it call `createWorldMesh`, does `V` toggle the
    camera. Cheap to run client-side, and it makes the standard enforceable

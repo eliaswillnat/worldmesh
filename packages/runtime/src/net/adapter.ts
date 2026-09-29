@@ -1,4 +1,4 @@
-import type { NetworkAdapter, PlayerState } from '../types';
+import type { NetworkAdapter, PlayerState } from '../types.js';
 
 /**
  * Multiplayer is intentionally NOT implemented. This file exists to pin down

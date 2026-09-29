@@ -1,4 +1,4 @@
-import type { InputAction } from '../types';
+import type { InputAction } from '../types.js';
 
 export function isTouchDevice(): boolean {
   if (typeof window === 'undefined') return false;

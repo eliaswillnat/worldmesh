@@ -1,12 +1,12 @@
 import { Vector3 } from 'three';
-import { resolveAbilities } from '../abilities/abilities';
-import { CameraRig } from '../camera/cameraRig';
-import { Input } from '../controls/input';
-import { CollisionWorld } from '../movement/collision';
-import { MovementController } from '../movement/controller';
-import { expressionForDigit, isAvatarExpression } from '../player/avatar';
-import { Player } from '../player/player';
-import { PortalManager, buildTravelUrl, type ResolvedPortal } from '../portals/portals';
+import { resolveAbilities } from '../abilities/abilities.js';
+import { CameraRig } from '../camera/cameraRig.js';
+import { Input } from '../controls/input.js';
+import { CollisionWorld } from '../movement/collision.js';
+import { MovementController } from '../movement/controller.js';
+import { expressionForDigit, isAvatarExpression } from '../player/avatar.js';
+import { Player } from '../player/player.js';
+import { PortalManager, buildTravelUrl, type ResolvedPortal } from '../portals/portals.js';
 import type {
   PlayerState,
   Vec3Tuple,
@@ -14,10 +14,10 @@ import type {
   WorldMeshEvents,
   WorldMeshHandle,
   WorldMeshOptions,
-} from '../types';
-import { Overlay } from '../ui/overlay';
-import { isTouchDevice } from '../controls/touch';
-import { Emitter } from './events';
+} from '../types.js';
+import { Overlay } from '../ui/overlay.js';
+import { isTouchDevice } from '../controls/touch.js';
+import { Emitter } from './events.js';
 
 /** Never simulate more than this per substep, so a stall cannot tunnel the player. */
 const MAX_STEP = 1 / 60;

@@ -25,7 +25,8 @@ export default defineConfig({
       '^/@(?!vite/|fs/|id/)[A-Za-z0-9_]+': 'http://localhost:8789',
     },
   },
-  // Walk mode: one copy of three, and let Vite compile the runtime from source.
+  // Walk mode: one copy of three, and the runtime served straight from its
+  // build output so edits show up with `npm run dev:runtime` watching.
   resolve: { dedupe: ['three'] },
   optimizeDeps: { exclude: ['@worldmesh/runtime'] },
   build: { target: 'es2022' },
