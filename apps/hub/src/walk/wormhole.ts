@@ -1,4 +1,5 @@
 import {
+  BackSide,
   CanvasTexture,
   Color,
   Group,
@@ -7,6 +8,7 @@ import {
   PlaneGeometry,
   SRGBColorSpace,
   ShaderMaterial,
+  SphereGeometry,
   Sprite,
   SpriteMaterial,
   Texture,
@@ -23,28 +25,27 @@ export interface WormholeWorld {
   creator?: string;
 }
 
-/** Radius of the event horizon, in metres. */
-export const WORMHOLE_RADIUS = 1.5;
-/** Walk within this distance of the wormhole's foot to go through. */
+/** Radius of the sphere, in metres. */
+export const WORMHOLE_RADIUS = 1.2;
+/** Walk within this distance of the wormhole's centre to go through. */
 export const WORMHOLE_TRIGGER = 1.3;
-const HOVER = 2.1;
-/** How far the glow reaches past the horizon, as a multiple of the radius. */
-const EXTENT = 1.7;
+/** Gap between the bottom of the sphere and the grid. */
+const FLOAT = 0.03;
+/** How far the halo reaches, as a multiple of the sphere radius. */
+const HALO = 1.5;
 
-const discVertex = /* glsl */ `
-  varying vec2 vUv;
+const sphereVertex = /* glsl */ `
+  varying vec3 vNormalV;
+  varying vec3 vViewV;
   void main() {
-    vUv = uv;
-    // Spherical billboard: always face whichever camera is drawing us,
-    // including the ground mirror's.
-    vec4 center = modelViewMatrix * vec4(0.0, 0.0, 0.0, 1.0);
-    vec2 scale = vec2(length(modelMatrix[0].xyz), length(modelMatrix[1].xyz));
-    center.xy += position.xy * scale;
-    gl_Position = projectionMatrix * center;
+    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    vNormalV = normalize(normalMatrix * normal);
+    vViewV = normalize(-mv.xyz);
+    gl_Position = projectionMatrix * mv;
   }
 `;
 
-const discFragment = /* glsl */ `
+const sphereFragment = /* glsl */ `
   uniform sampler2D uMap;
   uniform float uHasMap;
   uniform vec2 uFit;
@@ -52,54 +53,77 @@ const discFragment = /* glsl */ `
   uniform float uTime;
   uniform float uNear;
   uniform float uSeed;
-  varying vec2 vUv;
-
-  const float EXTENT = ${EXTENT.toFixed(2)};
+  uniform float uLight;
+  varying vec3 vNormalV;
+  varying vec3 vViewV;
 
   void main() {
-    vec2 p = (vUv - 0.5) * 2.0 * EXTENT;
-    float r = length(p);
-    float a = atan(p.y, p.x);
+    vec3 n = normalize(vNormalV);
+    vec3 v = normalize(vViewV);
+    float facing = clamp(dot(n, v), 0.0, 1.0);
+    // 0 at the middle of the sphere as seen from here, 1 at its outline.
+    float r = sqrt(1.0 - facing * facing);
+    float a = atan(n.y, n.x);
     float t = uTime + uSeed * 10.0;
 
-    vec3 color = vec3(0.0);
-    float alpha = 0.0;
+    // Lensing: the far world is magnified in the middle and wrung out into a
+    // spiral toward the edge, like light bending around the horizon.
+    float edge = smoothstep(0.3, 1.0, r);
+    float ang = a + edge * edge * (2.4 + uNear * 2.5) + t * (0.15 + uNear * 0.5) * edge;
+    float rr = r * (0.62 + 0.38 * r * r);
+    vec2 q = vec2(cos(ang), sin(ang)) * rr * 0.5;
+    vec3 far = texture2D(uMap, 0.5 + q * uFit).rgb;
 
-    if (r < 1.0) {
-      // Lensing: the far world is magnified in the middle and wrung out
-      // into a spiral toward the horizon.
-      float edge = smoothstep(0.3, 1.0, r);
-      float twist = edge * edge * (2.4 + uNear * 2.5) + t * (0.15 + uNear * 0.5) * edge;
-      float ang = a + twist;
-      float rr = r * (0.62 + 0.38 * r * r);
-      vec2 q = vec2(cos(ang), sin(ang)) * rr * 0.5;
+    // No preview image: a tunnel in the world's tint.
+    float bands = 0.5 + 0.5 * sin(7.0 / (r + 0.12) - t * 2.5 + ang * 2.0);
+    vec3 tunnel = mix(uTint * 0.08, uTint * 0.8, bands * (1.0 - r * 0.4));
 
-      vec3 far = texture2D(uMap, 0.5 + q * uFit).rgb;
+    vec3 color = mix(tunnel, far, uHasMap);
+    // The horizon swallows light toward the outline.
+    color *= mix(1.0, 0.05, pow(edge, 1.6));
 
-      // No preview image: a tunnel in the world's tint.
-      float bands = 0.5 + 0.5 * sin(7.0 / (r + 0.12) - t * 2.5 + ang * 2.0);
-      vec3 tunnel = mix(uTint * 0.08, uTint * 0.8, bands * (1.0 - r * 0.4));
+    // Photon ring hugging the outline: light on a dark world, ink on a light one.
+    vec3 rim = mix(mix(vec3(1.0), uTint, 0.35), vec3(0.03), uLight);
+    float ring = clamp(pow(r, 28.0) * (1.2 + uNear * 0.8), 0.0, 1.0);
+    color = mix(color, rim, ring);
 
-      color = mix(tunnel, far, uHasMap);
-      // The horizon swallows light.
-      color *= mix(1.0, 0.08, pow(edge, 1.6));
-      alpha = 1.0;
-    }
+    // A glassy highlight so it reads as a ball, not a disc.
+    vec3 lightDir = normalize(vec3(-0.45, 0.75, 0.5));
+    float spec = pow(max(dot(reflect(-lightDir, n), v), 0.0), 70.0);
+    color += vec3(0.55 * spec);
 
-    vec3 rimColor = mix(vec3(1.0), uTint, 0.35);
-    float fade = 1.0 - smoothstep(EXTENT * 0.75, EXTENT, r);
+    gl_FragColor = vec4(min(color, vec3(1.0)), 1.0);
+    #include <colorspace_fragment>
+  }
+`;
 
-    // Photon ring hugging the horizon.
-    float ring = exp(-abs(r - 1.0) * 24.0) * (1.0 + uNear * 0.8) * fade;
+const haloFragment = /* glsl */ `
+  uniform vec3 uTint;
+  uniform float uTime;
+  uniform float uNear;
+  uniform float uSeed;
+  uniform float uLight;
+  varying vec3 vNormalV;
+  varying vec3 vViewV;
 
-    // Streaky accretion glow that swirls around the outside.
-    float streak = 0.55 + 0.45 * sin(a * 5.0 - r * 7.0 + t * 1.8) * sin(a * 3.0 - t * 0.9);
-    float glow = step(1.0, r) * exp(-(r - 1.0) * 3.0) * 0.5 * streak * (1.0 + uNear * 1.2) * fade;
+  const float HALO = ${HALO.toFixed(2)};
 
-    // Premultiplied output: the glow adds light, the disc covers what is behind.
-    color += rimColor * (ring + glow);
-    alpha = clamp(alpha + ring + glow, 0.0, 1.0);
-    gl_FragColor = vec4(min(color, vec3(1.0)), alpha);
+  void main() {
+    // Drawn on the inside of a larger sphere: turn the angle back into a
+    // distance from the wormhole's centre, in wormhole radii.
+    float facing = dot(normalize(vNormalV), normalize(vViewV));
+    float d = sqrt(max(0.0, 1.0 - facing * facing)) * HALO;
+    float a = atan(vNormalV.y, vNormalV.x);
+    float t = uTime + uSeed * 10.0;
+
+    // Streaky accretion glow swirling around the outside.
+    float streak = 0.55 + 0.45 * sin(a * 5.0 - d * 7.0 + t * 1.8) * sin(a * 3.0 - t * 0.9);
+    float glow = exp(-max(d - 1.0, 0.0) * 3.2) * 0.5 * streak * (1.0 + uNear * 1.2);
+    glow *= 1.0 - smoothstep(HALO * 0.8, HALO, d);
+    glow = clamp(glow * mix(1.0, 0.7, uLight), 0.0, 1.0);
+
+    vec3 color = mix(mix(vec3(1.0), uTint, 0.35), vec3(0.05), uLight);
+    gl_FragColor = vec4(color * glow, glow);
     #include <colorspace_fragment>
   }
 `;
@@ -115,6 +139,7 @@ const padVertex = /* glsl */ `
 const padFragment = /* glsl */ `
   uniform float uTime;
   uniform float uNear;
+  uniform float uLight;
   uniform vec3 uTint;
   varying vec2 vUv;
 
@@ -124,29 +149,32 @@ const padFragment = /* glsl */ `
     float edge = exp(-abs(r - 0.9) * 40.0);
     // Ripples running inward, toward the wormhole.
     float ripples = pow(0.5 + 0.5 * sin(r * 20.0 + uTime * 4.0), 10.0) * (1.0 - r) * 0.6;
-    float a = (edge * 0.7 + ripples) * (0.35 + uNear * 0.9);
-    gl_FragColor = vec4(mix(vec3(1.0), uTint, 0.35) * a, a);
+    float a = clamp((edge * 0.7 + ripples) * (0.35 + uNear * 0.9), 0.0, 1.0);
+    vec3 color = mix(mix(vec3(1.0), uTint, 0.35), vec3(0.05), uLight);
+    gl_FragColor = vec4(color * a, a);
     #include <colorspace_fragment>
   }
 `;
 
 /**
- * A wormhole to one listed world: a lensed preview of its cover image inside
- * a glowing horizon, a landing pad on the floor, and the world's name above.
+ * A wormhole to one listed world: a sphere floating just above the grid,
+ * showing a lensed preview of the world's cover, wrapped in a swirling halo,
+ * with a landing ring on the floor and the world's name above.
  */
 export class Wormhole {
   readonly group = new Group();
   readonly world: WormholeWorld;
 
-  private disc: Mesh<PlaneGeometry, ShaderMaterial>;
+  private sphere: Mesh<SphereGeometry, ShaderMaterial>;
+  private halo: Mesh<SphereGeometry, ShaderMaterial>;
   private pad: Mesh<PlaneGeometry, ShaderMaterial>;
   private label: Sprite;
+  private drawLabel: (light: boolean) => void;
   private cover: Texture | null = null;
   private placeholder: Texture;
   private disposed = false;
-  private phase = Math.random() * Math.PI * 2;
 
-  constructor(world: WormholeWorld, position: Vector3, floorLayer: number) {
+  constructor(world: WormholeWorld, position: Vector3, floorLayer: number, light: boolean) {
     this.world = world;
     this.group.position.copy(position);
     this.group.name = `wormhole:${world.name}`;
@@ -154,37 +182,56 @@ export class Wormhole {
     const tint = new Color(world.color ?? '#ffffff');
     // Keep the lobby monochrome-ish: only a hint of the world's colour.
     tint.lerp(new Color(0xffffff), 0.45);
+    const seed = Math.random();
+    const shared = {
+      uTint: { value: tint },
+      uTime: { value: 0 },
+      uNear: { value: 0 },
+      uSeed: { value: seed },
+      uLight: { value: light ? 1 : 0 },
+    };
 
     this.placeholder = new Texture();
-    const size = WORMHOLE_RADIUS * EXTENT * 2;
-    this.disc = new Mesh(
-      new PlaneGeometry(size, size),
+    const centerY = WORMHOLE_RADIUS + FLOAT;
+
+    this.sphere = new Mesh(
+      new SphereGeometry(WORMHOLE_RADIUS, 64, 48),
       new ShaderMaterial({
-        vertexShader: discVertex,
-        fragmentShader: discFragment,
+        vertexShader: sphereVertex,
+        fragmentShader: sphereFragment,
         uniforms: {
+          ...shared,
           uMap: { value: this.placeholder },
           uHasMap: { value: 0 },
           uFit: { value: new Vector2(1, 1) },
-          uTint: { value: tint },
-          uTime: { value: 0 },
-          uNear: { value: 0 },
-          uSeed: { value: Math.random() },
         },
+      }),
+    );
+    this.sphere.position.y = centerY;
+    this.group.add(this.sphere);
+
+    this.halo = new Mesh(
+      new SphereGeometry(WORMHOLE_RADIUS * HALO, 48, 32),
+      new ShaderMaterial({
+        vertexShader: sphereVertex,
+        fragmentShader: haloFragment,
+        // Same objects as the sphere's, so both animate together.
+        uniforms: shared,
+        side: BackSide,
         transparent: true,
         premultipliedAlpha: true,
         depthWrite: false,
       }),
     );
-    this.disc.position.y = HOVER;
-    this.group.add(this.disc);
+    this.halo.position.y = centerY;
+    this.group.add(this.halo);
 
     this.pad = new Mesh(
       new PlaneGeometry(WORMHOLE_TRIGGER * 2.4, WORMHOLE_TRIGGER * 2.4),
       new ShaderMaterial({
         vertexShader: padVertex,
         fragmentShader: padFragment,
-        uniforms: { uTime: { value: 0 }, uNear: { value: 0 }, uTint: { value: tint } },
+        uniforms: shared,
         transparent: true,
         premultipliedAlpha: true,
         depthWrite: false,
@@ -200,8 +247,11 @@ export class Wormhole {
     this.pad.layers.set(floorLayer);
     this.group.add(this.pad);
 
-    this.label = createLabel(world.name, world.creator);
-    this.label.position.y = HOVER + WORMHOLE_RADIUS + 0.75;
+    const label = createLabel(world.name, world.creator);
+    this.label = label.sprite;
+    this.drawLabel = label.draw;
+    this.drawLabel(light);
+    this.label.position.y = centerY + WORMHOLE_RADIUS * 1.25 + 0.55;
     this.group.add(this.label);
 
     if (world.cover) this.loadCover(world.cover);
@@ -209,32 +259,34 @@ export class Wormhole {
 
   update(time: number, player: Vector3): void {
     const distance = Math.hypot(player.x - this.group.position.x, player.z - this.group.position.z);
-    const near = 1 - smoothstep(1.5, 9, distance);
-    const disc = this.disc.material.uniforms;
-    disc.uTime.value = time;
-    disc.uNear.value = near;
-    const pad = this.pad.material.uniforms;
-    pad.uTime.value = time;
-    pad.uNear.value = near;
-    this.disc.position.y = HOVER + Math.sin(time * 1.1 + this.phase) * 0.08;
+    const uniforms = this.sphere.material.uniforms;
+    uniforms.uTime.value = time;
+    uniforms.uNear.value = 1 - smoothstep(1.5, 9, distance);
+  }
+
+  setTheme(light: boolean): void {
+    this.sphere.material.uniforms.uLight.value = light ? 1 : 0;
+    this.drawLabel(light);
   }
 
   /** Pull the wormhole wide open while we travel through it. */
   surge(): void {
-    this.disc.material.uniforms.uNear.value = 2;
-    this.disc.scale.setScalar(1.35);
+    this.sphere.material.uniforms.uNear.value = 2;
+    this.sphere.scale.setScalar(1.25);
+    this.halo.scale.setScalar(1.25);
   }
 
   settle(): void {
-    this.disc.scale.setScalar(1);
+    this.sphere.scale.setScalar(1);
+    this.halo.scale.setScalar(1);
   }
 
   dispose(): void {
     this.disposed = true;
-    this.disc.geometry.dispose();
-    this.disc.material.dispose();
-    this.pad.geometry.dispose();
-    this.pad.material.dispose();
+    for (const mesh of [this.sphere, this.halo, this.pad]) {
+      mesh.geometry.dispose();
+      mesh.material.dispose();
+    }
     this.label.material.map?.dispose();
     this.label.material.dispose();
     this.cover?.dispose();
@@ -253,7 +305,7 @@ export class Wormhole {
     const aspect = image.width / image.height;
     // Sample a centred square of the cover, whatever its shape.
     const fit = aspect < 1 ? new Vector2(1, aspect) : new Vector2(1 / aspect, 1);
-    const uniforms = this.disc.material.uniforms;
+    const uniforms = this.sphere.material.uniforms;
     uniforms.uMap.value = texture;
     uniforms.uFit.value = fit;
     uniforms.uHasMap.value = 1;
@@ -294,14 +346,16 @@ async function loadCoverTexture(src: string): Promise<Texture | null> {
   return null;
 }
 
-function createLabel(name: string, creator?: string): Sprite {
+function createLabel(name: string, creator?: string): { sprite: Sprite; draw: (light: boolean) => void } {
   const canvas = document.createElement('canvas');
   const texture = new CanvasTexture(canvas);
   texture.colorSpace = SRGBColorSpace;
   const material = new SpriteMaterial({ map: texture, transparent: true, depthWrite: false });
   const sprite = new Sprite(material);
+  let light = false;
 
-  const draw = () => {
+  const draw = (isLight: boolean) => {
+    light = isLight;
     const ctx = canvas.getContext('2d')!;
     const titleFont = '600 88px Urbanist, ui-sans-serif, system-ui, sans-serif';
     const subFont = '500 44px Urbanist, ui-sans-serif, system-ui, sans-serif';
@@ -319,14 +373,14 @@ function createLabel(name: string, creator?: string): Sprite {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.textAlign = 'center';
     ctx.textBaseline = 'alphabetic';
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+    ctx.shadowColor = light ? 'rgba(255, 255, 255, 0.9)' : 'rgba(0, 0, 0, 0.8)';
     ctx.shadowBlur = 12;
     ctx.font = titleFont;
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = light ? '#111111' : '#ffffff';
     ctx.fillText(title, canvas.width / 2, 92);
     if (sub) {
       ctx.font = subFont;
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+      ctx.fillStyle = light ? 'rgba(0, 0, 0, 0.55)' : 'rgba(255, 255, 255, 0.55)';
       ctx.fillText(sub, canvas.width / 2, 152);
     }
 
@@ -335,12 +389,11 @@ function createLabel(name: string, creator?: string): Sprite {
     sprite.scale.set((canvas.width / canvas.height) * worldHeight, worldHeight, 1);
   };
 
-  draw();
   // The page font may still be loading the first time walk mode opens.
   if (document.fonts && !document.fonts.check('600 88px Urbanist')) {
-    document.fonts.load('600 88px Urbanist').then(draw, () => {});
+    document.fonts.load('600 88px Urbanist').then(() => draw(light), () => {});
   }
-  return sprite;
+  return { sprite, draw };
 }
 
 function smoothstep(edge0: number, edge1: number, x: number): number {

@@ -277,6 +277,26 @@ const walkOnline = document.querySelector<HTMLDivElement>('#walk-online')!;
 let walkRoot: HTMLDivElement | null = null;
 let lobby: import('./walk/lobby').Lobby | null = null;
 let walkLoading = false;
+const lightScheme = window.matchMedia('(prefers-color-scheme: light)');
+
+/**
+ * Each visitor's lobby follows their own device's appearance setting. It only
+ * changes how this browser draws the scene, so other visitors are unaffected.
+ */
+function walkIsLight(): boolean {
+  const forced = document.documentElement.dataset.theme;
+  return forced ? forced === 'light' : lightScheme.matches;
+}
+
+function applyWalkTheme(): void {
+  if (!walkRoot) return;
+  const light = walkIsLight();
+  document.documentElement.dataset.walkTheme = light ? 'light' : 'dark';
+  setThemeColor(light ? '#f2f2f2' : '#000000');
+  lobby?.setTheme(light);
+}
+
+lightScheme.addEventListener('change', applyWalkTheme);
 
 walkToggle.addEventListener('click', () => {
   if (walkRoot) exitWalkMode();
@@ -295,9 +315,9 @@ async function enterWalkMode(): Promise<void> {
     walkRoot.className = 'walk-root';
     document.body.appendChild(walkRoot);
     document.documentElement.classList.add('walking');
-    setThemeColor('#000000');
     lobby = createLobby(walkRoot, {
       worlds: ALL_WORLDS,
+      light: walkIsLight(),
       presenceEndpoint: PRESENCE_ENDPOINT,
       onPresenceCount: (count) => {
         if (count === null) {
@@ -310,6 +330,7 @@ async function enterWalkMode(): Promise<void> {
       },
       onEnterWorld: (world) => trackClick(world.url),
     });
+    applyWalkTheme();
     history.replaceState(null, '', '#walk');
     setWalkToggleLabel('Back to the list');
   } catch (error) {
@@ -328,6 +349,7 @@ function exitWalkMode(): void {
   walkRoot?.remove();
   walkRoot = null;
   document.documentElement.classList.remove('walking');
+  delete document.documentElement.dataset.walkTheme;
   setThemeColor(null);
   delete walkOnline.dataset.count;
   if (window.location.hash === '#walk') {

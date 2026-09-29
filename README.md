@@ -28,8 +28,10 @@ navigation runtime.** Nothing else is built yet — no accounts, no database, no
 moderation. See [docs/roadmap.md](docs/roadmap.md).
 
 The hub also has a **walk mode** (the walking figure, top right): the directory
-as a place. Every listed world is a wormhole on a mirrored black grid, showing
-a lensed preview of its cover, and walking into one travels there. Everyone in
+as a place. Every listed world is a floating wormhole sphere on a mirrored
+grid, showing a lensed preview of its cover, and walking into one travels
+there. The lobby is black or white depending on each visitor's own
+light/dark setting. Everyone in
 walk mode sees everyone else, through a tiny presence relay in
 `workers/presence`.
 

@@ -189,6 +189,8 @@ export class Presence implements NetworkAdapter {
     }
     remote.target.set(p[0], p[1], p[2]);
     remote.targetYaw = yaw;
+    // A long jump is a teleport or respawn, not a sprint: do not animate it.
+    if (remote.root.position.distanceTo(remote.target) > 6) snap = true;
     if (snap) {
       remote.root.position.copy(remote.target);
       remote.yaw = yaw;
