@@ -427,9 +427,13 @@ function closedEye(ctx: Ctx, x: number, y: number, shape: 'happy' | 'sleep' | 'f
 function smile(ctx: Ctx, halfWidth: number, endY: number, controlY: number): void {
   ctx.strokeStyle = INK;
   ctx.lineWidth = LINE;
+  // A soft U rather than a V: both handles pulled in from the corners and
+  // only half as deep, so the bottom is round and flat-ish and the corners
+  // rise gently.
+  const handleY = endY + (controlY - endY) * 0.52;
   ctx.beginPath();
   ctx.moveTo(-halfWidth, endY);
-  ctx.quadraticCurveTo(0, controlY, halfWidth, endY);
+  ctx.bezierCurveTo(-halfWidth * 0.5, handleY, halfWidth * 0.5, handleY, halfWidth, endY);
   ctx.stroke();
 }
 
