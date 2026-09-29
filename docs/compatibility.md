@@ -33,7 +33,7 @@ overlay, gravity, jumping and respawning.
 | `groundLevel` | `0` | Flat floor height used only when `colliders` is empty. |
 | `abilities` | all `false` | See below. |
 | `portals` | `[]` | See below. |
-| `player` | 1.8m tall, 0.35m radius | `avatar` replaces the capsule, `avatar: false` removes it. |
+| `player` | 1.8m tall, 0.35m radius | `avatar` replaces the default white figure, `avatar: false` removes it. |
 | `view` | `{ mode: 'first', distance: 5 }` | Starting camera mode, boom length, mouse sensitivity, initial `yaw`/`pitch`. |
 | `movement` | see `DEFAULT_TUNING` | `gravity`, `walkSpeed`, `jumpSpeed`, `fallLimit`, … |
 | `keymap` | the convention | Add bindings; do not move the core row. |

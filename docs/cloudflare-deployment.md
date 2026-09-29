@@ -97,3 +97,30 @@ The Hub automatically routes world submission alerts to `/api/notify`, which is 
    - Once verified, update `FROM_EMAIL` in Cloudflare Pages to:
      `WorldMesh <notifications@worldmesh.net>`
 
+---
+
+## 5. Walk mode presence (multiplayer lobby)
+
+The hub's walk mode shows everyone else who is in the lobby. Positions are
+relayed by a small Worker with one Durable Object per room, in
+`workers/presence`. It stores nothing and carries only positions.
+
+1. Deploy it (SQLite-backed Durable Objects work on the Workers free plan):
+   ```bash
+   cd workers/presence
+   npx wrangler deploy
+   ```
+2. The hub connects to `wss://worldmesh-presence.elias-willnat.workers.dev` by
+   default. If the Worker lives elsewhere (e.g. a custom domain), set on
+   **`worldmesh-hub`**:
+   ```env
+   VITE_PRESENCE_ENDPOINT=wss://presence.worldmesh.net
+   ```
+
+If the presence Worker is unreachable, walk mode still works single-player.
+
+Walk-mode doors show each world's cover image inside WebGL, which needs CORS. The
+R2 bucket does not send CORS headers, so the hub relays covers through the
+same-origin Pages Function `/api/cover` (allow-listed to the covers bucket;
+add more hosts with a comma-separated `COVER_HOSTS` variable). Worlds whose
+cover cannot be loaded show a procedural tunnel instead.

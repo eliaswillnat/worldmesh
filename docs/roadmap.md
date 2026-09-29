@@ -8,6 +8,9 @@
   navigation code.
 - A hub that lists worlds and accepts a pasted URL.
 - A tiny optional `worldmesh.json` manifest convention.
+- Hub walk mode: the directory as a 3D lobby with a door per world, and
+  shared presence (see who else is in the lobby) through a Durable Object
+  relay in `workers/presence`, wired in via the runtime's `NetworkAdapter`.
 
 ## Deliberately not built
 

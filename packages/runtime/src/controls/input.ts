@@ -27,6 +27,8 @@ export class Input {
   private pressed = new Set<string>();
   /** Actions that went down this frame and have not been consumed yet. */
   private justPressed = new Set<InputAction>();
+  /** The last number key pressed this frame, if any. */
+  private pendingDigit: number | null = null;
   private codeToActions = new Map<string, InputAction[]>();
   private onPointerLockChange?: (locked: boolean) => void;
   private touch?: TouchControls;
@@ -128,6 +130,13 @@ export class Input {
     return true;
   }
 
+  /** The number key (0–9) pressed this frame, once. Reading it clears it. */
+  consumeDigit(): number | null {
+    const digit = this.pendingDigit;
+    this.pendingDigit = null;
+    return digit;
+  }
+
   /** Movement intent on the local XZ plane, already normalized. */
   getMoveAxis(): { x: number; z: number } {
     let x = (this.isDown('right') ? 1 : 0) - (this.isDown('left') ? 1 : 0);
@@ -164,6 +173,7 @@ export class Input {
   /** Drop stale edge-triggers at the end of a frame. */
   endFrame(): void {
     this.justPressed.clear();
+    this.pendingDigit = null;
   }
 
   dispose(): void {
@@ -184,7 +194,12 @@ export class Input {
     if (event.repeat) return;
     if (isTypingTarget(event.target)) return;
     const actions = this.codeToActions.get(event.code);
-    if (!actions) return;
+    if (!actions) {
+      // Unbound number keys pick a face for the avatar.
+      const digit = /^(?:Digit|Numpad)(\d)$/.exec(event.code);
+      if (digit) this.pendingDigit = Number(digit[1]);
+      return;
+    }
     // Space and the arrow keys scroll the page otherwise.
     if (event.code === 'Space' || event.code.startsWith('Arrow')) event.preventDefault();
     this.pressed.add(event.code);

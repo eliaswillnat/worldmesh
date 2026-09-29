@@ -1,3 +1,4 @@
+import type { AvatarExpression } from './player/avatar';
 import type { Camera, Object3D, PerspectiveCamera, Scene, WebGLRenderer } from 'three';
 
 export type Vec3Tuple = [number, number, number];
@@ -73,7 +74,7 @@ export interface PlayerOptions {
   radius?: number;
   /** Eye offset from the feet in metres. Defaults to height - 0.2. */
   eyeHeight?: number;
-  /** Replace the default capsule avatar, or pass `false` for no avatar at all. */
+  /** Replace the default white figure, or pass `false` for no avatar at all. */
   avatar?: Object3D | false;
 }
 
@@ -126,9 +127,13 @@ export interface PlayerState {
   velocity: Vec3Tuple;
   yaw: number;
   pitch: number;
+  /** Where the body faces; in third person it can differ from the camera's yaw. */
+  facing: number;
   onGround: boolean;
   crouching: boolean;
   flying: boolean;
+  /** The face the default figure is pulling, picked with the number keys. */
+  expression: AvatarExpression;
 }
 
 export interface WorldMeshEvents {

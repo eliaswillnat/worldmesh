@@ -4,6 +4,7 @@ import { CameraRig } from '../camera/cameraRig';
 import { Input } from '../controls/input';
 import { CollisionWorld } from '../movement/collision';
 import { MovementController } from '../movement/controller';
+import { expressionForDigit, isAvatarExpression } from '../player/avatar';
 import { Player } from '../player/player';
 import { PortalManager, buildTravelUrl, type ResolvedPortal } from '../portals/portals';
 import type {
@@ -160,6 +161,9 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
       cameraRig.look(look.dx, look.dy);
       cameraRig.zoom(look.wheel);
       if (input.consume('toggleView')) setViewMode(cameraRig.mode === 'first' ? 'third' : 'first');
+      const digit = input.consumeDigit();
+      const expression = digit === null ? null : expressionForDigit(digit);
+      if (expression) player.setExpression(expression);
     }
 
     // Fixed substeps keep movement stable regardless of frame rate.
@@ -173,7 +177,12 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     if (controller.position.y < controller.tuning.fallLimit) doRespawn('fell');
 
     cameraRig.update(dt, controller.position, player.eyeHeight * (controller.height / height));
-    player.sync(controller.position, cameraRig.yaw, controller.height);
+    player.sync(controller.position, cameraRig.yaw, controller.height, {
+      dt,
+      speed: Math.hypot(controller.velocity.x, controller.velocity.z),
+      grounded: controller.onGround || controller.flying,
+      heading: Math.atan2(-controller.velocity.x, -controller.velocity.z),
+    }, cameraRig.mode === 'third');
     portals.animate(elapsed);
 
     updatePortals();
@@ -243,9 +252,11 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
       velocity: controller.velocity.toArray() as Vec3Tuple,
       yaw: cameraRig.yaw,
       pitch: cameraRig.pitch,
+      facing: player.facing,
       onGround: controller.onGround,
       crouching: controller.crouching,
       flying: controller.flying,
+      expression: player.expression,
     };
   }
 
@@ -253,13 +264,18 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     if (state.position) controller.position.set(...state.position);
     if (state.velocity) controller.velocity.set(...state.velocity);
     if (typeof state.yaw === 'number') cameraRig.yaw = state.yaw;
+    if (typeof state.facing === 'number') player.facing = state.facing;
     if (typeof state.pitch === 'number') cameraRig.pitch = state.pitch;
     if (typeof state.flying === 'boolean') controller.flying = state.flying;
+    if (isAvatarExpression(state.expression)) player.setExpression(state.expression);
   }
 
   function teleport(position: Vec3Tuple, yaw?: number): void {
     controller.reset(new Vector3(...position));
-    if (typeof yaw === 'number') cameraRig.yaw = yaw;
+    if (typeof yaw === 'number') {
+      cameraRig.yaw = yaw;
+      player.facing = yaw;
+    }
   }
 
   function doRespawn(reason: 'fell' | 'manual'): void {

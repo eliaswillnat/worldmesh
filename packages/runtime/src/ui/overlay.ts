@@ -253,6 +253,7 @@ const KEY_LEGEND: [string, string][] = [
   ['Shift', 'Sprint'],
   ['E', 'Interact'],
   ['V', 'Camera'],
+  ['1 – 0', 'Face'],
   ['Esc / ⏸', 'Menu / Pause'],
 ];
 
@@ -322,7 +323,7 @@ export class Overlay {
       const keys = document.createElement('div');
       keys.className = 'wm-keys';
       const legend = isTouch
-        ? [...KEY_LEGEND, ['Touch', 'On-screen controls'] as [string, string]]
+        ? [...KEY_LEGEND.filter(([key]) => key !== '1 – 0'), ['Touch', 'On-screen controls'] as [string, string]]
         : KEY_LEGEND;
       for (const [key, label] of legend) {
         const row = document.createElement('div');

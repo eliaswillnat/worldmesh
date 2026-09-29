@@ -8,6 +8,16 @@ export { CollisionWorld } from './movement/collision';
 export { DEFAULT_TUNING, MovementController } from './movement/controller';
 export { CameraRig } from './camera/cameraRig';
 export { Player } from './player/player';
+export {
+  AVATAR_EXPRESSIONS,
+  animateDefaultAvatar,
+  createDefaultAvatar,
+  expressionForDigit,
+  getAvatarExpression,
+  isAvatarExpression,
+  setAvatarExpression,
+} from './player/avatar';
+export type { AvatarExpression, AvatarMotion } from './player/avatar';
 export { PortalManager, buildTravelUrl, getReferringWorld } from './portals/portals';
 export { Overlay } from './ui/overlay';
 export { deserializePlayerState, serializePlayerState } from './net/adapter';

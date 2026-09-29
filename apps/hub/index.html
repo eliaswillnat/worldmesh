@@ -3,6 +3,8 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
     <title>WorldMesh</title>
     <meta name="description" content="A lightweight open network for independently hosted 3D worlds." />
     <link rel="icon" type="image/webp" href="/favicon.webp" />
@@ -545,6 +547,135 @@
         .card-grid > .card::after { border-radius: 12px; }
       }
 
+      /* ── Walk mode ─────────────────────────────────────────────── */
+      .walk-toggle {
+        position: fixed;
+        top: max(16px, env(safe-area-inset-top));
+        right: max(16px, env(safe-area-inset-right));
+        /* Above the runtime overlay, so it works while the lobby is paused. */
+        z-index: 2147483001;
+        width: 44px;
+        height: 44px;
+        padding: 0;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--text);
+        background: color-mix(in srgb, var(--bg) 70%, transparent);
+        -webkit-backdrop-filter: blur(10px);
+        backdrop-filter: blur(10px);
+      }
+      .walk-toggle svg { width: 22px; height: 22px; display: block; }
+      .walk-toggle .icon-list { display: none; }
+      /* Walk mode is unlisted for now: reachable only via /#walk, where the toggle is the way back. */
+      html:not(.walking) .walk-toggle { display: none; }
+      html.walking .walk-toggle {
+        color: #fff;
+        background: rgba(0, 0, 0, 0.45);
+        border-color: rgba(255, 255, 255, 0.18);
+      }
+      html.walking .walk-toggle:hover { border-color: #fff; }
+      html.walking .walk-toggle .icon-walk { display: none; }
+      html.walking .walk-toggle .icon-list { display: block; }
+      html.walking, html.walking body {
+        overflow: hidden;
+        overscroll-behavior: none;
+        background: #000;
+        color-scheme: dark;
+      }
+      .walk-root {
+        position: fixed;
+        inset: 0;
+        z-index: 1000;
+        background: #000;
+        touch-action: none;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      /* The runtime's paused panel, in the lobby's pure black instead of blue-grey. */
+      html.walking .wm-lock { background: rgba(0, 0, 0, 0.82); }
+      /* The walk toggle owns the top-right corner; it replaces the runtime's pause button. */
+      html.walking .wm-touch-menu-btn { display: none; }
+      @media (pointer: coarse) {
+        /* "Tap ⏸ to pause" points at the button hidden above. */
+        html.walking .wm-hint { display: none; }
+      }
+
+      /* Light lobby: the same controls, inverted. Only this visitor sees it. */
+      html.walking[data-walk-theme="light"],
+      html.walking[data-walk-theme="light"] body,
+      html.walking[data-walk-theme="light"] .walk-root { background: #f2f2f2; color-scheme: light; }
+      html.walking[data-walk-theme="light"] .walk-toggle,
+      html.walking[data-walk-theme="light"] .walk-online {
+        color: #111;
+        background: rgba(255, 255, 255, 0.6);
+        border-color: rgba(0, 0, 0, 0.14);
+      }
+      html.walking[data-walk-theme="light"] .walk-toggle:hover { border-color: #111; }
+      html.walking[data-walk-theme="light"] .walk-online::before { background: #111; box-shadow: none; }
+      html.walking[data-walk-theme="light"] .walk-flash { background: #000; }
+      html.walking[data-walk-theme="light"] .wm-overlay { color: #111; }
+      html.walking[data-walk-theme="light"] .wm-lock { background: rgba(242, 242, 242, 0.82); }
+      html.walking[data-walk-theme="light"] .wm-lock-cta {
+        color: #111;
+        background: rgba(0, 0, 0, 0.06);
+        border-color: rgba(0, 0, 0, 0.3);
+      }
+      html.walking[data-walk-theme="light"] .wm-lock-cta:hover,
+      html.walking[data-walk-theme="light"] .wm-lock-cta:active {
+        background: rgba(0, 0, 0, 0.12);
+        border-color: rgba(0, 0, 0, 0.55);
+      }
+      html.walking[data-walk-theme="light"] .wm-key { border-color: rgba(0, 0, 0, 0.25); background: rgba(0, 0, 0, 0.05); }
+      html.walking[data-walk-theme="light"] .wm-key-desc,
+      html.walking[data-walk-theme="light"] .wm-hint { color: rgba(0, 0, 0, 0.7); }
+      html.walking[data-walk-theme="light"] .wm-prompt {
+        color: #111;
+        background: rgba(255, 255, 255, 0.9);
+        border-color: rgba(0, 0, 0, 0.2);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+      }
+      .walk-root canvas { display: block; }
+      .walk-flash {
+        position: absolute;
+        inset: 0;
+        background: #fff;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity .45s ease-in;
+      }
+      .walk-flash.active { opacity: 1; }
+      .walk-online {
+        position: fixed;
+        top: max(16px, env(safe-area-inset-top));
+        right: calc(max(16px, env(safe-area-inset-right)) + 54px);
+        z-index: 2147483001;
+        height: 44px;
+        padding: 0 16px;
+        border-radius: 22px;
+        display: none;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        color: #fff;
+        background: rgba(0, 0, 0, 0.45);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        -webkit-backdrop-filter: blur(10px);
+        backdrop-filter: blur(10px);
+        pointer-events: none;
+      }
+      .walk-online::before {
+        content: "";
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #fff;
+        box-shadow: 0 0 8px #fff;
+      }
+      html.walking .walk-online[data-count] { display: flex; }
       .empty { color: var(--muted); font-size: 13px; }
       footer { margin-top: 50px; font-size: 12px; color: var(--muted); line-height: 1.7; }
       footer a { color: var(--subtle); text-decoration: none; transition: color .15s ease; }
@@ -557,6 +688,18 @@
     </style>
   </head>
   <body>
+    <button type="button" class="walk-toggle" id="walk-toggle" aria-label="Walk between worlds" title="Walk between worlds">
+      <svg class="icon-walk" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M13.5 5.5c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zM9.8 8.9 7 23h2.1l1.8-8 2.1 2v6h2v-7.5l-2.1-2 .6-3C14.8 12 16.8 13 19 13v-2c-1.9 0-3.5-1-4.3-2.4l-1-1.6c-.4-.6-1-1-1.7-1-.3 0-.5.1-.8.1L6 8.3V13h2V9.6l1.8-.7"/>
+      </svg>
+      <svg class="icon-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3" y="3" width="7" height="7" rx="1.5"/>
+        <rect x="14" y="3" width="7" height="7" rx="1.5"/>
+        <rect x="3" y="14" width="7" height="7" rx="1.5"/>
+        <rect x="14" y="14" width="7" height="7" rx="1.5"/>
+      </svg>
+    </button>
+    <div class="walk-online" id="walk-online" aria-live="polite"></div>
     <main>
       <h1>WORLDMESH <span class="beta-badge">BETA</span></h1>
       <p class="tagline">

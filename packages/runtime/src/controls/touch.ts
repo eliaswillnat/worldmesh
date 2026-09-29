@@ -23,16 +23,22 @@ const TOUCH_CSS = `
 }
 .wm-touch-joystick-base {
   position: absolute;
-  width: 96px;
-  height: 96px;
-  margin: -48px 0 0 -48px;
+  width: 112px;
+  height: 112px;
+  margin: -56px 0 0 -56px;
   border-radius: 50%;
   border: 2px solid rgba(255, 255, 255, 0.28);
   background: rgba(8, 11, 16, 0.4);
   backdrop-filter: blur(4px);
   pointer-events: none;
-  display: none;
   will-change: transform;
+  transition: opacity .15s ease;
+}
+/* Resting in the bottom-left corner so players can see where to put a thumb. */
+.wm-touch-joystick-base.wm-idle {
+  left: calc(env(safe-area-inset-left, 0px) + 84px);
+  top: calc(100% - env(safe-area-inset-bottom, 0px) - 104px);
+  opacity: 0.6;
 }
 .wm-touch-joystick-knob {
   position: absolute;
@@ -49,8 +55,8 @@ const TOUCH_CSS = `
 }
 .wm-touch-buttons {
   position: absolute;
-  right: 20px;
-  bottom: 24px;
+  right: calc(env(safe-area-inset-right, 0px) + 20px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 24px);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -166,7 +172,7 @@ export class TouchControls {
 
     // Joystick UI
     this.joystickBase = document.createElement('div');
-    this.joystickBase.className = 'wm-touch-joystick-base';
+    this.joystickBase.className = 'wm-touch-joystick-base wm-idle';
     this.joystickKnob = document.createElement('div');
     this.joystickKnob.className = 'wm-touch-joystick-knob';
     this.joystickBase.appendChild(this.joystickKnob);
@@ -250,12 +256,18 @@ export class TouchControls {
     // Left half: movement joystick
     if (this.movePointerId === null && e.clientX < halfWidth) {
       this.movePointerId = e.pointerId;
-      this.moveStart = { x: e.clientX, y: e.clientY };
       this.moveAxis = { x: 0, z: 0 };
-      this.joystickBase.style.left = `${e.clientX}px`;
-      this.joystickBase.style.top = `${e.clientY}px`;
-      this.joystickBase.style.display = 'block';
+      // Grab the resting stick where it is; anywhere else, the stick comes to the thumb.
+      const rest = this.joystickBase.getBoundingClientRect();
+      const restX = rest.left + rest.width / 2;
+      const restY = rest.top + rest.height / 2;
+      const onStick = Math.hypot(e.clientX - restX, e.clientY - restY) < rest.width * 0.75;
+      this.moveStart = onStick ? { x: restX, y: restY } : { x: e.clientX, y: e.clientY };
+      this.joystickBase.classList.remove('wm-idle');
+      this.joystickBase.style.left = `${this.moveStart.x}px`;
+      this.joystickBase.style.top = `${this.moveStart.y}px`;
       this.joystickKnob.style.transform = '';
+      if (onStick) this.handlePointerMove(e);
       return;
     }
 
@@ -273,7 +285,7 @@ export class TouchControls {
       const dx = e.clientX - this.moveStart.x;
       const dy = e.clientY - this.moveStart.y;
       const dist = Math.hypot(dx, dy);
-      const maxRadius = 45;
+      const maxRadius = 50;
       const clampedDist = Math.min(dist, maxRadius);
       const angle = Math.atan2(dy, dx);
 
@@ -299,8 +311,7 @@ export class TouchControls {
     if (e.pointerId === this.movePointerId) {
       this.movePointerId = null;
       this.moveAxis = { x: 0, z: 0 };
-      this.joystickBase.style.display = 'none';
-      this.joystickKnob.style.transform = '';
+      this.restJoystick();
     }
     if (e.pointerId === this.lookPointerId) {
       this.lookPointerId = null;
@@ -346,7 +357,13 @@ export class TouchControls {
     this.lookDelta = { dx: 0, dy: 0 };
     this.actionsDown.clear();
     this.justPressed.clear();
-    this.joystickBase.style.display = 'none';
+    this.restJoystick();
+  }
+
+  private restJoystick(): void {
+    this.joystickBase.classList.add('wm-idle');
+    this.joystickBase.style.left = '';
+    this.joystickBase.style.top = '';
     this.joystickKnob.style.transform = '';
   }
 
