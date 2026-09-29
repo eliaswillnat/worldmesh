@@ -1,7 +1,12 @@
 import { buildTravelUrl, createWorldMesh } from '@worldmesh/runtime';
 import {
+  CircleGeometry,
   Color,
+  CylinderGeometry,
   DirectionalLight,
+  DoubleSide,
+  Mesh,
+  MeshStandardMaterial,
   Fog,
   HemisphereLight,
   PerspectiveCamera,
@@ -9,15 +14,14 @@ import {
   Scene,
   ShaderMaterial,
   Vector2,
-  Vector3,
   WebGLRenderer,
 } from 'three';
 import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
 import { Presence } from './presence';
-import { WORMHOLE_TRIGGER, Wormhole, type WormholeWorld } from './wormhole';
+import { DOOR_HALF_SPAN, DOOR_TOP, Door, type DoorWorld } from './door';
 
 export interface LobbyOptions {
-  worlds: WormholeWorld[];
+  worlds: DoorWorld[];
   /** Draw the lobby white with dark lines instead of black with light ones. */
   light?: boolean;
   /** WebSocket base URL of the presence server. Leave empty for single-player. */
@@ -25,12 +29,12 @@ export interface LobbyOptions {
   /** Called with how many people are in the lobby, or null while offline. */
   onPresenceCount?: (count: number | null) => void;
   /** Called right before the page navigates into a world. */
-  onEnterWorld?: (world: WormholeWorld) => void;
+  onEnterWorld?: (world: DoorWorld) => void;
 }
 
 export interface Lobby {
-  /** Add wormholes for worlds that were not listed yet. */
-  setWorlds(worlds: WormholeWorld[]): void;
+  /** Add doors for worlds that were not listed yet. */
+  setWorlds(worlds: DoorWorld[]): void;
   /**
    * Switch between the dark and light lobby. Purely local: other visitors
    * keep whatever their own device prefers.
@@ -42,8 +46,10 @@ export interface Lobby {
 /** Objects on this layer are drawn by the main camera but not seen in the floor mirror. */
 const FLOOR_LAYER = 1;
 const FLOOR_SIZE = 600;
-const SPAWN_CLEARANCE = 7;
-const MIN_GAP = 7;
+/** The round wall: never smaller than this, and grows so doors keep this much wall between them. */
+const WALL_MIN_RADIUS = 11;
+const DOOR_SPACING = 4.2;
+const WALL_HEIGHT = 5.2;
 const WARP_MS = 450;
 
 /**
@@ -124,7 +130,7 @@ const floorShader = {
 };
 
 /**
- * Walk mode: the directory as a place. Every listed world is a wormhole on an
+ * Walk mode: the directory as a place. Every listed world is a door on an
  * endless black grid, and walking into one travels to that world. Movement,
  * camera, touch controls and portal triggers all come from the same runtime
  * the worlds themselves use.
@@ -148,6 +154,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   sun.position.set(4, 10, 6);
   scene.add(sun);
 
+  const wallMaterial = new MeshStandardMaterial({ side: DoubleSide, roughness: 0.85, metalness: 0 });
   const mirror = new Reflector(new PlaneGeometry(FLOOR_SIZE, FLOOR_SIZE), {
     shader: floorShader,
     ...mirrorResolution(),
@@ -161,10 +168,18 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     ? new Presence(options.presenceEndpoint, 'lobby', scene, (count) => options.onPresenceCount?.(count))
     : undefined;
 
-  const known = new Map<string, WormholeWorld>();
-  const wormholes = new Map<string, Wormhole>();
+  // The wall the doors are set into. Rebuilt whenever the door count changes.
+  const wall: Mesh[] = [];
+  // Standing on something is required once there are walls to bump into.
+  const ground = new Mesh(new CircleGeometry(1, 48));
+  ground.rotation.x = -Math.PI / 2;
+  ground.visible = false;
+  scene.add(ground);
+
+  const known = new Map<string, DoorWorld>();
+  const doors = new Map<string, Door>();
   let time = 0;
-  let warping: Wormhole | null = null;
+  let warping: Door | null = null;
   let warpTimer = 0;
 
   const flash = document.createElement('div');
@@ -180,15 +195,13 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     view: { mode: 'third', distance: 5.5, pitch: window.innerWidth < window.innerHeight ? -0.32 : -0.15 },
     ui: { title: 'WorldMesh', badge: false, crosshair: false },
     network: presence,
+    colliders: () => [ground, ...wall],
     onUpdate: (dt, handle) => {
       time += dt;
       const [x, , z] = handle.getState().position;
-      const player = new Vector3(x, 0, z);
-      for (const wormhole of wormholes.values()) {
-        if (wormhole === warping) continue;
-        wormhole.update(time, player);
-        const { x: wx, z: wz } = wormhole.group.position;
-        if (!warping && Math.hypot(x - wx, z - wz) < WORMHOLE_TRIGGER) enter(wormhole);
+      for (const door of doors.values()) {
+        door.update(time);
+        if (!warping && door.contains(x, z)) enter(door);
       }
       floorUniforms.uPlayer.value.set(x, z);
       // Keep the finite floor under the player. The grid is drawn in world
@@ -198,21 +211,21 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     },
   });
 
-  /** Walking into a wormhole: flash, then travel to the world's own URL. */
-  function enter(wormhole: Wormhole): void {
-    warping = wormhole;
-    wormhole.surge();
-    options.onEnterWorld?.(wormhole.world);
+  /** Walking through a door: flash, then travel to the world's own URL. */
+  function enter(door: Door): void {
+    warping = door;
+    door.surge();
+    options.onEnterWorld?.(door.world);
     document.exitPointerLock?.();
     flash.classList.add('active');
-    const url = buildTravelUrl(wormhole.world.url);
+    const url = buildTravelUrl(door.world.url);
     warpTimer = window.setTimeout(() => {
       window.location.href = url;
     }, WARP_MS);
   }
 
   // Coming back with the browser's back button can restore this page as it
-  // was left: mid-warp and standing in a wormhole. Put the visitor back.
+  // was left: mid-warp and standing in a doorway. Put the visitor back.
   const handlePageShow = (event: PageTransitionEvent) => {
     if (!event.persisted) return;
     window.clearTimeout(warpTimer);
@@ -227,7 +240,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     const { textureWidth, textureHeight } = mirrorResolution();
     mirror.getRenderTarget().setSize(textureWidth, textureHeight);
     // A phone held upright sees a narrow slice of the world; widen the lens so
-    // the wormholes around you stay in view.
+    // the doors around you stay in view.
     const aspect = window.innerWidth / window.innerHeight;
     camera.fov = aspect < 1 ? 70 + (1 - aspect) * 30 : 70;
     camera.updateProjectionMatrix();
@@ -245,7 +258,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     if (isLight === light) return;
     light = isLight;
     applyTheme();
-    for (const wormhole of wormholes.values()) wormhole.setTheme(light);
+    for (const door of doors.values()) door.setTheme(light);
   }
 
   function applyTheme(): void {
@@ -254,24 +267,61 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     fog.color.copy(background);
     floorUniforms.uBackground.value.copy(background);
     floorUniforms.uLight.value = light ? 1 : 0;
+    wallMaterial.color.set(light ? 0xe4e4e4 : 0x0e0e0e);
   }
 
-  function setWorlds(worlds: WormholeWorld[]): void {
+  function setWorlds(worlds: DoorWorld[]): void {
     for (const entry of worlds) {
       if (!known.has(entry.url)) known.set(entry.url, entry);
     }
 
-    // Everyone with the same list gets the same layout, so visitors who see
-    // each other also see the same wormholes around them.
-    for (const [url, spot] of layoutWorlds([...known.keys()])) {
-      let wormhole = wormholes.get(url);
-      if (!wormhole) {
-        wormhole = new Wormhole(known.get(url)!, new Vector3(), FLOOR_LAYER, light);
-        scene.add(wormhole.group);
-        wormholes.set(url, wormhole);
+    // Everyone with the same list gets the same ring, so visitors who see
+    // each other also see the same doors around them.
+    const urls = [...known.keys()].sort();
+    const radius = Math.max(WALL_MIN_RADIUS, (urls.length * DOOR_SPACING) / (Math.PI * 2));
+    const angles = urls.map((_, i) => Math.PI + (i / Math.max(urls.length, 1)) * Math.PI * 2);
+    urls.forEach((url, i) => {
+      let door = doors.get(url);
+      if (!door) {
+        door = new Door(known.get(url)!, light);
+        scene.add(door.group);
+        doors.set(url, door);
       }
-      wormhole.group.position.set(spot.x, 0, spot.y);
+      // Set into the wall, facing the middle of the room.
+      door.place(Math.sin(angles[i]) * radius, Math.cos(angles[i]) * radius, 0, 0);
+    });
+    buildWall(radius, angles);
+  }
+
+  /** Curved wall sections between the doors, leaving a gap for each doorway. */
+  function buildWall(radius: number, angles: number[]): void {
+    for (const section of wall) {
+      section.geometry.dispose();
+      section.removeFromParent();
     }
+    wall.length = 0;
+    ground.scale.setScalar(radius + 4);
+
+    const gap = DOOR_HALF_SPAN / radius;
+    const spans: [number, number][] = angles.length
+      ? angles.map((a, i) => {
+          const next = i + 1 < angles.length ? angles[i + 1] : angles[0] + Math.PI * 2;
+          return [a + gap, next - a - gap * 2];
+        })
+      : [[0, Math.PI * 2]];
+    const add = (start: number, length: number, bottom: number) => {
+      if (length <= 0) return;
+      const height = WALL_HEIGHT - bottom;
+      const segments = Math.max(2, Math.ceil(length * 24));
+      const section = new Mesh(facingInward(new CylinderGeometry(radius, radius, height, segments, 1, true, start, length)), wallMaterial);
+      section.position.y = bottom + height / 2;
+      scene.add(section);
+      wall.push(section);
+    };
+    for (const [start, length] of spans) add(start, length, 0);
+    // Close the wall over each doorway.
+    for (const a of angles) add(a - gap, gap * 2, DOOR_TOP);
+    world.refreshColliders();
   }
 
   function dispose(): void {
@@ -279,8 +329,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     window.removeEventListener('pageshow', handlePageShow);
     window.removeEventListener('resize', handleResize);
     world.dispose();
-    for (const wormhole of wormholes.values()) wormhole.dispose();
-    wormholes.clear();
+    for (const door of doors.values()) door.dispose();
+    doors.clear();
+    for (const section of wall) section.geometry.dispose();
+    wallMaterial.dispose();
+    ground.geometry.dispose();
     mirror.dispose();
     mirror.geometry.dispose();
     renderer.dispose();
@@ -302,42 +355,18 @@ function mirrorResolution(): { textureWidth: number; textureHeight: number } {
 }
 
 /**
- * Scatter wormholes around the spawn. It looks random, but every position is
- * derived from the world URLs alone, so every visitor's lobby matches.
+ * Turn a cylinder inside out, so its faces point at the middle of the room.
+ * The runtime only blocks movement into the front of a face, and the wall has
+ * to stop people walking out, not in.
  */
-function layoutWorlds(urls: string[]): Map<string, Vector2> {
-  const sorted = [...urls].sort();
-  const taken: Vector2[] = [];
-  const spots = new Map<string, Vector2>();
-  const baseReach = Math.max(16, Math.sqrt(sorted.length) * 7);
-
-  for (const url of sorted) {
-    const random = seededRandom(url);
-    let reach = baseReach;
-    let spot: Vector2 | null = null;
-    while (!spot) {
-      for (let attempt = 0; attempt < 60 && !spot; attempt++) {
-        const angle = random() * Math.PI * 2;
-        const distance = SPAWN_CLEARANCE + Math.sqrt(random()) * (reach - SPAWN_CLEARANCE);
-        const candidate = new Vector2(Math.sin(angle) * distance, -Math.cos(angle) * distance);
-        if (taken.every((other) => other.distanceTo(candidate) >= MIN_GAP)) spot = candidate;
-      }
-      reach += 3;
-    }
-    taken.push(spot);
-    spots.set(url, spot);
+function facingInward(geometry: CylinderGeometry): CylinderGeometry {
+  const index = geometry.getIndex()!;
+  for (let i = 0; i < index.count; i += 3) {
+    const b = index.getX(i + 1);
+    index.setX(i + 1, index.getX(i + 2));
+    index.setX(i + 2, b);
   }
-  return spots;
-}
-
-/** Small deterministic PRNG (mulberry32) seeded from a string. */
-function seededRandom(seed: string): () => number {
-  let h = 2166136261;
-  for (let i = 0; i < seed.length; i++) h = Math.imul(h ^ seed.charCodeAt(i), 16777619);
-  return () => {
-    h = (h + 0x6d2b79f5) | 0;
-    let t = Math.imul(h ^ (h >>> 15), 1 | h);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
+  const normal = geometry.getAttribute('normal');
+  for (let i = 0; i < normal.count; i++) normal.setXYZ(i, -normal.getX(i), -normal.getY(i), -normal.getZ(i));
+  return geometry;
 }

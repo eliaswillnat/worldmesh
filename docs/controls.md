@@ -17,6 +17,7 @@ Every WorldMesh world ships these bindings by default. They live in
 | `Shift` | Sprint |
 | `E` | Interact / enter a portal |
 | `V` | Toggle first ↔ third person |
+| `1` … `9`, `0` | Change the default figure's face: smile, grin, laugh, wink, love, surprised, sad, angry, sleepy, neutral |
 | `Esc` | Release the cursor |
 | Scroll wheel | Third-person camera distance |
 

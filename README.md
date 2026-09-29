@@ -27,10 +27,9 @@ deployable 3D websites can share exactly the same movement, camera and
 navigation runtime.** Nothing else is built yet — no accounts, no database, no
 moderation. See [docs/roadmap.md](docs/roadmap.md).
 
-The hub also has a **walk mode** (the walking figure, top right): the directory
-as a place. Every listed world is a floating wormhole sphere on a mirrored
-grid, showing a lensed preview of its cover, and walking into one travels
-there. The lobby is black or white depending on each visitor's own
+The hub also has a **walk mode**: the directory
+as a place. Every listed world is a doorway set into a round wall around a
+mirrored grid, showing its cover, and walking into one travels there. The lobby is black or white depending on each visitor's own
 light/dark setting. Everyone in
 walk mode sees everyone else, through a tiny presence relay in
 `workers/presence`.

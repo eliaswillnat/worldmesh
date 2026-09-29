@@ -269,7 +269,7 @@ render();
 fetchCommunityWorlds();
 
 // ── Walk mode ────────────────────────────────────────────────────────────────
-// The same directory as a place: every world is a wormhole on a grid. Three.js
+// The same directory as a place: every world is a door on a grid. Three.js
 // and the runtime load only when someone asks for it.
 
 const walkToggle = document.querySelector<HTMLButtonElement>('#walk-toggle')!;
@@ -335,8 +335,8 @@ async function enterWalkMode(): Promise<void> {
     setWalkToggleLabel('Back to the list');
   } catch (error) {
     console.error('Walk mode failed to start', error);
+    // Walk mode is unlisted for now: fail quietly back to the list.
     exitWalkMode();
-    setStatus('Walk mode is not available in this browser.', true);
   } finally {
     walkLoading = false;
     walkToggle.disabled = false;

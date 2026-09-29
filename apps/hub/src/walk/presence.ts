@@ -1,6 +1,7 @@
 import {
   animateDefaultAvatar,
   createDefaultAvatar,
+  setAvatarExpression,
   type NetworkAdapter,
   type PlayerState,
   type WorldMeshHandle,
@@ -23,8 +24,8 @@ interface Remote {
 }
 
 type ServerMessage =
-  | { t: 'welcome'; id: string; peers: { id: string; p: [number, number, number]; r: number }[] }
-  | { t: 's'; id: string; p: [number, number, number]; r: number }
+  | { t: 'welcome'; id: string; peers: { id: string; p: [number, number, number]; r: number; e?: string }[] }
+  | { t: 's'; id: string; p: [number, number, number]; r: number; e?: string }
   | { t: 'leave'; id: string };
 
 /**
@@ -69,7 +70,7 @@ export class Presence implements NetworkAdapter {
     if (now - this.lastSent < 1000 / SEND_RATE) return;
 
     const [x, y, z] = state.position;
-    const payload = JSON.stringify({ t: 's', p: [round(x), round(y), round(z)], r: round(state.yaw) });
+    const payload = JSON.stringify({ t: 's', p: [round(x), round(y), round(z)], r: round(state.facing), e: state.expression });
     if (payload === this.lastPayload && now - this.lastSent < HEARTBEAT_MS) return;
 
     socket.send(payload);
@@ -161,10 +162,10 @@ export class Presence implements NetworkAdapter {
         this.backoff = 1000;
         this.lastPayload = '';
         this.lastSent = 0;
-        for (const peer of message.peers) this.upsert(peer.id, peer.p, peer.r, true);
+        for (const peer of message.peers) this.upsert(peer.id, peer.p, peer.r, peer.e, true);
         break;
       case 's':
-        if (message.id !== this.selfId) this.upsert(message.id, message.p, message.r, false);
+        if (message.id !== this.selfId) this.upsert(message.id, message.p, message.r, message.e, false);
         break;
       case 'leave': {
         const remote = this.remotes.get(message.id);
@@ -176,7 +177,7 @@ export class Presence implements NetworkAdapter {
     this.onCount(this.remotes.size + 1);
   }
 
-  private upsert(id: string, p: [number, number, number], yaw: number, snap: boolean): void {
+  private upsert(id: string, p: [number, number, number], yaw: number, expression: unknown, snap: boolean): void {
     if (!Array.isArray(p) || p.length !== 3 || !p.every(Number.isFinite) || !Number.isFinite(yaw)) return;
 
     let remote = this.remotes.get(id);
@@ -189,6 +190,7 @@ export class Presence implements NetworkAdapter {
     }
     remote.target.set(p[0], p[1], p[2]);
     remote.targetYaw = yaw;
+    if (typeof expression === 'string') setAvatarExpression(remote.root, expression);
     // A long jump is a teleport or respawn, not a sprint: do not animate it.
     if (remote.root.position.distanceTo(remote.target) > 6) snap = true;
     if (snap) {
@@ -202,7 +204,7 @@ export class Presence implements NetworkAdapter {
     this.remotes.clear();
   }
 
-  // Leave the room promptly when the tab navigates away (e.g. into a wormhole),
+  // Leave the room promptly when the tab navigates away (e.g. through a door),
   // and rejoin if the browser restores the page from its back/forward cache.
   private handlePageHide = (): void => {
     window.clearTimeout(this.reconnectTimer);

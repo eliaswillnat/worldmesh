@@ -1,6 +1,12 @@
 import { Group, Mesh, Object3D, type Vector3 } from 'three';
 import type { PlayerOptions } from '../types';
-import { animateDefaultAvatar, createDefaultAvatar, type AvatarMotion } from './avatar';
+import {
+  animateDefaultAvatar,
+  createDefaultAvatar,
+  setAvatarExpression,
+  type AvatarExpression,
+  type AvatarMotion,
+} from './avatar';
 
 export interface PlayerAvatarOptions extends PlayerOptions {
   height: number;
@@ -17,6 +23,11 @@ export class Player {
   readonly height: number;
   readonly radius: number;
   readonly eyeHeight: number;
+
+  /** Tracked even for custom avatars, so worlds and peers can react to it. */
+  expression: AvatarExpression = 'smile';
+  /** Where the body faces. In third person it follows movement, not the camera. */
+  facing = 0;
 
   private isDefaultAvatar: boolean;
 
@@ -40,15 +51,26 @@ export class Player {
   }
 
   /** Place the avatar at the player's feet, facing `yaw`, and animate it for `motion`. */
-  sync(feet: Vector3, yaw: number, currentHeight: number, motion?: AvatarMotion): void {
+  sync(feet: Vector3, yaw: number, currentHeight: number, motion?: AvatarMotion, freeLook = false): void {
+    if (!freeLook) this.facing = yaw;
+    else if (motion && motion.speed > 0.3 && motion.heading !== undefined) {
+      let delta = motion.heading - this.facing;
+      delta = Math.atan2(Math.sin(delta), Math.cos(delta));
+      this.facing += delta * (1 - Math.exp(-12 * motion.dt));
+    }
     if (!this.root) return;
     this.root.position.copy(feet);
-    this.root.rotation.y = yaw;
+    this.root.rotation.y = this.facing;
     if (this.isDefaultAvatar) {
       // Squash the default body while crouching instead of rebuilding it.
       this.root.scale.y = currentHeight / this.height;
       if (motion) animateDefaultAvatar(this.root.children[0], motion);
     }
+  }
+
+  setExpression(expression: AvatarExpression): void {
+    this.expression = expression;
+    if (this.root && this.isDefaultAvatar) setAvatarExpression(this.root.children[0], expression);
   }
 
   setVisible(visible: boolean): void {

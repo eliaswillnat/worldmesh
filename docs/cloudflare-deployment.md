@@ -119,7 +119,7 @@ relayed by a small Worker with one Durable Object per room, in
 
 If the presence Worker is unreachable, walk mode still works single-player.
 
-Wormholes show each world's cover image inside WebGL, which needs CORS. The
+Walk-mode doors show each world's cover image inside WebGL, which needs CORS. The
 R2 bucket does not send CORS headers, so the hub relays covers through the
 same-origin Pages Function `/api/cover` (allow-listed to the covers bucket;
 add more hosts with a comma-separated `COVER_HOSTS` variable). Worlds whose
