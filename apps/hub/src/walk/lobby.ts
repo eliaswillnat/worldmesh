@@ -88,14 +88,17 @@ const floorShader = {
 
       float minor = gridLine(vWorld.xz / 2.0);
       float major = gridLine(vWorld.xz / 10.0);
-      float fade = 1.0 - smoothstep(18.0, 110.0, distance(vWorld.xz, cameraPosition.xz));
+      // Fade out well before the horizon, where dense lines would add up to a bright band.
+      float dist = distance(vWorld.xz, cameraPosition.xz);
+      float fade = 1.0 - smoothstep(12.0, 75.0, dist);
+      float minorFade = 1.0 - smoothstep(8.0, 40.0, dist);
       // Lines light up a little around the player.
       float glow = 1.0 - smoothstep(0.0, 14.0, distance(vWorld.xz, uPlayer));
-      float lines = max(minor * 0.09, major * 0.24) * fade * (1.0 + glow * 1.6);
+      float lines = max(minor * 0.08 * minorFade, major * 0.2) * fade * (1.0 + glow * 1.6);
 
       // A dark mirror: glossier at grazing angles, dim looking straight down.
       vec3 toCamera = normalize(cameraPosition - vWorld);
-      float dim = mix(0.5, 0.86, abs(toCamera.y));
+      float dim = mix(0.6, 0.88, abs(toCamera.y));
 
       gl_FragColor = vec4(reflection * (1.0 - dim) * (1.0 - lines) + vec3(lines), 1.0);
 
@@ -118,7 +121,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
   const scene = new Scene();
   scene.background = new Color(0x000000);
-  scene.fog = new Fog(0x000000, 30, 120);
+  scene.fog = new Fog(0x000000, 25, 100);
 
   const camera = new PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 320);
   camera.layers.enable(FLOOR_LAYER);
@@ -155,8 +158,9 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     renderer,
     spawn: [0, 0, 0],
     player: { height: AVATAR_HEIGHT, radius: AVATAR_RADIUS, avatar: createAvatar() },
-    view: { mode: 'third', distance: 5.5, pitch: -0.15 },
-    ui: { title: 'WorldMesh', badge: false },
+    // Held upright, look further down so the floor fills the tall screen instead of the sky.
+    view: { mode: 'third', distance: 5.5, pitch: window.innerWidth < window.innerHeight ? -0.32 : -0.15 },
+    ui: { title: 'WorldMesh', badge: false, crosshair: false },
     network: presence,
     onUpdate: (dt, handle) => {
       time += dt;
@@ -204,8 +208,14 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const handleResize = () => {
     const { textureWidth, textureHeight } = mirrorResolution();
     mirror.getRenderTarget().setSize(textureWidth, textureHeight);
+    // A phone held upright sees a narrow slice of the world; widen the lens so
+    // the wormholes around you stay in view.
+    const aspect = window.innerWidth / window.innerHeight;
+    camera.fov = aspect < 1 ? 70 + (1 - aspect) * 30 : 70;
+    camera.updateProjectionMatrix();
   };
   window.addEventListener('resize', handleResize);
+  handleResize();
 
   setWorlds(options.worlds);
 
@@ -263,7 +273,9 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
 /** The mirror renders the scene a second time, so draw it at reduced resolution. */
 function mirrorResolution(): { textureWidth: number; textureHeight: number } {
-  const scale = Math.min(window.devicePixelRatio, 2) * 0.5;
+  // Phones get a softer reflection: it is the most expensive thing in the scene.
+  const coarse = window.matchMedia?.('(pointer: coarse)').matches;
+  const scale = Math.min(window.devicePixelRatio, 2) * (coarse ? 0.35 : 0.5);
   return {
     textureWidth: Math.max(256, Math.round(window.innerWidth * scale)),
     textureHeight: Math.max(256, Math.round(window.innerHeight * scale)),

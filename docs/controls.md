@@ -47,7 +47,21 @@ Pointer lock requires a user gesture, so every world opens with the same
 click-to-enter panel showing the same control legend. That panel is part of the
 runtime, so it looks and behaves the same everywhere.
 
-## Touch and VR
+## Touch
 
-Not implemented. When they are, they belong in the runtime's input layer for
+Phones and tablets get the same controls from the runtime, in portrait or
+landscape:
+
+| Input | Action |
+| --- | --- |
+| Left half of the screen | Move. A joystick rests in the bottom-left corner; grab it there, or touch anywhere on the left and it comes to your thumb |
+| Drag on the right half | Look |
+| ▲ button | Jump |
+| E button | Interact |
+| V button | Toggle first / third person |
+| ⏸ button (top right) | Pause |
+
+## VR
+
+Not implemented. When it is, it belongs in the runtime's input layer for
 exactly the same reason the keyboard bindings do.

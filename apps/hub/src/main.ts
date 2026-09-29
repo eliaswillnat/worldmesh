@@ -295,6 +295,7 @@ async function enterWalkMode(): Promise<void> {
     walkRoot.className = 'walk-root';
     document.body.appendChild(walkRoot);
     document.documentElement.classList.add('walking');
+    setThemeColor('#000000');
     lobby = createLobby(walkRoot, {
       worlds: ALL_WORLDS,
       presenceEndpoint: PRESENCE_ENDPOINT,
@@ -327,11 +328,20 @@ function exitWalkMode(): void {
   walkRoot?.remove();
   walkRoot = null;
   document.documentElement.classList.remove('walking');
+  setThemeColor(null);
   delete walkOnline.dataset.count;
   if (window.location.hash === '#walk') {
     history.replaceState(null, '', window.location.pathname + window.location.search);
   }
   setWalkToggleLabel('Walk between worlds');
+}
+
+/** Darken the mobile browser's toolbar while walking; null restores the page's own colours. */
+function setThemeColor(color: string | null): void {
+  for (const meta of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) {
+    meta.dataset.original ??= meta.content;
+    meta.content = color ?? meta.dataset.original;
+  }
 }
 
 function setWalkToggleLabel(label: string): void {

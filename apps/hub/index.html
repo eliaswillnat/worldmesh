@@ -3,6 +3,8 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
     <title>WorldMesh</title>
     <meta name="description" content="A lightweight open network for independently hosted 3D worlds." />
     <link rel="icon" type="image/webp" href="/favicon.webp" />
@@ -574,12 +576,28 @@
       html.walking .walk-toggle:hover { border-color: #fff; }
       html.walking .walk-toggle .icon-walk { display: none; }
       html.walking .walk-toggle .icon-list { display: block; }
-      html.walking, html.walking body { overflow: hidden; }
+      html.walking, html.walking body {
+        overflow: hidden;
+        overscroll-behavior: none;
+        background: #000;
+        color-scheme: dark;
+      }
       .walk-root {
         position: fixed;
         inset: 0;
         z-index: 1000;
         background: #000;
+        touch-action: none;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      /* The runtime's paused panel, in the lobby's pure black instead of blue-grey. */
+      html.walking .wm-lock { background: rgba(0, 0, 0, 0.82); }
+      /* The walk toggle owns the top-right corner; it replaces the runtime's pause button. */
+      html.walking .wm-touch-menu-btn { display: none; }
+      @media (pointer: coarse) {
+        /* "Tap ⏸ to pause" points at the button hidden above. */
+        html.walking .wm-hint { display: none; }
       }
       .walk-root canvas { display: block; }
       .walk-flash {
