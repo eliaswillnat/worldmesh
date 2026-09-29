@@ -103,11 +103,11 @@ export function createDefaultAvatar(height = 1.8): Group {
   // One soft bean: shoulders tucked right under the head, rounding off, a
   // belly that is widest low down, and a rounded seat the legs grow out of.
   const body = shaded(lathe([
-    [0, 1.07],
-    [0.12, 1.05],
-    [0.19, 0.99],
-    [0.215, 0.9],
-    [0.226, 0.78],
+    [0, 1.1],
+    [0.12, 1.08],
+    [0.19, 1.02],
+    [0.217, 0.93],
+    [0.227, 0.8],
     [0.232, 0.56],
     [0.243, 0.44],
     [0.232, 0.36],
@@ -147,8 +147,8 @@ export function createDefaultAvatar(height = 1.8): Group {
   };
   // Thick, soft arms whose round tops sink into the shoulders, so there is
   // no seam; hands swell slightly at the tips.
-  const armL = limb(-0.18, 0.89, 0.5, 0.074, 0.08, torso);
-  const armR = limb(0.18, 0.89, 0.5, 0.074, 0.08, torso);
+  const armL = limb(-0.182, 0.92, 0.52, 0.074, 0.08, torso);
+  const armR = limb(0.182, 0.92, 0.52, 0.074, 0.08, torso);
   armL.rotation.z = -ARM_REST;
   armR.rotation.z = ARM_REST;
   // Stubby legs, wide where they leave the body and rounded at the feet.
