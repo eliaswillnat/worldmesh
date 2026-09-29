@@ -549,6 +549,11 @@
       footer { margin-top: 50px; font-size: 12px; color: var(--muted); line-height: 1.7; }
       footer a { color: var(--subtle); text-decoration: none; transition: color .15s ease; }
       footer a:hover { color: var(--text); }
+      /* Hide scrollbar on mobile across all browsers (Firefox, Chrome, Safari, Edge) */
+      @media (max-width: 600px), (pointer: coarse) {
+        html, body { scrollbar-width: none; -ms-overflow-style: none; }
+        html::-webkit-scrollbar, body::-webkit-scrollbar { display: none; width: 0; height: 0; background: transparent; }
+      }
     </style>
   </head>
   <body>
