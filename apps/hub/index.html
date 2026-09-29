@@ -502,12 +502,22 @@
       .card-clicks svg { opacity: 0.5; }
 
       @media (max-width: 600px) {
-        html {
-          scroll-snap-type: y mandatory;
-          -webkit-overflow-scrolling: touch;
-        }
+        /* main is the scroller: a fixed-height box, so the browser toolbar
+           never collapses mid-swipe and resizes the snap targets. */
+        html, body { height: 100%; overflow: hidden; }
         body { padding: 0; }
-        main { max-width: 100%; }
+        main {
+          max-width: 100%;
+          height: 100dvh;
+          overflow-y: auto;
+          overscroll-behavior: contain;
+          scroll-snap-type: y mandatory;
+          scroll-padding-top: var(--header-h, 0px);
+          -webkit-overflow-scrolling: touch;
+          scrollbar-width: none;
+        }
+        main::-webkit-scrollbar { display: none; }
+        html.mobile-adding main { scroll-snap-type: none; }
         h1, .tagline, form, .creator-fields, .status, footer { padding-left: 16px; padding-right: 16px; }
         h1 { padding-top: max(20px, env(safe-area-inset-top)); }
         /* The title stays pinned as the cards scroll under it. */
@@ -518,7 +528,6 @@
           background: var(--bg);
         }
         .tagline { margin-bottom: 12px; }
-        html { scroll-padding-top: var(--header-h, 0px); }
         footer {
           padding-bottom: 40px;
           scroll-snap-align: end;

@@ -278,7 +278,7 @@ mobileAddToggle.addEventListener('click', () => {
   mobileAddToggle.textContent = open ? 'Close' : 'Add world';
   mobileAddToggle.setAttribute('aria-expanded', String(open));
   if (open) {
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    document.querySelector('main')!.scrollTo({ top: 0, behavior: 'smooth' });
     input.focus({ preventScroll: true });
   } else {
     setAddingMode(false);
