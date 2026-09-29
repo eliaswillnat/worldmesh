@@ -330,6 +330,7 @@ async function enterWalkMode(): Promise<void> {
         }
       },
       onEnterWorld: (world) => trackClick(world.url),
+      onAddWorld: openAddFormFromWalk,
     });
     applyWalkTheme();
     history.replaceState(null, '', '#walk');
@@ -357,6 +358,14 @@ function exitWalkMode(): void {
     history.replaceState(null, '', window.location.pathname + window.location.search);
   }
   setWalkToggleLabel('Walk between worlds');
+}
+
+/** An empty door in the lobby was picked: back to the list, straight into the add form. */
+function openAddFormFromWalk(): void {
+  exitWalkMode();
+  form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  input.focus({ preventScroll: true });
+  setStatus("Paste your world's URL to give it a door in the lobby.");
 }
 
 /** Darken the mobile browser's toolbar while walking; null restores the page's own colours. */

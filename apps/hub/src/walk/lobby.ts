@@ -13,6 +13,7 @@ import {
   HemisphereLight,
   PerspectiveCamera,
   PlaneGeometry,
+  Raycaster,
   RingGeometry,
   Scene,
   ShaderMaterial,
@@ -36,6 +37,8 @@ export interface LobbyOptions {
   onPresenceCount?: (count: number | null) => void;
   /** Called right before the page navigates into a world. */
   onEnterWorld?: (world: DoorWorld) => void;
+  /** Called when someone picks an empty door to add their own world. */
+  onAddWorld?: () => void;
 }
 
 export interface Lobby {
@@ -63,6 +66,13 @@ const GATE_WIDTH = 4.4;
 const GATE_HEIGHT = 6.2;
 /** Wall kept clear on each side of the gate before the first door. */
 const GATE_MARGIN = DOOR_SPACING;
+/** The hall always has at least this many doors, and always a few empty ones. */
+const MIN_DOORS = 24;
+const SPARE_DOORS = 6;
+/** Stand this close in front of an empty door to be offered it. */
+const EMPTY_DOOR_REACH = 2.4;
+/** A tap on an empty door this far away still counts. */
+const TAP_RANGE = 40;
 const WARP_MS = 450;
 
 /**
@@ -208,6 +218,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
   const known = new Map<string, DoorWorld>();
   const doors = new Map<string, Door>();
+  // Doors with no world behind them yet. Re-laid out with every list change.
+  const emptyDoors: Door[] = [];
+  let nearEmpty: Door | null = null;
+  let adding = false;
+  const isTouch = window.matchMedia?.('(pointer: coarse)').matches ?? false;
   let time = 0;
   let warping: Door | null = null;
   let warpTimer = 0;
@@ -215,6 +230,16 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const flash = document.createElement('div');
   flash.className = 'walk-flash';
   container.appendChild(flash);
+
+  const addPrompt = document.createElement('button');
+  addPrompt.type = 'button';
+  addPrompt.className = 'walk-add-prompt';
+  addPrompt.textContent = isTouch ? 'Tap to add your world here' : 'Press E or click to add your world here';
+  addPrompt.addEventListener('click', (event) => {
+    event.stopPropagation();
+    addWorld();
+  });
+  container.appendChild(addPrompt);
 
   const world = createWorldMesh({
     scene,
@@ -225,13 +250,30 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     view: { mode: 'third', distance: 5.5, pitch: window.innerWidth < window.innerHeight ? -0.32 : -0.15 },
     ui: { title: 'WorldMesh', badge: false, crosshair: false },
     network: presence,
-    colliders: () => [ground, ...wall, ...(city?.colliders ?? [])],
+    // Empty doors are closed: their faces stop you like the wall does.
+    colliders: () => [ground, ...wall, ...emptyDoors.map((door) => door.face), ...(city?.colliders ?? [])],
     onUpdate: (dt, handle) => {
       time += dt;
       const [x, , z] = handle.getState().position;
       for (const door of doors.values()) {
         door.update(time);
         if (!warping && door.contains(x, z)) enter(door);
+      }
+      let near: Door | null = null;
+      let nearest = EMPTY_DOOR_REACH;
+      for (const door of emptyDoors) {
+        door.update(time);
+        const distance = door.distanceInFront(x, z);
+        if (distance !== null && distance < nearest) {
+          nearest = distance;
+          near = door;
+        }
+      }
+      if (near !== nearEmpty) {
+        nearEmpty?.setHover(false);
+        near?.setHover(true);
+        nearEmpty = near;
+        addPrompt.classList.toggle('visible', near !== null);
       }
       floorUniforms.uPlayer.value.set(x, z);
       sky.position.set(x, 0, z);
@@ -244,6 +286,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
   /** Walking through a door: flash, then travel to the world's own URL. */
   function enter(door: Door): void {
+    if (!door.world) return;
     warping = door;
     door.surge();
     options.onEnterWorld?.(door.world);
@@ -255,6 +298,53 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     }, WARP_MS);
   }
 
+  /** An empty door was picked: hand over to the page's add-world form. */
+  function addWorld(): void {
+    if (adding || warping) return;
+    adding = true;
+    document.exitPointerLock?.();
+    // E arrives mid-frame, and the page may tear the lobby down in response:
+    // let the frame finish drawing first.
+    window.setTimeout(() => options.onAddWorld?.(), 0);
+  }
+
+  // Keyboard: E next to an empty door. The runtime reports E as a plain
+  // interaction when no portal of its own is in reach.
+  world.on('interact', () => {
+    if (nearEmpty) addWorld();
+  });
+
+  // Pointer: clicking or tapping an empty door on screen picks it. While the
+  // mouse is captured there is no cursor, so a click aims where the camera
+  // looks, or picks the door you are standing at.
+  const raycaster = new Raycaster();
+  const pointer = new Vector2();
+  let pressAt: { x: number; y: number; time: number } | null = null;
+  const emptyDoorAt = (ndcX: number, ndcY: number): Door | null => {
+    raycaster.setFromCamera(pointer.set(ndcX, ndcY), camera);
+    raycaster.far = TAP_RANGE;
+    const hit = raycaster.intersectObjects([...wall, ...emptyDoors.map((door) => door.face)], false)[0];
+    return emptyDoors.find((door) => door.face === hit?.object) ?? null;
+  };
+  const handlePointerDown = (event: PointerEvent) => {
+    pressAt = { x: event.clientX, y: event.clientY, time: performance.now() };
+    if (document.pointerLockElement === renderer.domElement && (nearEmpty || emptyDoorAt(0, 0))) addWorld();
+  };
+  const handlePointerUp = (event: PointerEvent) => {
+    const press = pressAt;
+    pressAt = null;
+    if (!press || document.pointerLockElement === renderer.domElement) return;
+    // A tap, not a drag to look around.
+    const moved = Math.hypot(event.clientX - press.x, event.clientY - press.y);
+    if (moved > 10 || performance.now() - press.time > 400) return;
+    const rect = renderer.domElement.getBoundingClientRect();
+    const ndcX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    const ndcY = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    if (emptyDoorAt(ndcX, ndcY)) addWorld();
+  };
+  renderer.domElement.addEventListener('pointerdown', handlePointerDown);
+  renderer.domElement.addEventListener('pointerup', handlePointerUp);
+
   // Coming back with the browser's back button can restore this page as it
   // was left: mid-warp and standing in a doorway. Put the visitor back.
   const handlePageShow = (event: PageTransitionEvent) => {
@@ -262,6 +352,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     window.clearTimeout(warpTimer);
     warping?.settle();
     warping = null;
+    adding = false;
     flash.classList.remove('active');
     world.respawn();
   };
@@ -289,7 +380,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     if (isLight === light) return;
     light = isLight;
     applyTheme();
-    for (const door of doors.values()) door.setTheme(light);
+    for (const door of [...doors.values(), ...emptyDoors]) door.setTheme(light);
   }
 
   function applyTheme(): void {
@@ -319,11 +410,21 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     // Everyone with the same list gets the same ring, so visitors who see
     // each other also see the same doors around them.
     const urls = [...known.keys()].sort();
-    const radius = Math.max(WALL_MIN_RADIUS, (urls.length * DOOR_SPACING + GATE_WIDTH + GATE_MARGIN * 2) / (Math.PI * 2));
+    const total = Math.max(MIN_DOORS, urls.length + SPARE_DOORS);
+    const radius = Math.max(WALL_MIN_RADIUS, (total * DOOR_SPACING + GATE_WIDTH + GATE_MARGIN * 2) / (Math.PI * 2));
     // Doors share the wall evenly, leaving the gate at angle 0 clear.
     const clear = (GATE_WIDTH / 2 + GATE_MARGIN) / radius;
-    const step = (Math.PI * 2 - clear * 2) / Math.max(urls.length, 1);
-    const angles = urls.map((_, i) => clear + (i + 0.5) * step);
+    const step = (Math.PI * 2 - clear * 2) / total;
+    const angles = Array.from({ length: total }, (_, i) => clear + (i + 0.5) * step);
+    // Worlds take the doors you face on arrival (angle π) and spread out from
+    // there toward the gate; the doors left over stay empty.
+    const slots = angles
+      .map((_, i) => i)
+      .sort((a, b) => Math.abs(angles[a] - Math.PI) - Math.abs(angles[b] - Math.PI) || a - b);
+    const at = (door: Door, slot: number) =>
+      // Set into the wall, facing the middle of the room.
+      door.place(Math.sin(angles[slot]) * radius, Math.cos(angles[slot]) * radius, 0, 0);
+
     urls.forEach((url, i) => {
       let door = doors.get(url);
       if (!door) {
@@ -331,9 +432,19 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         scene.add(door.group);
         doors.set(url, door);
       }
-      // Set into the wall, facing the middle of the room.
-      door.place(Math.sin(angles[i]) * radius, Math.cos(angles[i]) * radius, 0, 0);
+      at(door, slots[i]);
     });
+
+    for (const door of emptyDoors) door.dispose();
+    emptyDoors.length = 0;
+    nearEmpty = null;
+    addPrompt.classList.remove('visible');
+    for (const slot of slots.slice(urls.length)) {
+      const door = new Door(null, light);
+      scene.add(door.group);
+      at(door, slot);
+      emptyDoors.push(door);
+    }
     buildWall(radius, angles);
   }
 
@@ -484,9 +595,13 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     window.clearTimeout(warpTimer);
     window.removeEventListener('pageshow', handlePageShow);
     window.removeEventListener('resize', handleResize);
+    renderer.domElement.removeEventListener('pointerdown', handlePointerDown);
+    renderer.domElement.removeEventListener('pointerup', handlePointerUp);
     world.dispose();
-    for (const door of doors.values()) door.dispose();
+    for (const door of [...doors.values(), ...emptyDoors]) door.dispose();
     doors.clear();
+    emptyDoors.length = 0;
+    addPrompt.remove();
     for (const mesh of [...wall, ...trim]) mesh.geometry.dispose();
     wallMaterial.dispose();
     city?.dispose();

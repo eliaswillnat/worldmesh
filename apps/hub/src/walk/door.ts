@@ -43,6 +43,8 @@ const REACH = 1;
 export const DOOR_HALF_SPAN = DOOR_WIDTH / 2 + FRAME;
 /** Top of the frame, where the wall closes over the doorway. */
 export const DOOR_TOP = DOOR_HEIGHT + FRAME;
+/** Widest a name above a door may get, so neighbouring labels never touch. */
+const MAX_LABEL_WIDTH = 3.3;
 
 const portalVertex = /* glsl */ `
   varying vec2 vUv;
@@ -60,10 +62,36 @@ const portalFragment = /* glsl */ `
   uniform float uTime;
   uniform float uOpen;
   uniform float uGlow;
+  uniform float uEmpty;
+  uniform float uLight;
+  uniform float uHover;
   varying vec2 vUv;
+
+  // An empty doorway: a plain recess with a soft "+" asking to be filled.
+  vec3 emptyDoor(vec2 p) {
+    vec3 base = mix(vec3(0.07), vec3(0.9, 0.915, 0.94), uLight);
+    vec3 ink = mix(vec3(0.8), vec3(0.45, 0.5, 0.62), uLight);
+    // Shade toward the edges so it reads as depth, not a sticker.
+    float edge = max(abs(p.x) * 2.0, abs(p.y) * 2.0);
+    vec3 color = base * (1.0 - 0.18 * smoothstep(0.4, 1.0, edge));
+    vec2 q = vec2(p.x * 0.54, p.y);
+    float bar = 0.012;
+    float arm = 0.1;
+    float plus = max(
+      step(abs(q.x), bar) * step(abs(q.y), arm),
+      step(abs(q.y), bar) * step(abs(q.x), arm)
+    );
+    float breathe = 0.55 + 0.25 * sin(uTime * 1.6) + 0.35 * uHover;
+    return mix(color, ink, plus * breathe);
+  }
 
   void main() {
     vec2 p = vUv - 0.5;
+    if (uEmpty > 0.5) {
+      gl_FragColor = vec4(emptyDoor(p) + uGlow * 0.3, 1.0);
+      #include <colorspace_fragment>
+      return;
+    }
     // The world on the other side, gently breathing.
     vec2 q = p * uFit * (1.0 - 0.05 * uOpen - 0.02 * sin(uTime * 0.7)) + 0.5;
     vec3 far = texture2D(uMap, q).rgb;
@@ -89,11 +117,14 @@ const portalFragment = /* glsl */ `
  * A doorway to one listed world, set into the lobby wall and showing the
  * world's cover. Walking into it travels there.
  *
+ * Without a world it is an empty door: a closed, plain opening waiting for
+ * someone to add theirs. It cannot be walked through.
+ *
  * Local +Z faces the room; the wall runs along local X at z = 0.
  */
 export class Door {
   readonly group = new Group();
-  readonly world: DoorWorld;
+  readonly world: DoorWorld | null;
 
   private portal: Mesh<PlaneGeometry, ShaderMaterial>;
   private frameMaterial: MeshStandardMaterial;
@@ -104,11 +135,11 @@ export class Door {
   private placeholder: Texture;
   private disposed = false;
 
-  constructor(world: DoorWorld, light: boolean) {
+  constructor(world: DoorWorld | null, light: boolean) {
     this.world = world;
-    this.group.name = `door:${world.name}`;
+    this.group.name = world ? `door:${world.name}` : 'door:empty';
 
-    const tint = new Color(world.color ?? '#ffffff');
+    const tint = new Color(world?.color ?? '#ffffff');
     // Keep the lobby monochrome-ish: only a hint of the world's colour.
     tint.lerp(new Color(0xffffff), 0.45);
     const shared = {
@@ -117,6 +148,8 @@ export class Door {
       uOpen: { value: 1 },
       uGlow: { value: 0 },
       uLight: { value: light ? 1 : 0 },
+      uEmpty: { value: world ? 0 : 1 },
+      uHover: { value: 0 },
     };
 
     this.frameMaterial = new MeshStandardMaterial({ roughness: 0.4, metalness: 0.05 });
@@ -156,7 +189,7 @@ export class Door {
     this.portal.position.set(0, DOOR_HEIGHT / 2, -0.02);
     this.group.add(this.portal);
 
-    const label = createLabel(world.name, world.creator);
+    const label = world ? createLabel(world.name, world.creator) : createLabel('Your world here', undefined, true);
     this.label = label.mesh;
     this.drawLabel = label.draw;
     // Painted on the wall above the doorway; far enough out that long names
@@ -165,7 +198,31 @@ export class Door {
     this.group.add(this.label);
 
     this.setTheme(light);
-    if (world.cover) this.loadCover(world.cover);
+    if (world?.cover) this.loadCover(world.cover);
+  }
+
+  get empty(): boolean {
+    return this.world === null;
+  }
+
+  /**
+   * The doorway's face. An empty door is closed, so this doubles as the
+   * collider that stops people walking into it, and as the tap target.
+   */
+  get face(): Mesh {
+    return this.portal;
+  }
+
+  /** Brighten the "+" while someone is close enough to use it. */
+  setHover(hover: boolean): void {
+    this.portal.material.uniforms.uHover.value = hover ? 1 : 0;
+  }
+
+  /** How far (x, z) stands in front of the doorway, or null if off to the side. */
+  distanceInFront(x: number, z: number): number | null {
+    const { localX, localZ } = this.toLocal(x, z);
+    if (Math.abs(localX) > DOOR_WIDTH || localZ < 0) return null;
+    return localZ;
   }
 
   /** Stand the door at (x, z), facing the point (towardX, towardZ). */
@@ -176,12 +233,18 @@ export class Door {
 
   /** True once (x, z) has walked into the doorway. */
   contains(x: number, z: number): boolean {
+    const { localX, localZ } = this.toLocal(x, z);
+    return Math.abs(localX) < DOOR_WIDTH / 2 && localZ < THRESHOLD && localZ > -REACH;
+  }
+
+  private toLocal(x: number, z: number): { localX: number; localZ: number } {
     const dx = x - this.group.position.x;
     const dz = z - this.group.position.z;
     const angle = this.group.rotation.y;
-    const localX = dx * Math.cos(angle) - dz * Math.sin(angle);
-    const localZ = dx * Math.sin(angle) + dz * Math.cos(angle);
-    return Math.abs(localX) < DOOR_WIDTH / 2 && localZ < THRESHOLD && localZ > -REACH;
+    return {
+      localX: dx * Math.cos(angle) - dz * Math.sin(angle),
+      localZ: dx * Math.sin(angle) + dz * Math.cos(angle),
+    };
   }
 
   update(time: number): void {
@@ -271,7 +334,11 @@ async function loadCoverTexture(src: string): Promise<Texture | null> {
   return null;
 }
 
-function createLabel(name: string, creator?: string): { mesh: Mesh<PlaneGeometry, MeshBasicMaterial>; draw: (light: boolean) => void } {
+function createLabel(
+  name: string,
+  creator?: string,
+  quiet = false,
+): { mesh: Mesh<PlaneGeometry, MeshBasicMaterial>; draw: (light: boolean) => void } {
   const canvas = document.createElement('canvas');
   const texture = new CanvasTexture(canvas);
   texture.colorSpace = SRGBColorSpace;
@@ -301,7 +368,7 @@ function createLabel(name: string, creator?: string): { mesh: Mesh<PlaneGeometry
     ctx.shadowColor = light ? 'rgba(255, 255, 255, 0.9)' : 'rgba(0, 0, 0, 0.8)';
     ctx.shadowBlur = 12;
     ctx.font = titleFont;
-    ctx.fillStyle = light ? '#111111' : '#ffffff';
+    ctx.fillStyle = quiet ? (light ? 'rgba(0, 0, 0, 0.38)' : 'rgba(255, 255, 255, 0.4)') : light ? '#111111' : '#ffffff';
     ctx.fillText(title, canvas.width / 2, 92);
     if (sub) {
       ctx.font = subFont;
@@ -310,7 +377,9 @@ function createLabel(name: string, creator?: string): { mesh: Mesh<PlaneGeometry
     }
 
     texture.needsUpdate = true;
-    const worldHeight = sub ? 0.95 : 0.67;
+    let worldHeight = quiet ? 0.5 : sub ? 0.95 : 0.67;
+    // Long names shrink rather than run into the next door's label.
+    worldHeight = Math.min(worldHeight, (MAX_LABEL_WIDTH * canvas.height) / canvas.width);
     mesh.scale.set((canvas.width / canvas.height) * worldHeight, worldHeight, 1);
   };
 

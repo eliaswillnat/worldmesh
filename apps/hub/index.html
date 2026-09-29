@@ -646,6 +646,34 @@
         transition: opacity .45s ease-in;
       }
       .walk-flash.active { opacity: 1; }
+      /* Offered while standing at an empty door. Hidden while the lobby is paused. */
+      .walk-add-prompt {
+        position: fixed;
+        left: 50%;
+        bottom: calc(max(24px, env(safe-area-inset-bottom)) + 18%);
+        z-index: 2147483001;
+        transform: translateX(-50%) translateY(8px);
+        padding: 12px 20px;
+        border-radius: 999px;
+        font: 600 15px/1 "Urbanist", ui-sans-serif, system-ui, sans-serif;
+        white-space: nowrap;
+        color: #fff;
+        background: rgba(0, 0, 0, 0.6);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        -webkit-backdrop-filter: blur(8px);
+        backdrop-filter: blur(8px);
+        cursor: pointer;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity .2s ease, transform .2s ease;
+      }
+      .walk-add-prompt.visible { opacity: 1; pointer-events: auto; transform: translateX(-50%); }
+      html.walking:has(.wm-overlay[data-locked="false"]) .walk-add-prompt { display: none; }
+      html.walking[data-walk-theme="light"] .walk-add-prompt {
+        color: #111;
+        background: rgba(255, 255, 255, 0.75);
+        border-color: rgba(0, 0, 0, 0.14);
+      }
       .walk-online {
         position: fixed;
         top: max(16px, env(safe-area-inset-top));
