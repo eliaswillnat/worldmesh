@@ -520,10 +520,15 @@ function renderCard(world: WorldEntry): HTMLLIElement {
   }
 
   const listedAt = world.addedAt ?? world.approvedAt;
-  if (listedAt && Date.now() - new Date(listedAt).getTime() < NEW_BADGE_DAYS * DAY_MS) {
+  const badgeText = DEMO_WORLDS.includes(world)
+    ? 'DEMO'
+    : listedAt && Date.now() - new Date(listedAt).getTime() < NEW_BADGE_DAYS * DAY_MS
+      ? 'NEW'
+      : null;
+  if (badgeText) {
     const badge = document.createElement('span');
     badge.className = 'card-new';
-    badge.textContent = 'NEW';
+    badge.textContent = badgeText;
     link.appendChild(badge);
   }
 
