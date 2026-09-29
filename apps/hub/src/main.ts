@@ -488,7 +488,12 @@ function worldScore(world: WorldEntry): number {
 }
 
 function render(): void {
-  const sorted = [...ALL_WORLDS].sort((a, b) => worldScore(b) - worldScore(a));
+  const byScore = (a: WorldEntry, b: WorldEntry) => worldScore(b) - worldScore(a);
+  const demos = new Set(DEMO_WORLDS);
+  const sorted = [
+    ...ALL_WORLDS.filter((w) => !demos.has(w)).sort(byScore),
+    ...DEMO_WORLDS.slice().sort(byScore),
+  ];
   demoList.replaceChildren(...sorted.map((world) => renderCard(world)));
 }
 
