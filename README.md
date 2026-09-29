@@ -24,8 +24,11 @@ Create world with AI  →  deploy it yourself  →  paste the URL into WorldMesh
 
 MVP. It proves one thing: **five completely different, independently
 deployable 3D websites can share exactly the same movement, camera and
-navigation runtime.** Nothing else is built yet — no accounts, no database, no
-moderation. See [docs/roadmap.md](docs/roadmap.md).
+navigation runtime.** Optional accounts (Google/GitHub) and a first
+ActivityPub foundation, so creators can be followed from Mastodon as
+`@name@worldmesh.net`, live in two small Workers beside the hub — see
+[docs/accounts-and-federation.md](docs/accounts-and-federation.md). No
+moderation yet. See [docs/roadmap.md](docs/roadmap.md).
 
 The hub also has a **walk mode**: the directory
 as a place. Every listed world is a doorway set into a round wall around a
@@ -41,6 +44,11 @@ worldmesh/
 ├── packages/
 │   └── runtime/        @worldmesh/runtime — controls, movement, camera,
 │                       player, abilities, portals, overlay
+├── workers/
+│   ├── auth/           accounts: Better Auth + D1 (Google, GitHub)
+│   ├── federation/     WebFinger + ActivityPub for creators
+│   └── …               presence, views, screenshot, notify
+├── db/migrations/      the D1 schema both of them share
 ├── apps/
 │   ├── hub/            the directory (port 5170)
 │   ├── forest/         demo world     (5171)
@@ -102,6 +110,7 @@ reference and [docs/controls.md](docs/controls.md) for the control convention.
 - [Architecture](docs/architecture.md) — why it is shaped this way
 - [Compatibility](docs/compatibility.md) — the world-facing contract
 - [Controls](docs/controls.md) — the navigation convention
+- [Accounts and federation](docs/accounts-and-federation.md) — login, D1, ActivityPub
 - [Roadmap](docs/roadmap.md) — what is deliberately not built yet
 
 ## License

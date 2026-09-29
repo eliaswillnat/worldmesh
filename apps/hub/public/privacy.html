@@ -56,13 +56,16 @@
     <main>
       <a class="back" href="/">← Back to WorldMesh</a>
       <h1>Privacy Policy</h1>
-      <p class="updated">Last updated: September 27, 2026</p>
+      <p class="updated">Last updated: September 29, 2026</p>
 
       <h2>What we collect</h2>
       <p>WorldMesh collects minimal data to operate the service:</p>
       <ul>
         <li><strong>World submissions:</strong> the URL, name, description, creator name, portfolio link, and contact email address you provide when submitting a world.</li>
         <li><strong>View counts:</strong> we count views per world using your IP address, hashed and stored temporarily (24 hours) to prevent duplicate counting. We do not store raw IP addresses permanently.</li>
+        <li><strong>Accounts (optional):</strong> if you log in with Google, Apple, GitHub or Discord, we store your name, email address (with Apple, possibly a private relay address) and profile picture URL as provided by them, the ID of that account, and the username you choose. We do not store their access tokens. Active sessions record the IP address and browser used to sign in.</li>
+        <li><strong>Public creator profile:</strong> once you choose a username, your name, username, profile picture and any worlds published under your account are public, including to other servers on the fediverse (for example Mastodon) that look up or follow <em>@username@worldmesh.net</em>.</li>
+        <li><strong>Fediverse interactions:</strong> when people on other servers follow you or like, boost or reply to your announcements, we store the address of their account and of the interaction, not its content.</li>
         <li><strong>Local storage:</strong> your browser stores your submitted worlds and click history locally. This data never leaves your device unless you submit a world.</li>
       </ul>
 
@@ -76,15 +79,16 @@
 
       <h2>Third-party services</h2>
       <ul>
-        <li><strong>Cloudflare:</strong> hosting, R2 storage, Workers, and KV for view tracking.</li>
+        <li><strong>Cloudflare:</strong> hosting, R2 storage, Workers, KV for view tracking, and D1 for accounts.</li>
+        <li><strong>Google, Apple, GitHub and Discord:</strong> only if you choose to log in with them.</li>
         <li><strong>Resend:</strong> transactional email for submission notifications (sent only to the WorldMesh admin).</li>
       </ul>
 
-      <h2>No cookies</h2>
-      <p>WorldMesh does not use cookies or any tracking scripts.</p>
+      <h2>Cookies</h2>
+      <p>WorldMesh uses no tracking scripts and no advertising or analytics cookies. If you log in, we set strictly necessary cookies that keep you signed in (for up to 30 days) and protect the sign-in flow. Visitors who do not log in get no cookies.</p>
 
       <h2>Data retention</h2>
-      <p>Submitted world data is retained as long as the world is listed. View deduplication records are automatically deleted after 24 hours. To <a class="removal-link" href="mailto:elias.willnat@gmail.com?subject=WorldMesh%20World%20Removal%20Request&body=Hi%2C%0D%0A%0D%0AI%20would%20like%20to%20request%20the%20removal%20of%20my%203D%20world%20from%20WorldMesh.%0D%0AWebsite%20domain%20or%20URL%20to%20remove%3A%20%5BEnter%20domain%20or%20URL%20here%5D">request the removal</a> of your submitted world, send an email to <a class="removal-link" href="mailto:elias.willnat@gmail.com?subject=WorldMesh%20World%20Removal%20Request&body=Hi%2C%0D%0A%0D%0AI%20would%20like%20to%20request%20the%20removal%20of%20my%203D%20world%20from%20WorldMesh.%0D%0AWebsite%20domain%20or%20URL%20to%20remove%3A%20%5BEnter%20domain%20or%20URL%20here%5D">elias.willnat@gmail.com</a> from the email address provided during submission.</p>
+      <p>Account data is kept until you ask us to delete your account. Submitted world data is retained as long as the world is listed. View deduplication records are automatically deleted after 24 hours. To <a class="removal-link" href="mailto:elias.willnat@gmail.com?subject=WorldMesh%20World%20Removal%20Request&body=Hi%2C%0D%0A%0D%0AI%20would%20like%20to%20request%20the%20removal%20of%20my%203D%20world%20from%20WorldMesh.%0D%0AWebsite%20domain%20or%20URL%20to%20remove%3A%20%5BEnter%20domain%20or%20URL%20here%5D">request the removal</a> of your submitted world, send an email to <a class="removal-link" href="mailto:elias.willnat@gmail.com?subject=WorldMesh%20World%20Removal%20Request&body=Hi%2C%0D%0A%0D%0AI%20would%20like%20to%20request%20the%20removal%20of%20my%203D%20world%20from%20WorldMesh.%0D%0AWebsite%20domain%20or%20URL%20to%20remove%3A%20%5BEnter%20domain%20or%20URL%20here%5D">elias.willnat@gmail.com</a> from the email address provided during submission.</p>
 
       <h2>Contact</h2>
       <p>Questions? Reach out at <a class="removal-link" href="mailto:elias.willnat@gmail.com">elias.willnat@gmail.com</a>.</p>

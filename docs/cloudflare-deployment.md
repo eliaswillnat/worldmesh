@@ -124,3 +124,11 @@ R2 bucket does not send CORS headers, so the hub relays covers through the
 same-origin Pages Function `/api/cover` (allow-listed to the covers bucket;
 add more hosts with a comma-separated `COVER_HOSTS` variable). Worlds whose
 cover cannot be loaded show a procedural tunnel instead.
+
+---
+
+## 6. Accounts and federation
+
+`workers/auth` and `workers/federation` are Workers routed onto the hub's own
+hostname, sharing one D1 database. Setup, secrets and routes are in
+[accounts-and-federation.md](accounts-and-federation.md).

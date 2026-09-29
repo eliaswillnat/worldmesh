@@ -1,0 +1,7 @@
+# Copy to .dev.vars for `npm run dev:federation`. Never commit .dev.vars.
+# Locally nothing on the fediverse can reach you; this is for checking the
+# documents (WebFinger, actor, outbox) through the hub dev server on :5170.
+FEDERATION_ORIGIN=http://localhost:5170
+FEDERATION_DOMAIN=localhost:5170
+FEDERATION_KEY_SECRET=dev-only-secret-change-me-dev-only-secret
+FEDERATION_ADMIN_TOKEN=dev-admin-token

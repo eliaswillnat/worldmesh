@@ -1,0 +1,50 @@
+name = "worldmesh-federation"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+# ActivityPub lives on the hub's own hostname, so handles read
+# @username@worldmesh.net. These Worker routes run in front of the Cloudflare
+# Pages project; every other path keeps going to the hub.
+routes = [
+  { pattern = "worldmesh.net/.well-known/webfinger*", zone_name = "worldmesh.net" },
+  { pattern = "worldmesh.net/.well-known/host-meta*", zone_name = "worldmesh.net" },
+  { pattern = "worldmesh.net/.well-known/nodeinfo*", zone_name = "worldmesh.net" },
+  { pattern = "worldmesh.net/nodeinfo/*", zone_name = "worldmesh.net" },
+  { pattern = "worldmesh.net/ap/*", zone_name = "worldmesh.net" },
+  { pattern = "worldmesh.net/@*", zone_name = "worldmesh.net" },
+]
+workers_dev = false
+
+[vars]
+# Base of every actor/object URI. Changing it later orphans every remote
+# follower, so set it to the final public origin before anyone follows.
+FEDERATION_ORIGIN = "https://worldmesh.net"
+FEDERATION_DOMAIN = "worldmesh.net"
+# Deliveries signed and sent per invocation. RSA signing is ~0.5 ms each; keep
+# this small on the Workers free plan (10 ms CPU per invocation).
+DELIVERY_BATCH_SIZE = "8"
+
+# Retries and housekeeping. New activities are delivered right away
+# (waitUntil); the cron only picks up what is still due.
+[triggers]
+crons = ["*/5 * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "worldmesh"
+# The same database as workers/auth. Migrations are applied from there.
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "../../db/migrations"
+
+# Per-IP limit on inbox POSTs, ahead of signature checks (which may fetch a
+# remote key). Approximate and per Cloudflare location.
+[[ratelimits]]
+name = "INBOX_LIMITER"
+namespace_id = "1002"
+simple = { limit = 300, period = 60 }
+
+# Secrets (npx wrangler secret put <NAME>):
+#   FEDERATION_KEY_SECRET   random, at least 32 bytes; encrypts actor private keys
+#                           in D1. Losing it means new keys for every actor.
+#   FEDERATION_ADMIN_TOKEN  random; authorises POST /ap/admin/announce
+# Local development reads them from .dev.vars (see .dev.vars.example).
