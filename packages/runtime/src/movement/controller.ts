@@ -1,7 +1,7 @@
 import { Vector3 } from 'three';
-import type { Input } from '../controls/input';
-import type { Abilities, MovementTuning } from '../types';
-import type { CollisionWorld } from './collision';
+import type { Input } from '../controls/input.js';
+import type { Abilities, MovementTuning } from '../types.js';
+import type { CollisionWorld } from './collision.js';
 
 export const DEFAULT_TUNING: MovementTuning = {
   walkSpeed: 5.2,

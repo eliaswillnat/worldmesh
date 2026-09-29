@@ -1,4 +1,4 @@
-import type { Keymap } from '../types';
+import type { Keymap } from '../types.js';
 
 /**
  * The WorldMesh control convention. Every world ships these bindings so that

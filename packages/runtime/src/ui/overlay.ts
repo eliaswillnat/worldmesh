@@ -1,5 +1,5 @@
-import type { UiOptions } from '../types';
-import { isTouchDevice } from '../controls/touch';
+import type { UiOptions } from '../types.js';
+import { isTouchDevice } from '../controls/touch.js';
 
 const STYLE_ID = 'worldmesh-overlay-style';
 

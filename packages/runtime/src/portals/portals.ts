@@ -11,7 +11,7 @@ import {
   TorusGeometry,
   Vector3,
 } from 'three';
-import type { PortalMode, PortalOptions } from '../types';
+import type { PortalMode, PortalOptions } from '../types.js';
 
 export interface ResolvedPortal extends PortalOptions {
   label: string;

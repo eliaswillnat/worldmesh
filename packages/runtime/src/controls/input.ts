@@ -1,6 +1,6 @@
-import type { InputAction, Keymap } from '../types';
-import { resolveKeymap } from './keymap';
-import { TouchControls, isTouchDevice } from './touch';
+import type { InputAction, Keymap } from '../types.js';
+import { resolveKeymap } from './keymap.js';
+import { TouchControls, isTouchDevice } from './touch.js';
 
 export interface InputOptions {
   /** The element that receives pointer lock. */

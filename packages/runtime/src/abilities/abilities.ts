@@ -1,4 +1,4 @@
-import type { Abilities } from '../types';
+import type { Abilities } from '../types.js';
 
 export const DEFAULT_ABILITIES: Abilities = {
   doubleJump: false,

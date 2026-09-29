@@ -1,12 +1,12 @@
 import { Group, Mesh, Object3D, type Vector3 } from 'three';
-import type { PlayerOptions } from '../types';
+import type { PlayerOptions } from '../types.js';
 import {
   animateDefaultAvatar,
   createDefaultAvatar,
   setAvatarExpression,
   type AvatarExpression,
   type AvatarMotion,
-} from './avatar';
+} from './avatar.js';
 
 export interface PlayerAvatarOptions extends PlayerOptions {
   height: number;
