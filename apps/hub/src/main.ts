@@ -25,6 +25,9 @@ const VIEWS_ENDPOINT = import.meta.env.VITE_VIEWS_ENDPOINT as string | undefined
 const viewCounts: Record<string, number> = {};
 const sessionViewed = new Map<string, number>();
 const COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes
+const DEMO_ADDED_AT = '2026-09-27T21:03:21Z';
+const DAY_MS = 24 * 60 * 60 * 1000;
+const NEW_BADGE_DAYS = 7;
 
 // Clean up legacy local click counter and saved worlds from prototype
 try {
@@ -475,8 +478,6 @@ async function notifySubmission(entry: WorldEntry): Promise<void> {
   }
 }
 
-const DEMO_ADDED_AT = '2026-09-27T21:03:21Z';
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 // Views per day since listing; age floored at 1 day so a single early click can't dominate.
 function worldScore(world: WorldEntry): number {
@@ -511,6 +512,14 @@ function renderCard(world: WorldEntry): HTMLLIElement {
     link.appendChild(img);
   } else {
     link.appendChild(buildGradientCover(world));
+  }
+
+  const listedAt = world.addedAt ?? world.approvedAt;
+  if (listedAt && Date.now() - new Date(listedAt).getTime() < NEW_BADGE_DAYS * DAY_MS) {
+    const badge = document.createElement('span');
+    badge.className = 'card-new';
+    badge.textContent = 'NEW';
+    link.appendChild(badge);
   }
 
   const body = document.createElement('div');
