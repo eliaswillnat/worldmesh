@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 
 export default defineConfig({
   server: { port: 5171, strictPort: true },
-  // One copy of three, and let Vite compile the runtime from source.
+  // One copy of three, and the runtime served straight from its build output.
   resolve: { dedupe: ['three'] },
   optimizeDeps: { exclude: ['@worldmesh/runtime'] },
   build: { target: 'es2022' },
