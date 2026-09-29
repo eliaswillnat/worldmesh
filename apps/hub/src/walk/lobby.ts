@@ -540,7 +540,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     // Light bands: outside above the gate and under the crown, inside above
     // the door labels (broken at the gate) and near the top.
     const band = (r: number, y: number, start = 0, length = Math.PI * 2) =>
-      glow.push(place(new CylinderGeometry(r, r, 0.14, 128, 1, true, start, length), 0, y, 0));
+      glow.push(place(new CylinderGeometry(r, r, 0.07, 128, 1, true, start, length), 0, y, 0));
     band(outer + 0.03, GATE_HEIGHT + 1.2);
     band(outer + 0.52, CITADEL_HEIGHT - 1.3);
     const gateInner = (GATE_WIDTH / 2 + 0.3) / radius;
@@ -552,10 +552,10 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     const frameZ = outer + 0.2;
     for (const side of [-1, 1]) {
       solid.push(place(new BoxGeometry(0.6, GATE_HEIGHT + 0.6, 0.5), side * (halfGate + 0.3), (GATE_HEIGHT + 0.6) / 2, frameZ));
-      glow.push(place(new BoxGeometry(0.1, GATE_HEIGHT, 0.1), side * (halfGate + 0.02), GATE_HEIGHT / 2, frameZ + 0.2));
+      glow.push(place(new BoxGeometry(0.05, GATE_HEIGHT, 0.05), side * (halfGate + 0.02), GATE_HEIGHT / 2, frameZ + 0.2));
     }
     solid.push(place(new BoxGeometry(GATE_WIDTH + 1.2, 0.6, 0.5), 0, GATE_HEIGHT + 0.3, frameZ));
-    glow.push(place(new BoxGeometry(GATE_WIDTH, 0.1, 0.1), 0, GATE_HEIGHT - 0.02, frameZ + 0.2));
+    glow.push(place(new BoxGeometry(GATE_WIDTH, 0.05, 0.05), 0, GATE_HEIGHT - 0.02, frameZ + 0.2));
 
     // The banner over the gate: a tall screen in a deep white bezel, deep
     // enough to meet the curved wall behind it.
@@ -563,7 +563,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     const bannerH = 14;
     const bannerBottom = GATE_HEIGHT + 2.4;
     solid.push(place(new BoxGeometry(bannerW + 0.6, bannerH + 0.6, 1.4), 0, bannerBottom + bannerH / 2, outer - 0.35));
-    glow.push(place(new BoxGeometry(bannerW + 0.6, 0.1, 0.1), 0, bannerBottom - 0.35, outer + 0.36));
+    glow.push(place(new BoxGeometry(bannerW + 0.6, 0.05, 0.05), 0, bannerBottom - 0.35, outer + 0.36));
 
     const add = (geometries: BufferGeometry[], material: MeshStandardMaterial | typeof cityMaterials.glow) => {
       const mesh = new Mesh(mergeGeometries(geometries), material);

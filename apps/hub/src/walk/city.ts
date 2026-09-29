@@ -604,7 +604,7 @@ export function applyCityTheme(materials: CityMaterials, light: boolean): void {
   // Bright white towers by day; dark monoliths with lit screens by night.
   materials.building.color.set(light ? 0xf5f6fa : 0x17171c);
   materials.building.emissive.set(light ? CITY_GLOW_WHITE : 0x000000);
-  materials.glow.color.set(light ? 0xfff4dc : 0xa9dcff);
+  materials.glow.color.set(light ? 0x3a3d44 : 0xffffff);
 }
 
 /** Collects boxes and screens, then merges them into a handful of draw calls. */
@@ -636,7 +636,7 @@ class Builder {
 
   /** A thin emissive ring, e.g. a light band around a round tower. */
   ring(r: number, y: number, x: number, z: number): void {
-    const geometry = new CylinderGeometry(r, r, 0.14, 48, 1, true).toNonIndexed();
+    const geometry = new CylinderGeometry(r, r, 0.07, 48, 1, true).toNonIndexed();
     geometry.applyMatrix4(this.matrix.makeTranslation(x, y, z).premultiply(this.frame));
     this.glow.push(geometry);
   }
@@ -759,7 +759,7 @@ function blockTower(
   const w = 6 + rand() * 3;
   const h = (16 + rand() * 16) * scale;
   const d = depth;
-  const strip = 0.14;
+  const strip = 0.07;
 
   // Plinth.
   b.box(w + 3, 0.7, d + 2, 0, 0, 0.4);
