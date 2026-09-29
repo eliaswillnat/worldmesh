@@ -547,6 +547,28 @@
         .card-grid > .card::after { border-radius: 12px; }
       }
 
+      /* ── Mobile: add form behind a top-right toggle ─────────────── */
+      .mobile-add-toggle { display: none; }
+      @media (max-width: 600px) {
+        .mobile-add-toggle {
+          display: block;
+          position: fixed;
+          top: max(16px, env(safe-area-inset-top));
+          right: max(16px, env(safe-area-inset-right));
+          z-index: 100;
+          background: color-mix(in srgb, var(--bg) 70%, transparent);
+          -webkit-backdrop-filter: blur(10px);
+          backdrop-filter: blur(10px);
+        }
+        .mobile-add-toggle:hover { color: var(--text); border-color: var(--subtle); }
+        html.walking .mobile-add-toggle { display: none; }
+        html:not(.mobile-adding) #add-form,
+        html:not(.mobile-adding) #creator-fields,
+        html:not(.mobile-adding) #status { display: none !important; }
+        /* Keep the title clear of the toggle. */
+        h1 { padding-right: 130px; }
+      }
+
       /* ── Walk mode ─────────────────────────────────────────────── */
       .walk-toggle {
         position: fixed;
@@ -727,6 +749,7 @@
         <rect x="14" y="14" width="7" height="7" rx="1.5"/>
       </svg>
     </button>
+    <button type="button" class="mobile-add-toggle" id="mobile-add-toggle" aria-expanded="false">Add world</button>
     <div class="walk-online" id="walk-online" aria-live="polite"></div>
     <main>
       <h1>WORLDMESH <span class="beta-badge">BETA</span></h1>
