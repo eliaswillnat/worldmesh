@@ -56,6 +56,7 @@ export async function onRequestGet(context: {
     creator: entry.creator,
     portfolio: entry.portfolio,
     approvedAt: new Date().toISOString(),
+    addedAt: new Date().toISOString(),
   };
 
   await env.WORLDS.put(`approved:${id}`, JSON.stringify(approvedEntry));
