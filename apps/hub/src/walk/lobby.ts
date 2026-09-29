@@ -13,7 +13,6 @@ import {
   WebGLRenderer,
 } from 'three';
 import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
-import { AVATAR_HEIGHT, AVATAR_RADIUS, createAvatar } from './avatar';
 import { Presence } from './presence';
 import { WORMHOLE_TRIGGER, Wormhole, type WormholeWorld } from './wormhole';
 
@@ -157,7 +156,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     camera,
     renderer,
     spawn: [0, 0, 0],
-    player: { height: AVATAR_HEIGHT, radius: AVATAR_RADIUS, avatar: createAvatar() },
     // Held upright, look further down so the floor fills the tall screen instead of the sky.
     view: { mode: 'third', distance: 5.5, pitch: window.innerWidth < window.innerHeight ? -0.32 : -0.15 },
     ui: { title: 'WorldMesh', badge: false, crosshair: false },

@@ -1,6 +1,11 @@
-import type { NetworkAdapter, PlayerState, WorldMeshHandle } from '@worldmesh/runtime';
-import { Group, MathUtils, Vector3, type Object3D, type Scene } from 'three';
-import { createAvatar, disposeObject } from './avatar';
+import {
+  animateDefaultAvatar,
+  createDefaultAvatar,
+  type NetworkAdapter,
+  type PlayerState,
+  type WorldMeshHandle,
+} from '@worldmesh/runtime';
+import { Group, Mesh, Vector3, type Object3D, type Scene } from 'three';
 
 /** How often the local position goes out, per second. */
 const SEND_RATE = 10;
@@ -13,7 +18,8 @@ interface Remote {
   target: Vector3;
   targetYaw: number;
   yaw: number;
-  walkPhase: number;
+  /** Smoothed horizontal speed, estimated from how far the avatar moves. */
+  speed: number;
 }
 
 type ServerMessage =
@@ -83,12 +89,9 @@ export class Presence implements NetworkAdapter {
       remote.yaw += delta * blend;
       remote.root.rotation.y = remote.yaw;
 
-      // A small bob while moving, so a walking visitor reads as walking.
-      const speed = before.distanceTo(remote.root.position) / Math.max(dt, 1e-4);
-      const moving = MathUtils.clamp(speed / 4, 0, 1);
-      remote.walkPhase += dt * 10 * moving;
-      const body = remote.root.children[0];
-      if (body) body.position.y = Math.abs(Math.sin(remote.walkPhase)) * 0.06 * moving;
+      const moved = Math.hypot(remote.root.position.x - before.x, remote.root.position.z - before.z);
+      remote.speed += (moved / Math.max(dt, 1e-4) - remote.speed) * blend;
+      animateDefaultAvatar(remote.root, { dt, speed: remote.speed, grounded: remote.root.position.y < 0.05 });
     }
   }
 
@@ -178,11 +181,9 @@ export class Presence implements NetworkAdapter {
 
     let remote = this.remotes.get(id);
     if (!remote) {
-      // Wrap the body so the walk bob does not fight the interpolated position.
-      const root = new Group();
-      root.add(createAvatar());
+      const root = createDefaultAvatar();
       this.group.add(root);
-      remote = { root, target: new Vector3(), targetYaw: yaw, yaw, walkPhase: 0 };
+      remote = { root, target: new Vector3(), targetYaw: yaw, yaw, speed: 0 };
       this.remotes.set(id, remote);
       snap = true;
     }
@@ -216,4 +217,16 @@ export class Presence implements NetworkAdapter {
 
 function round(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+function disposeObject(root: Object3D): void {
+  root.traverse((child) => {
+    if (child instanceof Mesh) {
+      child.geometry.dispose();
+      const material = child.material;
+      if (Array.isArray(material)) material.forEach((m) => m.dispose());
+      else material.dispose();
+    }
+  });
+  root.removeFromParent();
 }

@@ -73,7 +73,7 @@ export interface PlayerOptions {
   radius?: number;
   /** Eye offset from the feet in metres. Defaults to height - 0.2. */
   eyeHeight?: number;
-  /** Replace the default capsule avatar, or pass `false` for no avatar at all. */
+  /** Replace the default white figure, or pass `false` for no avatar at all. */
   avatar?: Object3D | false;
 }
 

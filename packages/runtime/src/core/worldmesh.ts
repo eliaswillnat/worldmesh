@@ -173,7 +173,11 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     if (controller.position.y < controller.tuning.fallLimit) doRespawn('fell');
 
     cameraRig.update(dt, controller.position, player.eyeHeight * (controller.height / height));
-    player.sync(controller.position, cameraRig.yaw, controller.height);
+    player.sync(controller.position, cameraRig.yaw, controller.height, {
+      dt,
+      speed: Math.hypot(controller.velocity.x, controller.velocity.z),
+      grounded: controller.onGround || controller.flying,
+    });
     portals.animate(elapsed);
 
     updatePortals();

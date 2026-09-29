@@ -1,12 +1,6 @@
-import {
-  CapsuleGeometry,
-  Group,
-  Mesh,
-  MeshStandardMaterial,
-  Object3D,
-  type Vector3,
-} from 'three';
+import { Group, Mesh, Object3D, type Vector3 } from 'three';
 import type { PlayerOptions } from '../types';
+import { animateDefaultAvatar, createDefaultAvatar, type AvatarMotion } from './avatar';
 
 export interface PlayerAvatarOptions extends PlayerOptions {
   height: number;
@@ -41,18 +35,19 @@ export class Player {
     this.root.name = 'worldmesh:player';
     this.isDefaultAvatar = !options.avatar;
 
-    const body = options.avatar ?? createDefaultAvatar(options.height, options.radius);
+    const body = options.avatar ?? createDefaultAvatar(options.height);
     this.root.add(body as Object3D);
   }
 
-  /** Place the avatar at the player's feet, facing `yaw`. */
-  sync(feet: Vector3, yaw: number, currentHeight: number): void {
+  /** Place the avatar at the player's feet, facing `yaw`, and animate it for `motion`. */
+  sync(feet: Vector3, yaw: number, currentHeight: number, motion?: AvatarMotion): void {
     if (!this.root) return;
     this.root.position.copy(feet);
     this.root.rotation.y = yaw;
     if (this.isDefaultAvatar) {
-      // Squash the default capsule while crouching instead of rebuilding it.
+      // Squash the default body while crouching instead of rebuilding it.
       this.root.scale.y = currentHeight / this.height;
+      if (motion) animateDefaultAvatar(this.root.children[0], motion);
     }
   }
 
@@ -71,28 +66,4 @@ export class Player {
     });
     this.root?.removeFromParent();
   }
-}
-
-function createDefaultAvatar(height: number, radius: number): Object3D {
-  const group = new Group();
-  const cylinderHeight = Math.max(0.1, height - radius * 2);
-
-  const body = new Mesh(
-    new CapsuleGeometry(radius, cylinderHeight, 6, 12),
-    new MeshStandardMaterial({ color: 0xe8eef5, roughness: 0.6, metalness: 0.05 }),
-  );
-  body.position.y = height / 2;
-  body.castShadow = true;
-  group.add(body);
-
-  // A blunt nose so third person shows which way you are facing.
-  const nose = new Mesh(
-    new CapsuleGeometry(radius * 0.28, radius * 0.5, 4, 8),
-    new MeshStandardMaterial({ color: 0x3aa0ff, roughness: 0.4 }),
-  );
-  nose.rotation.x = Math.PI / 2;
-  nose.position.set(0, height * 0.82, -radius * 0.9);
-  group.add(nose);
-
-  return group;
 }
