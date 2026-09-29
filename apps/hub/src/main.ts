@@ -474,20 +474,15 @@ async function notifySubmission(entry: WorldEntry): Promise<void> {
   }
 }
 
+const DEMO_ADDED_AT = '2026-09-27T21:03:21Z';
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// Views per day since listing; age floored at 1 day so a single early click can't dominate.
 function worldScore(world: WorldEntry): number {
   const views = viewCounts[world.url] ?? 0;
-  if (!world.addedAt) return views;
-  const ageMs = Date.now() - new Date(world.addedAt).getTime();
-  const ageDays = ageMs / (1000 * 60 * 60 * 24);
-  const boostDays = 7;
-  const decayDays = 30;
-  let bonus = 0;
-  if (ageDays <= boostDays) {
-    bonus = 50;
-  } else if (ageDays <= decayDays) {
-    bonus = 50 * (1 - (ageDays - boostDays) / (decayDays - boostDays));
-  }
-  return views + bonus;
+  const added = new Date(world.addedAt ?? DEMO_ADDED_AT).getTime();
+  const ageDays = Math.max(1, (Date.now() - added) / DAY_MS);
+  return views / ageDays;
 }
 
 function render(): void {
