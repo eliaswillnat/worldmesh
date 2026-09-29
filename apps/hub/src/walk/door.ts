@@ -34,6 +34,11 @@ const FRAME = 0.16;
 const DEPTH = 0.32;
 /** Step this close to the doorway to go through. */
 const THRESHOLD = 0.1;
+/**
+ * How far behind the doorway still counts as inside it. Less than the wall is
+ * thick, so walking past the outside of the wall never goes through.
+ */
+const REACH = 1;
 /** Half the width a door takes up along a wall, frame included. */
 export const DOOR_HALF_SPAN = DOOR_WIDTH / 2 + FRAME;
 /** Top of the frame, where the wall closes over the doorway. */
@@ -154,8 +159,9 @@ export class Door {
     const label = createLabel(world.name, world.creator);
     this.label = label.mesh;
     this.drawLabel = label.draw;
-    // Painted on the wall above the doorway; clears the wall's curve.
-    this.label.position.set(0, DOOR_HEIGHT + FRAME + 0.6, 0.12);
+    // Painted on the wall above the doorway; far enough out that long names
+    // clear the wall's curve.
+    this.label.position.set(0, DOOR_HEIGHT + FRAME + 0.6, 0.25);
     this.group.add(this.label);
 
     this.setTheme(light);
@@ -175,7 +181,7 @@ export class Door {
     const angle = this.group.rotation.y;
     const localX = dx * Math.cos(angle) - dz * Math.sin(angle);
     const localZ = dx * Math.sin(angle) + dz * Math.cos(angle);
-    return Math.abs(localX) < DOOR_WIDTH / 2 && localZ < THRESHOLD && localZ > -2;
+    return Math.abs(localX) < DOOR_WIDTH / 2 && localZ < THRESHOLD && localZ > -REACH;
   }
 
   update(time: number): void {

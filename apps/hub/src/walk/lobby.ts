@@ -1,22 +1,28 @@
 import { buildTravelUrl, createWorldMesh } from '@worldmesh/runtime';
 import {
+  BoxGeometry,
   CircleGeometry,
   Color,
   CylinderGeometry,
   DirectionalLight,
   DoubleSide,
+  Matrix4,
   Mesh,
   MeshStandardMaterial,
   Fog,
   HemisphereLight,
   PerspectiveCamera,
   PlaneGeometry,
+  RingGeometry,
   Scene,
   ShaderMaterial,
   Vector2,
   WebGLRenderer,
+  type BufferGeometry,
 } from 'three';
 import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { CITY_GLOW_WHITE, SKY_HORIZON, applyCityTheme, createCity, createCityMaterials, createSky, flipInside, type City } from './city';
 import { Presence } from './presence';
 import { DOOR_HALF_SPAN, DOOR_TOP, Door, type DoorWorld } from './door';
 
@@ -46,10 +52,17 @@ export interface Lobby {
 /** Objects on this layer are drawn by the main camera but not seen in the floor mirror. */
 const FLOOR_LAYER = 1;
 const FLOOR_SIZE = 600;
-/** The round wall: never smaller than this, and grows so doors keep this much wall between them. */
+/** The citadel: never narrower than this, and grows so doors keep this much wall between them. */
 const WALL_MIN_RADIUS = 11;
 const DOOR_SPACING = 4.2;
-const WALL_HEIGHT = 5.2;
+/** A tall drum open to the sky, with the doors around the inside of its base. */
+const CITADEL_HEIGHT = 30;
+const WALL_THICKNESS = 1.2;
+/** The way out to the city faces +Z: straight behind you when you arrive. */
+const GATE_WIDTH = 4.4;
+const GATE_HEIGHT = 6.2;
+/** Wall kept clear on each side of the gate before the first door. */
+const GATE_MARGIN = DOOR_SPACING;
 const WARP_MS = 450;
 
 /**
@@ -66,6 +79,7 @@ const floorShader = {
     uPlayer: { value: new Vector2() },
     uLight: { value: 0 },
     uBackground: { value: new Color() },
+    uHaze: { value: new Color() },
   },
   vertexShader: /* glsl */ `
     uniform mat4 textureMatrix;
@@ -87,6 +101,7 @@ const floorShader = {
     uniform vec2 uPlayer;
     uniform float uLight;
     uniform vec3 uBackground;
+    uniform vec3 uHaze;
     varying vec4 vUv;
     varying vec3 vWorld;
 
@@ -121,7 +136,9 @@ const floorShader = {
       vec3 darkFloor = reflection * (1.0 - glaze) * (1.0 - lines) + vec3(lines);
       vec3 lightFloor = mix(reflection, uBackground, glaze) * (1.0 - min(lines * 1.4, 1.0));
 
-      gl_FragColor = vec4(mix(darkFloor, lightFloor, uLight), 1.0);
+      // Melt into the fog at the horizon, like everything else.
+      float haze = smoothstep(60.0, 230.0, dist);
+      gl_FragColor = vec4(mix(mix(darkFloor, lightFloor, uLight), uHaze, haze), 1.0);
 
       #include <tonemapping_fragment>
       #include <colorspace_fragment>
@@ -130,8 +147,9 @@ const floorShader = {
 };
 
 /**
- * Walk mode: the directory as a place. Every listed world is a door on an
- * endless black grid, and walking into one travels to that world. Movement,
+ * Walk mode: the directory as a place. You arrive inside the citadel, a tall
+ * round hall whose wall is lined with a door per listed world; walking into
+ * one travels to that world. A gate leads out to a plaza ringed by towers. Movement,
  * camera, touch controls and portal triggers all come from the same runtime
  * the worlds themselves use.
  */
@@ -149,12 +167,22 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const camera = new PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 320);
   camera.layers.enable(FLOOR_LAYER);
 
-  scene.add(new HemisphereLight(0xffffff, 0x202020, 1.6));
+  const hemisphere = new HemisphereLight(0xffffff, 0x202020, 1.6);
+  scene.add(hemisphere);
+  const sky = createSky();
+  scene.add(sky);
   const sun = new DirectionalLight(0xffffff, 1.8);
   sun.position.set(4, 10, 6);
   scene.add(sun);
 
-  const wallMaterial = new MeshStandardMaterial({ side: DoubleSide, roughness: 0.85, metalness: 0 });
+  const wallMaterial = new MeshStandardMaterial({ side: DoubleSide, roughness: 0.7, metalness: 0 });
+  const cityMaterials = createCityMaterials(renderer.capabilities.getMaxAnisotropy());
+  let city: City | null = null;
+  let disposed = false;
+  // Screen lettering uses the page font, which may still be loading.
+  document.fonts?.load('700 100px Urbanist').then(() => {
+    if (!disposed) cityMaterials.redraw();
+  }, () => {});
   const mirror = new Reflector(new PlaneGeometry(FLOOR_SIZE, FLOOR_SIZE), {
     shader: floorShader,
     ...mirrorResolution(),
@@ -168,8 +196,10 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     ? new Presence(options.presenceEndpoint, 'lobby', scene, (count) => options.onPresenceCount?.(count))
     : undefined;
 
-  // The wall the doors are set into. Rebuilt whenever the door count changes.
+  // The citadel's walls (solid) and trim (just for looks). Rebuilt whenever
+  // the door count changes.
   const wall: Mesh[] = [];
+  const trim: Mesh[] = [];
   // Standing on something is required once there are walls to bump into.
   const ground = new Mesh(new CircleGeometry(1, 48));
   ground.rotation.x = -Math.PI / 2;
@@ -195,7 +225,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     view: { mode: 'third', distance: 5.5, pitch: window.innerWidth < window.innerHeight ? -0.32 : -0.15 },
     ui: { title: 'WorldMesh', badge: false, crosshair: false },
     network: presence,
-    colliders: () => [ground, ...wall],
+    colliders: () => [ground, ...wall, ...(city?.colliders ?? [])],
     onUpdate: (dt, handle) => {
       time += dt;
       const [x, , z] = handle.getState().position;
@@ -204,6 +234,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         if (!warping && door.contains(x, z)) enter(door);
       }
       floorUniforms.uPlayer.value.set(x, z);
+      sky.position.set(x, 0, z);
       // Keep the finite floor under the player. The grid is drawn in world
       // space, so moving the plane does not move the lines.
       mirror.position.set(Math.round(x / 10) * 10, 0, Math.round(z / 10) * 10);
@@ -262,12 +293,22 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   }
 
   function applyTheme(): void {
-    background.set(light ? 0xf2f2f2 : 0x000000);
+    // Light: a plain blue sky over white towers. Dark: black, lit by the screens.
+    background.set(light ? SKY_HORIZON : 0x000000);
     renderer.setClearColor(background);
+    sky.visible = light;
     fog.color.copy(background);
-    floorUniforms.uBackground.value.copy(background);
+    fog.near = light ? 60 : 35;
+    fog.far = light ? 240 : 170;
+    hemisphere.groundColor.set(light ? 0xdde5f2 : 0x202020);
+    hemisphere.intensity = light ? 2 : 1.6;
+    floorUniforms.uBackground.value.set(light ? 0xf1f4fa : 0x000000);
+    floorUniforms.uHaze.value.copy(background);
     floorUniforms.uLight.value = light ? 1 : 0;
-    wallMaterial.color.set(light ? 0xe4e4e4 : 0x0e0e0e);
+    wallMaterial.color.set(light ? 0xf5f6fa : 0x141418);
+    // Lift the shaded sides so white stays white, not grey.
+    wallMaterial.emissive.set(light ? CITY_GLOW_WHITE : 0x000000);
+    applyCityTheme(cityMaterials, light);
   }
 
   function setWorlds(worlds: DoorWorld[]): void {
@@ -278,8 +319,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     // Everyone with the same list gets the same ring, so visitors who see
     // each other also see the same doors around them.
     const urls = [...known.keys()].sort();
-    const radius = Math.max(WALL_MIN_RADIUS, (urls.length * DOOR_SPACING) / (Math.PI * 2));
-    const angles = urls.map((_, i) => Math.PI + (i / Math.max(urls.length, 1)) * Math.PI * 2);
+    const radius = Math.max(WALL_MIN_RADIUS, (urls.length * DOOR_SPACING + GATE_WIDTH + GATE_MARGIN * 2) / (Math.PI * 2));
+    // Doors share the wall evenly, leaving the gate at angle 0 clear.
+    const clear = (GATE_WIDTH / 2 + GATE_MARGIN) / radius;
+    const step = (Math.PI * 2 - clear * 2) / Math.max(urls.length, 1);
+    const angles = urls.map((_, i) => clear + (i + 0.5) * step);
     urls.forEach((url, i) => {
       let door = doors.get(url);
       if (!door) {
@@ -293,46 +337,162 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     buildWall(radius, angles);
   }
 
-  /** Curved wall sections between the doors, leaving a gap for each doorway. */
+  /**
+   * The citadel: an inner and an outer drum with the doorways cut into the
+   * inner one and the gate cut through both, then trim, the banner over the
+   * gate, and the city around it.
+   */
   function buildWall(radius: number, angles: number[]): void {
-    for (const section of wall) {
-      section.geometry.dispose();
-      section.removeFromParent();
+    for (const mesh of [...wall, ...trim]) {
+      mesh.geometry.dispose();
+      mesh.removeFromParent();
     }
     wall.length = 0;
-    ground.scale.setScalar(radius + 4);
+    trim.length = 0;
+    const outer = radius + WALL_THICKNESS;
 
-    const gap = DOOR_HALF_SPAN / radius;
-    const spans: [number, number][] = angles.length
-      ? angles.map((a, i) => {
-          const next = i + 1 < angles.length ? angles[i + 1] : angles[0] + Math.PI * 2;
-          return [a + gap, next - a - gap * 2];
-        })
-      : [[0, Math.PI * 2]];
-    const add = (start: number, length: number, bottom: number) => {
+    const shell = (r: number, start: number, length: number, bottom: number, inward: boolean) => {
       if (length <= 0) return;
-      const height = WALL_HEIGHT - bottom;
+      const height = CITADEL_HEIGHT - bottom;
       const segments = Math.max(2, Math.ceil(length * 24));
-      const section = new Mesh(facingInward(new CylinderGeometry(radius, radius, height, segments, 1, true, start, length)), wallMaterial);
+      const geometry = new CylinderGeometry(r, r, height, segments, 1, true, start, length);
+      const section = new Mesh(inward ? flipInside(geometry) : geometry, wallMaterial);
       section.position.y = bottom + height / 2;
       scene.add(section);
       wall.push(section);
     };
-    for (const [start, length] of spans) add(start, length, 0);
-    // Close the wall over each doorway.
-    for (const a of angles) add(a - gap, gap * 2, DOOR_TOP);
+
+    // Inner drum: faces the hall, open at the gate and at every doorway.
+    const openings = [
+      { angle: 0, half: GATE_WIDTH / 2 / radius, top: GATE_HEIGHT },
+      ...angles.map((angle) => ({ angle, half: DOOR_HALF_SPAN / radius, top: DOOR_TOP })),
+    ];
+    openings.forEach((opening, i) => {
+      const next = openings[i + 1] ?? { ...openings[0], angle: openings[0].angle + Math.PI * 2 };
+      const start = opening.angle + opening.half;
+      shell(radius, start, next.angle - next.half - start, 0, true);
+      // Close the wall over the opening.
+      shell(radius, opening.angle - opening.half, opening.half * 2, opening.top, true);
+    });
+
+    // Outer drum: faces the city, open only at the gate.
+    const gateOuter = GATE_WIDTH / 2 / outer;
+    shell(outer, gateOuter, Math.PI * 2 - gateOuter * 2, 0, false);
+    shell(outer, -gateOuter, gateOuter * 2, GATE_HEIGHT, false);
+
+    // The gate passage: side walls and a ceiling between the two drums.
+    const halfGate = GATE_WIDTH / 2;
+    const passageStart = Math.sqrt(radius * radius - halfGate * halfGate) - 0.05;
+    const passageDepth = outer + 0.05 - passageStart;
+    const passageZ = passageStart + passageDepth / 2;
+    const block = (w: number, h: number, d: number, x: number, y: number, z: number, solid: boolean) => {
+      const mesh = new Mesh(new BoxGeometry(w, h, d), wallMaterial);
+      mesh.position.set(x, y + h / 2, z);
+      scene.add(mesh);
+      (solid ? wall : trim).push(mesh);
+      return mesh;
+    };
+    for (const side of [-1, 1]) block(0.4, GATE_HEIGHT, passageDepth, side * (halfGate + 0.1), 0, passageZ, true);
+    block(GATE_WIDTH + 0.4, 0.2, passageDepth, 0, GATE_HEIGHT, passageZ, false);
+
+    buildTrim(radius, outer);
+    buildCity(outer);
     world.refreshColliders();
   }
 
+  /** Ribs, light bands, the crown, the gate's portal frame and the banner. */
+  function buildTrim(radius: number, outer: number): void {
+    const solid: BufferGeometry[] = [];
+    const glow: BufferGeometry[] = [];
+    const matrix = new Matrix4();
+    const place = (geometry: BufferGeometry, x: number, y: number, z: number, angle = 0) => {
+      geometry.applyMatrix4(matrix.makeRotationY(angle).setPosition(x, y, z));
+      return geometry.index ? geometry.toNonIndexed() : geometry;
+    };
+
+    // Vertical ribs all round the outside, leaving the gate and banner bare.
+    const bare = 5 / outer;
+    const ribCount = Math.round((Math.PI * 2 * outer) / 3.2);
+    for (let i = 0; i < ribCount; i++) {
+      const angle = (i / ribCount) * Math.PI * 2;
+      if (angle < bare || angle > Math.PI * 2 - bare) continue;
+      const r = outer + 0.2;
+      solid.push(place(new BoxGeometry(0.5, CITADEL_HEIGHT, 0.4), Math.sin(angle) * r, CITADEL_HEIGHT / 2, Math.cos(angle) * r, angle));
+    }
+
+    // Crown: a cornice around the top and a rim over the wall.
+    solid.push(place(new CylinderGeometry(outer + 0.5, outer + 0.5, 1.2, 128, 1, true), 0, CITADEL_HEIGHT - 0.6, 0));
+    const rim = new RingGeometry(radius, outer + 0.5, 128);
+    rim.rotateX(-Math.PI / 2);
+    solid.push(place(rim, 0, CITADEL_HEIGHT, 0));
+
+    // Light bands: outside above the gate and under the crown, inside above
+    // the door labels (broken at the gate) and near the top.
+    const band = (r: number, y: number, start = 0, length = Math.PI * 2) =>
+      glow.push(place(new CylinderGeometry(r, r, 0.14, 128, 1, true, start, length), 0, y, 0));
+    band(outer + 0.03, GATE_HEIGHT + 1.2);
+    band(outer + 0.52, CITADEL_HEIGHT - 1.3);
+    const gateInner = (GATE_WIDTH / 2 + 0.3) / radius;
+    band(radius - 0.03, DOOR_TOP + 1.7, gateInner, Math.PI * 2 - gateInner * 2);
+    band(radius - 0.03, CITADEL_HEIGHT - 1);
+
+    // A white portal frame around the gate, outlined in light.
+    const halfGate = GATE_WIDTH / 2;
+    const frameZ = outer + 0.2;
+    for (const side of [-1, 1]) {
+      solid.push(place(new BoxGeometry(0.6, GATE_HEIGHT + 0.6, 0.5), side * (halfGate + 0.3), (GATE_HEIGHT + 0.6) / 2, frameZ));
+      glow.push(place(new BoxGeometry(0.1, GATE_HEIGHT, 0.1), side * (halfGate + 0.02), GATE_HEIGHT / 2, frameZ + 0.2));
+    }
+    solid.push(place(new BoxGeometry(GATE_WIDTH + 1.2, 0.6, 0.5), 0, GATE_HEIGHT + 0.3, frameZ));
+    glow.push(place(new BoxGeometry(GATE_WIDTH, 0.1, 0.1), 0, GATE_HEIGHT - 0.02, frameZ + 0.2));
+
+    // The banner over the gate: a tall screen in a deep white bezel, deep
+    // enough to meet the curved wall behind it.
+    const bannerW = 7;
+    const bannerH = 14;
+    const bannerBottom = GATE_HEIGHT + 2.4;
+    solid.push(place(new BoxGeometry(bannerW + 0.6, bannerH + 0.6, 1.4), 0, bannerBottom + bannerH / 2, outer - 0.35));
+    glow.push(place(new BoxGeometry(bannerW + 0.6, 0.1, 0.1), 0, bannerBottom - 0.35, outer + 0.36));
+
+    const add = (geometries: BufferGeometry[], material: MeshStandardMaterial | typeof cityMaterials.glow) => {
+      const mesh = new Mesh(mergeGeometries(geometries), material);
+      for (const geometry of geometries) geometry.dispose();
+      scene.add(mesh);
+      trim.push(mesh);
+    };
+    add(solid, wallMaterial);
+    add(glow, cityMaterials.glow);
+
+    const banner = new Mesh(new PlaneGeometry(bannerW, bannerH), cityMaterials.citadelPoster.material);
+    banner.position.set(0, bannerBottom + bannerH / 2, outer + 0.37);
+    scene.add(banner);
+    trim.push(banner);
+  }
+
+  /** The city only depends on how wide the citadel is. */
+  function buildCity(outer: number): void {
+    if (city && city.group.userData.outer === outer) return;
+    city?.dispose();
+    city = createCity(outer, cityMaterials);
+    city.group.userData.outer = outer;
+    scene.add(city.group);
+    ground.scale.setScalar(city.radius + 2);
+  }
+
   function dispose(): void {
+    disposed = true;
     window.clearTimeout(warpTimer);
     window.removeEventListener('pageshow', handlePageShow);
     window.removeEventListener('resize', handleResize);
     world.dispose();
     for (const door of doors.values()) door.dispose();
     doors.clear();
-    for (const section of wall) section.geometry.dispose();
+    for (const mesh of [...wall, ...trim]) mesh.geometry.dispose();
     wallMaterial.dispose();
+    city?.dispose();
+    cityMaterials.dispose();
+    sky.geometry.dispose();
+    sky.material.dispose();
     ground.geometry.dispose();
     mirror.dispose();
     mirror.geometry.dispose();
@@ -352,21 +512,4 @@ function mirrorResolution(): { textureWidth: number; textureHeight: number } {
     textureWidth: Math.max(256, Math.round(window.innerWidth * scale)),
     textureHeight: Math.max(256, Math.round(window.innerHeight * scale)),
   };
-}
-
-/**
- * Turn a cylinder inside out, so its faces point at the middle of the room.
- * The runtime only blocks movement into the front of a face, and the wall has
- * to stop people walking out, not in.
- */
-function facingInward(geometry: CylinderGeometry): CylinderGeometry {
-  const index = geometry.getIndex()!;
-  for (let i = 0; i < index.count; i += 3) {
-    const b = index.getX(i + 1);
-    index.setX(i + 1, index.getX(i + 2));
-    index.setX(i + 2, b);
-  }
-  const normal = geometry.getAttribute('normal');
-  for (let i = 0; i < normal.count; i++) normal.setXYZ(i, -normal.getX(i), -normal.getY(i), -normal.getZ(i));
-  return geometry;
 }
