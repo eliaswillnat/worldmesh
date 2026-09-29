@@ -82,13 +82,14 @@ export interface AvatarMotion {
 const HEAD_RADIUS = 0.47;
 const HEAD_Y = 1.33;
 /** How far the arms hang away from the body at rest, in radians. */
-const ARM_REST = 0.5;
+const ARM_REST = 0.4;
 
 export function createDefaultAvatar(height = 1.8): Group {
   const root = new Group();
   root.name = 'worldmesh:avatar';
 
-  const skin = new MeshStandardMaterial({ color: 0xf6f6f6, roughness: 0.35, metalness: 0.02 });
+  // Soft glossy white; a little self-light keeps the shaded side from going grey.
+  const skin = new MeshStandardMaterial({ color: 0xf7f7f7, emissive: 0x1e1e1e, roughness: 0.42, metalness: 0 });
   const shaded = (geometry: BufferGeometry) => {
     const mesh = new Mesh(geometry, skin);
     mesh.castShadow = true;
@@ -99,26 +100,29 @@ export function createDefaultAvatar(height = 1.8): Group {
   const torso = new Group();
   root.add(torso);
 
-  // Narrow shoulders tucked under the head, widening into round hips.
+  // One soft bean: a neck tucked into the head, round sloping shoulders, a
+  // belly that is widest low down, and a rounded seat the legs grow out of.
   const body = shaded(lathe([
-    [0, 0.95],
-    [0.1, 0.93],
+    [0, 0.93],
+    [0.09, 0.915],
     [0.15, 0.87],
-    [0.168, 0.78],
-    [0.198, 0.62],
-    [0.235, 0.46],
-    [0.247, 0.37],
-    [0.232, 0.29],
-    [0.16, 0.245],
-    [0, 0.235],
+    [0.19, 0.8],
+    [0.212, 0.7],
+    [0.232, 0.56],
+    [0.243, 0.44],
+    [0.232, 0.36],
+    [0.205, 0.29],
+    [0.155, 0.24],
+    [0.08, 0.214],
+    [0, 0.208],
   ]));
-  body.scale.z = 0.82;
+  body.scale.z = 0.84;
   torso.add(body);
 
   const head = new Group();
   head.position.y = HEAD_Y;
   torso.add(head);
-  head.add(shaded(new SphereGeometry(HEAD_RADIUS, 48, 32)));
+  head.add(shaded(new SphereGeometry(HEAD_RADIUS, 64, 48)));
 
   const faceMaterial = new MeshBasicMaterial({
     map: faceTexture('smile', false),
@@ -141,12 +145,15 @@ export function createDefaultAvatar(height = 1.8): Group {
     target.add(pivot);
     return pivot;
   };
-  const armL = limb(-0.15, 0.76, 0.46, 0.058, 0.07, torso);
-  const armR = limb(0.15, 0.76, 0.46, 0.058, 0.07, torso);
+  // Thick, soft arms whose round tops sink into the shoulders, so there is
+  // no seam; hands swell slightly at the tips.
+  const armL = limb(-0.165, 0.765, 0.43, 0.072, 0.08, torso);
+  const armR = limb(0.165, 0.765, 0.43, 0.072, 0.08, torso);
   armL.rotation.z = -ARM_REST;
   armR.rotation.z = ARM_REST;
-  const legL = limb(-0.1, 0.36, 0.36, 0.092, 0.066, root);
-  const legR = limb(0.1, 0.36, 0.36, 0.092, 0.066, root);
+  // Stubby legs, wide where they leave the body and rounded at the feet.
+  const legL = limb(-0.1, 0.34, 0.34, 0.088, 0.08, root);
+  const legR = limb(0.1, 0.34, 0.34, 0.088, 0.08, root);
 
   const rig: AvatarRig = {
     torso,
@@ -231,16 +238,16 @@ function nextBlink(): number {
 function lathe(profile: [number, number][]): LatheGeometry {
   const curve = new SplineCurve(profile.map(([r, y]) => new Vector2(r, y)));
   // Lathe wants the profile bottom to top so the faces point outward.
-  const points = curve.getSpacedPoints(48).reverse();
+  const points = curve.getSpacedPoints(96).reverse();
   points[0].x = 0;
   points[points.length - 1].x = 0;
-  return new LatheGeometry(points, 32);
+  return new LatheGeometry(points, 64);
 }
 
 /** A capsule hanging down from its top, `top` wide at the pivot and `bottom` wide at the tip. */
 function taperedCapsule(length: number, top: number, bottom: number): LatheGeometry {
   const points: Vector2[] = [];
-  const steps = 8;
+  const steps = 16;
   // Bottom cap, then the straight taper, then the top cap.
   for (let i = 0; i <= steps; i++) {
     const a = -Math.PI / 2 + (i / steps) * (Math.PI / 2);
@@ -252,7 +259,7 @@ function taperedCapsule(length: number, top: number, bottom: number): LatheGeome
   }
   points[0].x = 0;
   points[points.length - 1].x = 0;
-  return new LatheGeometry(points, 20);
+  return new LatheGeometry(points, 40);
 }
 
 /** Half the width of the square the face is drawn in, in metres on the head. */
