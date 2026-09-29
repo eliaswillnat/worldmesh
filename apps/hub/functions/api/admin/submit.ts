@@ -89,6 +89,7 @@ export async function onRequestPost(context: {
     creator,
     portfolio: body.portfolio || undefined,
     approvedAt: new Date().toISOString(),
+    addedAt: new Date().toISOString(),
     curatedBy: 'admin',
   };
 

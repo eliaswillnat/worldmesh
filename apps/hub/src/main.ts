@@ -16,6 +16,7 @@ interface WorldEntry {
   email?: string;
   submittedAt?: string;
   addedAt?: string;
+  approvedAt?: string;
 }
 
 import communityWorldsStatic from './community.json';
@@ -480,7 +481,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 // Views per day since listing; age floored at 1 day so a single early click can't dominate.
 function worldScore(world: WorldEntry): number {
   const views = viewCounts[world.url] ?? 0;
-  const added = new Date(world.addedAt ?? DEMO_ADDED_AT).getTime();
+  const added = new Date(world.addedAt ?? world.approvedAt ?? DEMO_ADDED_AT).getTime();
   const ageDays = Math.max(1, (Date.now() - added) / DAY_MS);
   return views / ageDays;
 }
