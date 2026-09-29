@@ -25,7 +25,13 @@ Create world with AI  →  deploy it yourself  →  paste the URL into WorldMesh
 MVP. It proves one thing: **five completely different, independently
 deployable 3D websites can share exactly the same movement, camera and
 navigation runtime.** Nothing else is built yet — no accounts, no database, no
-multiplayer, no moderation. See [docs/roadmap.md](docs/roadmap.md).
+moderation. See [docs/roadmap.md](docs/roadmap.md).
+
+The hub also has a **walk mode** (the walking figure, top right): the directory
+as a place. Every listed world is a wormhole on a mirrored black grid, showing
+a lensed preview of its cover, and walking into one travels there. Everyone in
+walk mode sees everyone else, through a tiny presence relay in
+`workers/presence`.
 
 ## Repo layout
 
@@ -64,7 +70,8 @@ npm run dev:forest
 ```
 
 Open <http://localhost:5170>. Portals between worlds assume all six dev servers
-are running.
+are running. To see other visitors in walk mode locally, also run
+`npm run dev:presence`.
 
 ## Making a Three.js project WorldMesh-compatible
 

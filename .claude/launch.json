@@ -60,6 +60,16 @@
       ],
       "port": 5175,
       "autoPort": false
+    },
+    {
+      "name": "presence",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev:presence"
+      ],
+      "port": 8787,
+      "autoPort": false
     }
   ]
 }

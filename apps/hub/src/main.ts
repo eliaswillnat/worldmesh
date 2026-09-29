@@ -44,6 +44,10 @@ try {
  * serverless function. Leave unset to skip notifications.
  */
 const NOTIFY_WEBHOOK = import.meta.env.VITE_NOTIFY_WEBHOOK as string | undefined;
+/** WebSocket base of workers/presence. Walk mode is single-player without it. */
+const PRESENCE_ENDPOINT =
+  (import.meta.env.VITE_PRESENCE_ENDPOINT as string | undefined) ||
+  (import.meta.env.DEV ? 'ws://localhost:8787' : 'wss://worldmesh-presence.elias-willnat.workers.dev');
 const SCREENSHOT_ENDPOINT =
   (import.meta.env.VITE_SCREENSHOT_ENDPOINT as string | undefined) ||
   'https://worldmesh-screenshot.elias-willnat.workers.dev';
@@ -264,6 +268,77 @@ render();
 
 fetchCommunityWorlds();
 
+// ── Walk mode ────────────────────────────────────────────────────────────────
+// The same directory as a place: every world is a wormhole on a grid. Three.js
+// and the runtime load only when someone asks for it.
+
+const walkToggle = document.querySelector<HTMLButtonElement>('#walk-toggle')!;
+const walkOnline = document.querySelector<HTMLDivElement>('#walk-online')!;
+let walkRoot: HTMLDivElement | null = null;
+let lobby: import('./walk/lobby').Lobby | null = null;
+let walkLoading = false;
+
+walkToggle.addEventListener('click', () => {
+  if (walkRoot) exitWalkMode();
+  else enterWalkMode();
+});
+
+if (window.location.hash === '#walk') enterWalkMode();
+
+async function enterWalkMode(): Promise<void> {
+  if (walkRoot || walkLoading) return;
+  walkLoading = true;
+  walkToggle.disabled = true;
+  try {
+    const { createLobby } = await import('./walk/lobby');
+    walkRoot = document.createElement('div');
+    walkRoot.className = 'walk-root';
+    document.body.appendChild(walkRoot);
+    document.documentElement.classList.add('walking');
+    lobby = createLobby(walkRoot, {
+      worlds: ALL_WORLDS,
+      presenceEndpoint: PRESENCE_ENDPOINT,
+      onPresenceCount: (count) => {
+        if (count === null) {
+          delete walkOnline.dataset.count;
+          walkOnline.textContent = '';
+        } else {
+          walkOnline.dataset.count = String(count);
+          walkOnline.textContent = `${count} online`;
+        }
+      },
+      onEnterWorld: (world) => trackClick(world.url),
+    });
+    history.replaceState(null, '', '#walk');
+    setWalkToggleLabel('Back to the list');
+  } catch (error) {
+    console.error('Walk mode failed to start', error);
+    exitWalkMode();
+    setStatus('Walk mode is not available in this browser.', true);
+  } finally {
+    walkLoading = false;
+    walkToggle.disabled = false;
+  }
+}
+
+function exitWalkMode(): void {
+  lobby?.dispose();
+  lobby = null;
+  walkRoot?.remove();
+  walkRoot = null;
+  document.documentElement.classList.remove('walking');
+  delete walkOnline.dataset.count;
+  if (window.location.hash === '#walk') {
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+  }
+  setWalkToggleLabel('Walk between worlds');
+}
+
+function setWalkToggleLabel(label: string): void {
+  walkToggle.title = label;
+  walkToggle.setAttribute('aria-label', label);
+}
+
 async function fetchCommunityWorlds(): Promise<void> {
   try {
     const res = await fetch('/api/worlds');
@@ -272,6 +347,7 @@ async function fetchCommunityWorlds(): Promise<void> {
     ALL_WORLDS.length = 0;
     ALL_WORLDS.push(...communityWorlds, ...DEMO_WORLDS);
     render();
+    lobby?.setWorlds(ALL_WORLDS);
     fetchViewCounts(ALL_WORLDS.map((w) => w.url));
   } catch {
     // Fall back to demo worlds only
