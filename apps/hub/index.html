@@ -385,7 +385,7 @@
         position: absolute;
         top: 12px;
         left: 12px;
-        z-index: 4;
+        z-index: 6;
         padding: 4px 9px;
         border-radius: 999px;
         font-size: 10px;
@@ -393,9 +393,29 @@
         letter-spacing: 0.12em;
         color: #fff;
         background: rgba(0, 0, 0, 0.45);
-        border: 1px solid rgba(255, 255, 255, 0.25);
         -webkit-backdrop-filter: blur(8px);
         backdrop-filter: blur(8px);
+      }
+
+      /* Same 1px gradient outline as the card cover */
+      .card-new::before {
+        content: "";
+        pointer-events: none;
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        padding: 1px;
+        background: linear-gradient(
+          to bottom,
+          var(--gradient-border-color) 0%,
+          transparent 50%,
+          var(--gradient-border-color) 100%
+        );
+        -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+        -webkit-mask-composite: xor;
+        mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+        mask-composite: exclude;
+        opacity: 0.2;
       }
 
       /* ── Cover ─────────────────────────────────────────────────── */
