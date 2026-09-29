@@ -28,6 +28,7 @@ const COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes
 const DEMO_ADDED_AT = '2026-09-27T21:03:21Z';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const NEW_BADGE_DAYS = 7;
+const SPOTLIGHT_MS = 48 * 60 * 60 * 1000;
 
 // Clean up legacy local click counter and saved worlds from prototype
 try {
@@ -490,8 +491,12 @@ function worldScore(world: WorldEntry): number {
 function render(): void {
   const byScore = (a: WorldEntry, b: WorldEntry) => worldScore(b) - worldScore(a);
   const demos = new Set(DEMO_WORLDS);
+  const listedAt = (w: WorldEntry) => new Date(w.addedAt ?? w.approvedAt ?? 0).getTime();
+  const community = ALL_WORLDS.filter((w) => !demos.has(w));
+  const spotlight = community.filter((w) => Date.now() - listedAt(w) < SPOTLIGHT_MS);
   const sorted = [
-    ...ALL_WORLDS.filter((w) => !demos.has(w)).sort(byScore),
+    ...spotlight.sort((a, b) => listedAt(b) - listedAt(a)),
+    ...community.filter((w) => !spotlight.includes(w)).sort(byScore),
     ...DEMO_WORLDS.slice().sort(byScore),
   ];
   demoList.replaceChildren(...sorted.map((world) => renderCard(world)));
