@@ -21,6 +21,15 @@ export interface Env extends AppleCredentials, MailEnv {
   DISCORD_CLIENT_ID?: string;
   DISCORD_CLIENT_SECRET?: string;
   AUTH_LIMITER?: RateLimiter;
+  /**
+   * Avatar Wallet (src/avatars): seals VRoid Hub tokens at rest, OAuth flow
+   * cookies and world handoff tickets. The wallet is off until it is set.
+   */
+  AVATAR_SECRET?: string;
+  VROID_CLIENT_ID?: string;
+  VROID_CLIENT_SECRET?: string;
+  /** The scope configured on the VRoid Hub application; "default" unless changed there. */
+  VROID_SCOPE?: string;
 }
 
 export const AUTH_BASE_PATH = '/api/auth';

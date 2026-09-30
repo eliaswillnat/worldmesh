@@ -6,7 +6,11 @@
  *
  * Visitors who have never signed in cost nothing: /api/account/me is only
  * asked when this browser has signed in before.
+ *
+ * Signed in, the dialog also offers "Choose your character" (./avatars.ts).
  */
+
+import { characterSummary, initAvatarWallet, setSignedIn, walletView } from './avatars';
 
 interface AccountUser {
   id: string;
@@ -47,6 +51,10 @@ let view: View = 'sign-in';
 let resetToken: string | null = null;
 /** Kept across re-renders so a failed attempt doesn't wipe what was typed. */
 let draft = { name: '', email: '', password: '' };
+/** Which page of the signed-in dialog is showing. */
+let signedInView: 'account' | 'wallet' = 'account';
+/** Came back from connecting an avatar platform: open the wallet once signed in. */
+let openWallet = false;
 
 const PROFILE_ICON =
   '<svg class="account-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>';
@@ -55,6 +63,7 @@ const mobileProfile = document.querySelector<HTMLSpanElement>('#mobile-profile')
 
 export function openAccountDialog(): void {
   message = null;
+  signedInView = 'account';
   if (view === 'forgot' || (view === 'reset' && !resetToken)) view = 'sign-in';
   renderDialog();
   dialog.showModal();
@@ -67,6 +76,9 @@ export function getUsername(): string | null {
 }
 
 export function initAccount(): void {
+  openWallet = initAvatarWallet(() => {
+    if (dialog.open) renderDialog();
+  }) !== null;
   button.addEventListener('click', openAccountDialog);
   dialog.addEventListener('click', (event) => {
     // A click on the backdrop (the dialog element itself) closes it.
@@ -110,8 +122,15 @@ async function refresh(openIfNoUsername: boolean): Promise<void> {
     if (!response.ok) return;
     user = ((await response.json()) as { user: AccountUser | null }).user;
     setHint(!!user);
+    setSignedIn(!!user);
     renderButton();
     if (dialog.open) renderDialog();
+    if (user && openWallet) {
+      openWallet = false;
+      signedInView = 'wallet';
+      renderDialog();
+      dialog.showModal();
+    }
     if (user && !user.username && openIfNoUsername) {
       renderDialog();
       dialog.showModal();
@@ -237,6 +256,7 @@ async function signOut(): Promise<void> {
     if (!response.ok) throw new Error('Could not log out.');
     user = null;
     setHint(false);
+    setSignedIn(false);
     renderButton();
     dialog.close();
   });
@@ -305,6 +325,13 @@ function renderDialog(): void {
   body.append(closeButton());
   if (!user) {
     renderSignedOut();
+  } else if (signedInView === 'wallet') {
+    body.append(
+      ...walletView(() => {
+        signedInView = 'account';
+        renderDialog();
+      }),
+    );
   } else {
     const who = document.createElement('div');
     who.className = 'account-who';
@@ -322,6 +349,13 @@ function renderDialog(): void {
     who.append(avatar(user, 'account-avatar large'), text);
     body.append(who);
     if (!user.username) body.append(usernameForm());
+    body.append(
+      characterSummary(() => {
+        signedInView = 'wallet';
+        message = null;
+        renderDialog();
+      }),
+    );
     const logout = document.createElement('button');
     logout.type = 'button';
     logout.className = 'account-logout';

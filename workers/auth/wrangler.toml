@@ -48,6 +48,10 @@ simple = { limit = 20, period = 60 }
 #                          email + password accounts must confirm their email and
 #                          "Forgot password?" appears. Without them, email + password
 #                          still works, unverified and with no password reset.
+#   AVATAR_SECRET          random, at least 32 bytes; turns on the Avatar Wallet
+#                          (seals VRoid tokens, OAuth flow cookies, handoff tickets)
+#   VROID_CLIENT_ID        VROID_CLIENT_SECRET   (VRoid Hub in the Avatar Wallet;
+#                          redirect https://worldmesh.net/api/account/avatar/callback/vroid)
 # Production OAuth redirect for each provider:
 #   https://worldmesh.net/api/auth/callback/<google|apple|github|discord>
 # A provider appears on the login dialog (GET /api/account/providers) only

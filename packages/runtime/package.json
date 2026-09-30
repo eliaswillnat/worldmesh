@@ -53,6 +53,9 @@
     "typecheck": "tsc -p tsconfig.json",
     "prepare": "npm run build"
   },
+  "dependencies": {
+    "@pixiv/three-vrm": "^3.5.5"
+  },
   "peerDependencies": {
     "three": ">=0.160.0"
   },

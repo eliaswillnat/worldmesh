@@ -45,6 +45,24 @@ devices, the shared overlay and portals between worlds.
 Removing the `createWorldMesh` call leaves you with the Three.js project you
 started with.
 
+## Visitors' own avatars (optional)
+
+```js
+createWorldMesh({ scene, camera, renderer, avatar: { source: 'worldmesh' } });
+```
+
+Visitors who picked a character in their WorldMesh Avatar Wallet (VRoid Hub,
+at3d) arrive with a short-lived ticket in the URL fragment. The runtime removes
+it from the address bar, asks the hub for a descriptor, and loads the VRM or
+glTF straight from the platform that hosts it. Portals carry the ticket on.
+Without a ticket, or if anything fails, the player keeps the default body.
+Your world never receives the visitor's account, session or platform tokens.
+
+Already have a model URL? Pass `avatar: { source: 'descriptor', descriptor }`,
+or call `world.loadAvatar(descriptor)` / `world.clearAvatar()` at any time.
+`avatar:load` and `avatar:error` events report the outcome. The VRM and glTF
+loaders (`@pixiv/three-vrm`) are only downloaded when an avatar is shown.
+
 ## What is exported
 
 | | |
@@ -54,6 +72,7 @@ started with.
 | `MovementController`, `CollisionWorld`, `DEFAULT_TUNING` | movement and collision |
 | `CameraRig`, `Player`, `createDefaultAvatar`, `AVATAR_EXPRESSIONS` | camera and figure |
 | `PortalManager`, `buildTravelUrl`, `getReferringWorld` | travel between worlds |
+| `loadAvatarModel`, `resolveWorldMeshAvatar`, `parseAvatarDescriptor`, `AvatarDescriptor` | visitors' own avatars |
 | `Overlay`, `Emitter` | the shared overlay, a tiny typed emitter |
 | `serializePlayerState`, `deserializePlayerState`, `NetworkAdapter` | the multiplayer seam |
 | `WORLDMESH_VERSION`, `WORLDMESH_PROTOCOL` | what your world is speaking |
