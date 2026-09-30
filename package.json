@@ -2,7 +2,7 @@
   "name": "worldmesh",
   "private": true,
   "version": "0.1.0",
-  "description": "A lightweight open network for independently hosted 3D worlds.",
+  "description": "Open network for independently hosted 3D worlds, connected across the web.",
   "workspaces": [
     "packages/*",
     "apps/*"

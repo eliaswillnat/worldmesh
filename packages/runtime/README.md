@@ -3,7 +3,7 @@
 The shared [WorldMesh](https://github.com/eliaswillnat/worldmesh) navigation
 runtime: controls, movement, camera, player, abilities and portals.
 
-WorldMesh is a lightweight open network for independently hosted 3D worlds. It
+WorldMesh is an open network for independently hosted 3D worlds, connected across the web. It
 supplies the one thing separately hosted worlds need in common — a navigation
 standard — so that moving through an unfamiliar world feels like moving through
 a familiar one. This package is that standard, as code.

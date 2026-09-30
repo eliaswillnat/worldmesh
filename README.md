@@ -1,6 +1,6 @@
 # WorldMesh
 
-A lightweight open network for independently hosted 3D worlds.
+Open network for independently hosted 3D worlds, connected across the web.
 
 Anyone builds a 3D world, hosts it wherever they like, and pastes the URL into
 WorldMesh. The worlds stay on their creators' own infrastructure. WorldMesh
