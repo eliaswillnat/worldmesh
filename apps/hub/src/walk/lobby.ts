@@ -15,7 +15,6 @@ import {
   HemisphereLight,
   PerspectiveCamera,
   PlaneGeometry,
-  Raycaster,
   RingGeometry,
   Scene,
   ShaderMaterial,
@@ -101,7 +100,6 @@ const SPARE_DOORS = 6;
 /** Stand this close in front of an empty door to be offered it. */
 const EMPTY_DOOR_REACH = 2.4;
 /** A tap on an empty door this far away still counts. */
-const TAP_RANGE = 40;
 const WARP_MS = 450;
 /** Someone back from a world ends up this far out in front of the door they took. */
 const RETURN_STEP = 2.4;
@@ -432,36 +430,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     if (nearEmpty) addWorld();
   });
 
-  // Pointer: clicking or tapping an empty door on screen picks it. While the
-  // mouse is captured there is no cursor, so a click aims where the camera
-  // looks, or picks the door you are standing at.
-  const raycaster = new Raycaster();
-  const pointer = new Vector2();
-  let pressAt: { x: number; y: number; time: number } | null = null;
-  const emptyDoorAt = (ndcX: number, ndcY: number): Door | null => {
-    raycaster.setFromCamera(pointer.set(ndcX, ndcY), camera);
-    raycaster.far = TAP_RANGE;
-    const hit = raycaster.intersectObjects([...wall, ...emptyDoors.map((door) => door.face)], false)[0];
-    return emptyDoors.find((door) => door.face === hit?.object) ?? null;
-  };
-  const handlePointerDown = (event: PointerEvent) => {
-    pressAt = { x: event.clientX, y: event.clientY, time: performance.now() };
-    if (document.pointerLockElement === renderer.domElement && (nearEmpty || emptyDoorAt(0, 0))) addWorld();
-  };
-  const handlePointerUp = (event: PointerEvent) => {
-    const press = pressAt;
-    pressAt = null;
-    if (!press || document.pointerLockElement === renderer.domElement) return;
-    // A tap, not a drag to look around.
-    const moved = Math.hypot(event.clientX - press.x, event.clientY - press.y);
-    if (moved > 10 || performance.now() - press.time > 400) return;
-    const rect = renderer.domElement.getBoundingClientRect();
-    const ndcX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-    const ndcY = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-    if (emptyDoorAt(ndcX, ndcY)) addWorld();
-  };
-  renderer.domElement.addEventListener('pointerdown', handlePointerDown);
-  renderer.domElement.addEventListener('pointerup', handlePointerUp);
 
   // Coming back with the browser's back button can restore this page as it
   // was left: mid-warp and standing in a doorway. Step the visitor back out.
@@ -800,8 +768,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     window.clearTimeout(privateTimer);
     window.removeEventListener('pageshow', handlePageShow);
     window.removeEventListener('resize', handleResize);
-    renderer.domElement.removeEventListener('pointerdown', handlePointerDown);
-    renderer.domElement.removeEventListener('pointerup', handlePointerUp);
     world.dispose();
     for (const door of [...doors.values(), ...emptyDoors, randomDoor]) door.dispose();
     doors.clear();
