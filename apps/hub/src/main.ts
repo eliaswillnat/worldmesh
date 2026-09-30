@@ -117,7 +117,7 @@ let communityWorlds: WorldEntry[] = communityWorldsStatic as WorldEntry[];
 const ALL_WORLDS: WorldEntry[] = [...communityWorlds, ...DEMO_WORLDS];
 
 import { ImageCropper } from './cropper';
-import { initAccount } from './account';
+import { getUsername, initAccount } from './account';
 
 initAccount();
 
@@ -418,6 +418,7 @@ async function enterWalkMode(): Promise<void> {
       worlds: ALL_WORLDS,
       light: walkIsLight(),
       presenceEndpoint: PRESENCE_ENDPOINT,
+      playerName: getUsername,
       onPresenceCount: (count) => {
         if (count === null) {
           delete walkOnline.dataset.count;

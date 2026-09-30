@@ -61,6 +61,11 @@ export function openAccountDialog(): void {
   if (!user && !providers) void loadProviders();
 }
 
+/** The signed-in visitor's username, or null for guests. */
+export function getUsername(): string | null {
+  return user?.username ?? null;
+}
+
 export function initAccount(): void {
   button.addEventListener('click', openAccountDialog);
   dialog.addEventListener('click', (event) => {

@@ -33,6 +33,8 @@ export interface LobbyOptions {
   light?: boolean;
   /** WebSocket base URL of the presence server. Leave empty for single-player. */
   presenceEndpoint?: string;
+  /** Name shown above this visitor for everyone else; null shows them as a guest. */
+  playerName?: () => string | null;
   /** Called with how many people are in the lobby, or null while offline. */
   onPresenceCount?: (count: number | null) => void;
   /** Called right before the page navigates into a world. */
@@ -203,7 +205,13 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   applyTheme();
 
   const presence = options.presenceEndpoint
-    ? new Presence(options.presenceEndpoint, 'lobby', scene, (count) => options.onPresenceCount?.(count))
+    ? new Presence(
+        options.presenceEndpoint,
+        'lobby',
+        scene,
+        (count) => options.onPresenceCount?.(count),
+        options.playerName,
+      )
     : undefined;
 
   // The citadel's walls (solid) and trim (just for looks). Rebuilt whenever
