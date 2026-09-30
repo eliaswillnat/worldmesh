@@ -24,6 +24,8 @@ APPLE_PRIVATE_KEY=
 # AUTH_FROM_EMAIL=WorldMesh <accounts@worldmesh.net>
 # Avatar Wallet (docs/avatar-wallet.md). Off until AVATAR_SECRET is set.
 AVATAR_SECRET=dev-only-avatar-secret-change-me-dev-only
+# Verified walk mode names. Use the same value in workers/presence/.dev.vars.
+PRESENCE_SECRET=dev-only-presence-secret-change-me-dev-only
 # VRoid Hub app with redirect URI http://localhost:5170/api/account/avatar/callback/vroid
 VROID_CLIENT_ID=
 VROID_CLIENT_SECRET=

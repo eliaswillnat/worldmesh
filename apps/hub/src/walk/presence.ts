@@ -50,6 +50,10 @@ export class Presence implements NetworkAdapter {
   private closed = false;
   private lastSent = 0;
   private lastPayload = '';
+  /** Bumped by every connect and disconnect, so a connect waiting on its ticket can tell it was superseded. */
+  private connectGen = 0;
+  /** The name the current connection asked for a ticket for; null when it connected as a guest. */
+  private ticketFor: string | null = null;
 
   constructor(
     private endpoint: string,
@@ -59,6 +63,11 @@ export class Presence implements NetworkAdapter {
     private getName: () => string | null = () => null,
     /** Made-up name shown instead of the username in private mode. */
     private getAlias: () => string | null = () => null,
+    /**
+     * A ticket proving getName()'s username to the presence server, or null.
+     * Without one, the server shows this visitor as a guest.
+     */
+    private getTicket: () => Promise<string | null> = async () => null,
   ) {
     this.group.name = 'worldmesh:remote-players';
     scene.add(this.group);
@@ -68,18 +77,25 @@ export class Presence implements NetworkAdapter {
     this.unsubscribe = world.on('update', ({ state }) => this.sendLocalState(state));
     window.addEventListener('pagehide', this.handlePageHide);
     window.addEventListener('pageshow', this.handlePageShow);
-    this.connect();
+    void this.connect();
   }
 
   sendLocalState(state: PlayerState): void {
     const socket = this.socket;
     if (!socket || socket.readyState !== WebSocket.OPEN || !this.selfId) return;
 
+    // Signed in after this connection opened: reconnect with a ticket, or the name is refused.
+    const name = this.getName();
+    if (name && name !== this.ticketFor) {
+      this.rejoin();
+      return;
+    }
+
     const now = performance.now();
     if (now - this.lastSent < 1000 / SEND_RATE) return;
 
     const [x, y, z] = state.position;
-    const payload = JSON.stringify({ t: 's', p: [round(x), round(y), round(z)], r: round(state.facing), e: state.expression, n: this.getName() ?? '', a: this.getAlias() ?? '' });
+    const payload = JSON.stringify({ t: 's', p: [round(x), round(y), round(z)], r: round(state.facing), e: state.expression, n: name ?? '', a: this.getAlias() ?? '' });
     if (payload === this.lastPayload && now - this.lastSent < HEARTBEAT_MS) return;
 
     socket.send(payload);
@@ -114,7 +130,7 @@ export class Presence implements NetworkAdapter {
     window.clearTimeout(this.reconnectTimer);
     this.disconnect();
     this.backoff = 1000;
-    this.connect();
+    void this.connect();
   }
 
   detach(): void {
@@ -127,12 +143,27 @@ export class Presence implements NetworkAdapter {
     this.group.removeFromParent();
   }
 
-  private connect(): void {
+  private async connect(): Promise<void> {
     if (this.closed || this.socket) return;
+    const gen = ++this.connectGen;
+
+    const name = this.getName();
+    let ticket: string | null = null;
+    if (name) {
+      try {
+        ticket = await this.getTicket();
+      } catch {
+        // No ticket: join as a guest rather than not at all.
+      }
+      if (gen !== this.connectGen || this.closed || this.socket) return;
+    }
+    // Remembered even when no ticket came back, so a refusal does not retry on every frame.
+    this.ticketFor = name;
 
     let socket: WebSocket;
     try {
-      socket = new WebSocket(`${this.endpoint.replace(/\/$/, '')}/room/${this.room}`);
+      const query = ticket ? `?ticket=${encodeURIComponent(ticket)}` : '';
+      socket = new WebSocket(`${this.endpoint.replace(/\/$/, '')}/room/${this.room}${query}`);
     } catch {
       this.scheduleReconnect();
       return;
@@ -161,6 +192,7 @@ export class Presence implements NetworkAdapter {
   }
 
   private disconnect(): void {
+    this.connectGen++;
     const socket = this.socket;
     this.socket = null;
     this.selfId = null;
@@ -172,7 +204,7 @@ export class Presence implements NetworkAdapter {
   private scheduleReconnect(): void {
     if (this.closed) return;
     window.clearTimeout(this.reconnectTimer);
-    this.reconnectTimer = window.setTimeout(() => this.connect(), this.backoff);
+    this.reconnectTimer = window.setTimeout(() => void this.connect(), this.backoff);
     this.backoff = Math.min(this.backoff * 2, MAX_BACKOFF_MS);
   }
 
@@ -252,7 +284,7 @@ export class Presence implements NetworkAdapter {
   private handlePageShow = (event: PageTransitionEvent): void => {
     if (event.persisted && !this.closed) {
       this.backoff = 1000;
-      this.connect();
+      void this.connect();
     }
   };
 }

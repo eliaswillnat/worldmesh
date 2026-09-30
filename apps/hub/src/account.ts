@@ -75,6 +75,22 @@ export function getUsername(): string | null {
   return user?.username ?? null;
 }
 
+/**
+ * A short-lived ticket that proves this visitor's username to the walk mode
+ * presence server. Null for guests, and whenever the server will not issue one.
+ */
+export async function fetchPresenceTicket(): Promise<string | null> {
+  if (!user?.username) return null;
+  try {
+    const response = await fetch('/api/account/presence-ticket', { method: 'POST', credentials: 'same-origin' });
+    if (!response.ok) return null;
+    const { ticket } = (await response.json()) as { ticket?: unknown };
+    return typeof ticket === 'string' ? ticket : null;
+  } catch {
+    return null;
+  }
+}
+
 export function initAccount(): void {
   openWallet = initAvatarWallet(() => {
     if (dialog.open) renderDialog();

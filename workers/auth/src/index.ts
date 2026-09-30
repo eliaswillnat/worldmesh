@@ -8,7 +8,7 @@
  * same D1 tables on its own. The Avatar Wallet is equally separate from it.
  */
 import { AUTH_BASE_PATH, configuredProviders, getAuth, passwordOptions, type Env } from './auth';
-import { getMe, setUsername } from './account';
+import { getMe, getPresenceTicket, setUsername } from './account';
 import { AVATAR_BASE_PATH, handleAvatarRequest } from './avatars/routes';
 import { HttpError, json, secure } from './http';
 
@@ -16,7 +16,7 @@ export type { Env };
 
 /** Endpoints worth a per-IP limit in front of everything else. */
 const LIMITED =
-  /^\/api\/auth\/(sign-in|sign-up|callback|sign-out|request-password-reset|reset-password|send-verification-email)\b|^\/api\/account\/username$|^\/api\/account\/avatar\/(connect|callback|connections|select|disconnect|handoff|resolve)\b/;
+  /^\/api\/auth\/(sign-in|sign-up|callback|sign-out|request-password-reset|reset-password|send-verification-email)\b|^\/api\/account\/(?:username|presence-ticket)$|^\/api\/account\/avatar\/(connect|callback|connections|select|disconnect|handoff|resolve)\b/;
 
 export default {
   async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
@@ -51,6 +51,9 @@ export default {
       }
       if (url.pathname === '/api/account/username' && request.method === 'POST') {
         return secure(await setUsername(request, env, await getAuth(env)));
+      }
+      if (url.pathname === '/api/account/presence-ticket' && request.method === 'POST') {
+        return secure(await getPresenceTicket(request, env, await getAuth(env)));
       }
       throw new HttpError(404, 'Not found.');
     } catch (error) {

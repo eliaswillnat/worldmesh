@@ -30,6 +30,11 @@ export interface Env extends AppleCredentials, MailEnv {
   VROID_CLIENT_SECRET?: string;
   /** The scope configured on the VRoid Hub application; "default" unless changed there. */
   VROID_SCOPE?: string;
+  /**
+   * Shared with workers/presence: signs the tickets that prove a username in
+   * walk mode (POST /api/account/presence-ticket). Off until it is set.
+   */
+  PRESENCE_SECRET?: string;
 }
 
 export const AUTH_BASE_PATH = '/api/auth';

@@ -117,7 +117,7 @@ let communityWorlds: WorldEntry[] = communityWorldsStatic as WorldEntry[];
 const ALL_WORLDS: WorldEntry[] = [...communityWorlds, ...DEMO_WORLDS];
 
 import { ImageCropper } from './cropper';
-import { getUsername, initAccount } from './account';
+import { fetchPresenceTicket, getUsername, initAccount } from './account';
 
 initAccount();
 
@@ -435,6 +435,7 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
       light: walkIsLight(),
       presenceEndpoint: PRESENCE_ENDPOINT,
       playerName: getUsername,
+      presenceTicket: fetchPresenceTicket,
       private: loadWalkPrivate(),
       onPresenceCount: (count) => {
         if (count === null) {
