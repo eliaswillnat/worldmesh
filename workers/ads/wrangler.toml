@@ -1,0 +1,59 @@
+name = "worldmesh-ads"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+# Billboard advertising for the hub's walk-mode city: uploads, Stripe
+# (authorize now, capture on approval), moderation and the public billboard
+# state. Served on the hub's own hostname so the admin page can use the
+# WorldMesh session cookie. Every other /api path keeps going to the hub.
+routes = [
+  { pattern = "worldmesh.net/api/ads/*", zone_name = "worldmesh.net" },
+]
+workers_dev = false
+
+[vars]
+# The hub's public origin. Uploads must come from it; links in emails point at it.
+ADS_ORIGIN = "https://worldmesh.net"
+# The admin inbox for moderation emails (same default as the world submissions).
+NOTIFICATION_EMAIL = "elias.willnat@gmail.com"
+FROM_EMAIL = "WorldMesh <accounts@worldmesh.net>"
+# WorldMesh accounts allowed to approve or reject, comma-separated. Must be the
+# verified email of an account signed in through workers/auth. Defaults to
+# NOTIFICATION_EMAIL when empty.
+ADMIN_EMAILS = "elias.willnat@gmail.com"
+# Stripe publishable key (pk_live_... / pk_test_...). Public by design.
+STRIPE_PUBLISHABLE_KEY = ""
+
+# Reservation timeouts, lapsing authorizations, finished runs, retries and
+# media clean-up.
+[triggers]
+crons = ["*/5 * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "worldmesh"
+# The same database as workers/auth. Migrations are applied from there.
+database_id = "4eaef9b3-1429-4f73-b817-eb3da824e7a3"
+migrations_dir = "../../db/migrations"
+
+# Private: nothing in it is reachable except through this Worker, which only
+# serves an ad's files publicly once it is live.
+# Create with: npx wrangler r2 bucket create worldmesh-ads
+[[r2_buckets]]
+binding = "ADS_MEDIA"
+bucket_name = "worldmesh-ads"
+
+# Per-IP limit on new submissions (uploads). Approximate, per location.
+[[ratelimits]]
+name = "ADS_LIMITER"
+namespace_id = "1003"
+simple = { limit = 4, period = 60 }
+
+# Secrets (npx wrangler secret put <NAME> --config workers/ads/wrangler.toml):
+#   STRIPE_SECRET_KEY       sk_live_... (or a restricted key with PaymentIntents write)
+#   STRIPE_WEBHOOK_SECRET   whsec_... from the webhook endpoint
+#                           https://worldmesh.net/api/ads/stripe/webhook
+#   RESEND_API_KEY          the same Resend key the hub uses
+#   ADS_SIGNING_SECRET      random, at least 32 bytes; signs media links in emails
+#                           and the admin forms' CSRF tokens
+# Setup: docs/advertising.md. Local development reads them from .dev.vars.

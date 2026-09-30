@@ -18,9 +18,13 @@
   followers. See [accounts-and-federation.md](accounts-and-federation.md) for
   what is and is not interoperable yet.
 
+- Paid billboard advertising in walk mode (€2, authorized with Stripe and
+  captured only after manual review). See [advertising.md](advertising.md).
+
 ## Deliberately not built
 
-Social feeds, chat, friends, payments, moderation, AI generation,
+Social feeds, chat, friends, payments (beyond billboard ads), moderation
+(beyond reviewing ads), AI generation,
 multiplayer, inventory, creator dashboards. None of these are needed to prove the premise, and each one would
 push hosting costs onto WorldMesh instead of onto the creators.
 

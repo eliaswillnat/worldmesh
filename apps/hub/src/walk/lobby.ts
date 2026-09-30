@@ -15,6 +15,7 @@ import {
   HemisphereLight,
   PerspectiveCamera,
   PlaneGeometry,
+  Raycaster,
   RingGeometry,
   Scene,
   ShaderMaterial,
@@ -28,6 +29,11 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { CITY_GLOW_WHITE, SKY_HORIZON, applyCityTheme, createCity, createCityMaterials, createSky, flipInside, type City } from './city';
 import { Presence } from './presence';
 import { DOOR_HALF_SPAN, DOOR_TOP, Door, type DoorWorld } from './door';
+import { describeBillboard } from './layout';
+import { fetchBillboards } from '../ads/api';
+import { AdBillboards, type BillboardHit } from '../ads/billboards';
+import { AD_CONFIG, normalizeDestinationUrl } from '../ads/config';
+import { openAdModal } from '../ads/modal';
 
 /** A place in the lobby and the way to face there. */
 export interface WalkSpot {
@@ -56,6 +62,8 @@ export interface LobbyOptions {
   onEnterWorld?: (world: DoorWorld, returnTo: WalkSpot) => void;
   /** Called when someone picks an empty door to add their own world. */
   onAddWorld?: () => void;
+  /** Show the city's billboards as bookable ad space. On by default. */
+  ads?: boolean;
 }
 
 export interface Lobby {
@@ -131,6 +139,12 @@ const PRIVATE_FADE_MS = 260;
 const GHOST_OPACITY = 0.38;
 const GHOST_SHIMMER = 0.08;
 const GHOST_GLOW = 0x5cc8ff;
+/** Billboards further than this are not picked by the crosshair or a tap. */
+const BILLBOARD_RANGE = 95;
+/** How often the billboard under the crosshair is looked up, in seconds. */
+const FOCUS_INTERVAL = 0.1;
+/** Billboard bookings are refreshed this often while walking. */
+const BILLBOARD_REFRESH_MS = 60_000;
 
 /**
  * The floor is one mirror plane whose shader also draws the grid. Drawing the
@@ -257,6 +271,16 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   mirror.rotation.x = -Math.PI / 2;
   scene.add(mirror);
   const floorUniforms = (mirror.material as ShaderMaterial).uniforms;
+
+  // The towers' screens: ad space, bookable from inside the world.
+  const adsEnabled = options.ads !== false;
+  const billboards = new AdBillboards({
+    light,
+    touch: window.matchMedia?.('(pointer: coarse)').matches ?? false,
+    maxTextureSize: renderer.capabilities.maxTextureSize,
+    anisotropy: Math.min(4, renderer.capabilities.getMaxAnisotropy()),
+  });
+  scene.add(billboards.group);
   applyTheme();
 
   // The name presence sends right now. It only changes together with a
@@ -325,6 +349,20 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   });
   container.appendChild(addPrompt);
 
+  // Offered while a billboard is under the crosshair (or centred on a phone).
+  const adPrompt = document.createElement('button');
+  adPrompt.type = 'button';
+  adPrompt.className = 'walk-add-prompt walk-ad-prompt';
+  adPrompt.addEventListener('click', (event) => {
+    event.stopPropagation();
+    if (focused) activateBillboard(focused);
+  });
+  container.appendChild(adPrompt);
+  let focused: BillboardHit | null = null;
+  let sinceFocus = 0;
+  let adModal: { close(): void } | null = null;
+  let billboardFetch: AbortController | null = null;
+
   const world = createWorldMesh({
     scene,
     camera,
@@ -370,6 +408,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         nearEmpty = near;
         addPrompt.classList.toggle('visible', near !== null);
       }
+      updateBillboardFocus(dt, near !== null);
+      billboards.update(dt, camera);
       floorUniforms.uPlayer.value.set(x, z);
       sky.position.set(x, 0, z);
       // Keep the finite floor under the player. The grid is drawn in world
@@ -432,6 +472,110 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     if (nearEmpty) addWorld();
   });
 
+  // Pointer: clicking or tapping a billboard. While the mouse is captured
+  // there is no cursor, so a click aims where the camera looks.
+  const raycaster = new Raycaster();
+  const pointer = new Vector2();
+  let pressAt: { x: number; y: number; time: number } | null = null;
+  const handlePointerDown = (event: PointerEvent) => {
+    pressAt = { x: event.clientX, y: event.clientY, time: performance.now() };
+    if (document.pointerLockElement !== renderer.domElement || adModal || event.button !== 0) return;
+    const hit = billboardAt(0, 0);
+    if (hit) activateBillboard(hit);
+  };
+  const handlePointerUp = (event: PointerEvent) => {
+    const press = pressAt;
+    pressAt = null;
+    if (!press || document.pointerLockElement === renderer.domElement || adModal) return;
+    // A tap, not a drag to look around or a push on the joystick.
+    const moved = Math.hypot(event.clientX - press.x, event.clientY - press.y);
+    if (moved > 10 || performance.now() - press.time > 400) return;
+    const rect = renderer.domElement.getBoundingClientRect();
+    const hit = billboardAt(
+      ((event.clientX - rect.left) / rect.width) * 2 - 1,
+      -((event.clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    if (hit) activateBillboard(hit);
+  };
+
+  /** The billboard at a point on screen, unless a wall or tower is in front of it. */
+  function billboardAt(ndcX: number, ndcY: number): BillboardHit | null {
+    if (!adsEnabled || !city) return null;
+    raycaster.setFromCamera(pointer.set(ndcX, ndcY), camera);
+    raycaster.far = BILLBOARD_RANGE;
+    return billboards.pick(raycaster, [...wall, ...trim, ...city.occluders]);
+  }
+
+  /** Follow the crosshair (the middle of the screen on phones) a few times a second. */
+  function updateBillboardFocus(dt: number, doorPrompt: boolean): void {
+    sinceFocus += dt;
+    if (sinceFocus < FOCUS_INTERVAL) return;
+    sinceFocus = 0;
+    const active = !adModal && !warping && !doorPrompt && (document.pointerLockElement === renderer.domElement || isTouch);
+    const hit = active ? billboardAt(0, 0) : null;
+    const same = hit?.slot === focused?.slot && hit?.kind === focused?.kind;
+    focused = hit;
+    billboards.setFocus(hit?.slot ?? null);
+    if (same) return;
+    adPrompt.classList.toggle('visible', !!hit);
+    if (!hit) return;
+    const verb = isTouch ? 'Tap' : 'Click';
+    if (hit.kind === 'empty') {
+      adPrompt.textContent = `${verb} to advertise here · ${AD_CONFIG.priceLabel}`;
+    } else if (hit.kind === 'reserved') {
+      adPrompt.textContent = 'Reserved · an ad is in review';
+    } else {
+      const host = hit.ad ? safeHost(hit.ad.url) : null;
+      adPrompt.textContent = host ? `Ad · ${verb} to visit ${host} ↗` : 'Ad';
+    }
+  }
+
+  /** Clicked or tapped: book an empty billboard, or visit an ad's website. */
+  function activateBillboard(hit: BillboardHit): void {
+    if (adModal || warping) return;
+    if (hit.kind === 'ad' && hit.ad) {
+      // Checked again here, whatever the server said: only plain https links open.
+      const url = normalizeDestinationUrl(hit.ad.url);
+      if (!url) return;
+      document.exitPointerLock?.();
+      window.open(url, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    if (hit.kind !== 'empty') return;
+    const { plan } = hit.slot;
+    // Free the mouse and stop the controls before the form takes over.
+    document.exitPointerLock?.();
+    focused = null;
+    billboards.setFocus(null);
+    adPrompt.classList.remove('visible');
+    adModal = openAdModal({
+      slot: { id: plan.id, width: plan.width, height: plan.height, wide: plan.wide, description: describeBillboard(plan.id) },
+      light,
+      onClose: () => {
+        adModal = null;
+      },
+      onSubmitted: () => void refreshBillboards(),
+    });
+  }
+
+  /** Which billboards carry ads, and which are held for one in review. */
+  async function refreshBillboards(): Promise<void> {
+    if (!adsEnabled || disposed) return;
+    billboardFetch?.abort();
+    const controller = new AbortController();
+    billboardFetch = controller;
+    try {
+      billboards.setStates(await fetchBillboards(controller.signal));
+    } catch {
+      // Offline or the ads service is down: screens stay as they were.
+    }
+  }
+  const billboardTimer = window.setInterval(() => {
+    if (document.visibilityState === 'visible') void refreshBillboards();
+  }, BILLBOARD_REFRESH_MS);
+  void refreshBillboards();
+  renderer.domElement.addEventListener('pointerdown', handlePointerDown);
+  renderer.domElement.addEventListener('pointerup', handlePointerUp);
 
   // Coming back with the browser's back button can restore this page as it
   // was left: mid-warp and standing in a doorway. Step the visitor back out.
@@ -573,6 +717,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     // Lift the shaded sides so white stays white, not grey.
     wallMaterial.emissive.set(light ? CITY_GLOW_WHITE : 0x000000);
     applyCityTheme(cityMaterials, light);
+    billboards.setTheme(light);
   }
 
   function setWorlds(worlds: DoorWorld[]): void {
@@ -756,10 +901,12 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   /** The city only depends on how wide the citadel is. */
   function buildCity(outer: number): void {
     if (city && city.group.userData.outer === outer) return;
+    billboards.setSlots([]);
     city?.dispose();
     city = createCity(outer, cityMaterials);
     city.group.userData.outer = outer;
     scene.add(city.group);
+    billboards.setSlots(adsEnabled ? city.billboards : []);
     ground.scale.setScalar(city.radius + 2);
     randomDoor.place(city.entrance.x, city.entrance.z, 0, 0);
   }
@@ -768,8 +915,15 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     disposed = true;
     window.clearTimeout(warpTimer);
     window.clearTimeout(privateTimer);
+    window.clearInterval(billboardTimer);
+    billboardFetch?.abort();
+    adModal?.close();
+    billboards.dispose();
+    adPrompt.remove();
     window.removeEventListener('pageshow', handlePageShow);
     window.removeEventListener('resize', handleResize);
+    renderer.domElement.removeEventListener('pointerdown', handlePointerDown);
+    renderer.domElement.removeEventListener('pointerup', handlePointerUp);
     world.dispose();
     for (const door of [...doors.values(), ...emptyDoors, randomDoor]) door.dispose();
     doors.clear();
@@ -789,6 +943,14 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     renderer.forceContextLoss();
     renderer.domElement.remove();
     flash.remove();
+  }
+}
+
+function safeHost(url: string): string | null {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return null;
   }
 }
 
