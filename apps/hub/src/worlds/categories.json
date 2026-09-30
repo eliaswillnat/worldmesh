@@ -1,0 +1,26 @@
+{
+  "categories": [
+    {
+      "id": "explore",
+      "name": "Explore",
+      "tagline": "Places to wander",
+      "color": "#8fd3c7",
+      "default": true,
+      "keywords": ["explore", "wander", "village", "forest", "medieval", "island", "town", "nature", "walk", "sky", "open world", "city"]
+    },
+    {
+      "id": "games",
+      "name": "Games",
+      "tagline": "Play something",
+      "color": "#f0b45c",
+      "keywords": ["game", "play", "surf", "race", "racing", "puzzle", "arcade", "shooter", "platformer", "jump", "score", "level", "wave"]
+    },
+    {
+      "id": "space",
+      "name": "Space",
+      "tagline": "Orbit and beyond",
+      "color": "#a3adff",
+      "keywords": ["space", "mars", "orbit", "planet", "star", "station", "galaxy", "moon", "cosmos", "astronaut", "rocket"]
+    }
+  ]
+}

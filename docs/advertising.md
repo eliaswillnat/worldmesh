@@ -1,5 +1,10 @@
 # Billboard advertising
 
+> The plaza buildings that carried these screens were replaced by the tower
+> city ([tower-city.md](tower-city.md)), which has no screens yet, so walk mode
+> currently shows no billboards. Everything below still works and comes back
+> once the towers hand out billboard slots and ads are enabled (see below).
+
 The towers around the citadel in the hub's walk mode carry screens. Each one is
 a billboard anyone can book: €2, reviewed by hand, then shown for 30 days.
 
@@ -14,7 +19,7 @@ see an empty billboard → click + → upload → preview → authorize €2 →
 | Where | What |
 | --- | --- |
 | `apps/hub/src/walk/layout.ts` | Where towers and screens are, as pure numbers. Gives every screen a permanent ID (`f07-main`: ring, tower, slot). Shared with the Worker. |
-| `apps/hub/src/walk/city.ts` | Builds the towers from the layout; screens are handed out as billboard slots. |
+| `apps/hub/src/walk/city.ts` | The billboard slot type. The buildings that used to carry the screens are gone (see the note above). |
 | `apps/hub/src/ads/billboards.ts` | Three.js: blank screens with a dashed outline and "+", reserved screens, image and muted video ads with an "Ad" label, picking, video budget. |
 | `apps/hub/src/ads/modal.ts` | The form: upload, preview, details, consent, Stripe Payment Element, "submitted for review". |
 | `apps/hub/src/ads/config.ts` | **Every tunable**: price, currency, run length, reservation timeout, file types and size limits, text limits, URL rules. Shared with the Worker. |

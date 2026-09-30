@@ -26,7 +26,7 @@ import {
 } from 'three';
 import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { CITY_GLOW_WHITE, SKY_HORIZON, applyCityTheme, createCity, createCityMaterials, createSky, flipInside, type City } from './city';
+import { CITY_GLOW_WHITE, SKY_HORIZON, applyCityTheme, createCityMaterials, createSky, flipInside } from './city';
 import { Presence } from './presence';
 import { DOOR_HALF_SPAN, DOOR_TOP, Door, type DoorWorld } from './door';
 import { describeBillboard } from './layout';
@@ -34,6 +34,9 @@ import { fetchBillboards } from '../ads/api';
 import { AdBillboards, type BillboardHit } from '../ads/billboards';
 import { AD_CONFIG, normalizeDestinationUrl } from '../ads/config';
 import { openAdModal } from '../ads/modal';
+import type { SignalSource } from '../discovery/ranking';
+import { TowerCity } from '../towers/towerCity';
+import type { WorldRecordInput } from '../worlds/listing';
 
 /** A place in the lobby and the way to face there. */
 export interface WalkSpot {
@@ -41,8 +44,11 @@ export interface WalkSpot {
   yaw: number;
 }
 
+/** A listed world: what its door needs, plus what the tower city files it under. */
+export type LobbyWorld = DoorWorld & WorldRecordInput;
+
 export interface LobbyOptions {
-  worlds: DoorWorld[];
+  worlds: LobbyWorld[];
   /** Walk out of the door behind this spot instead of starting in the middle of the hall. */
   start?: WalkSpot | null;
   /** Draw the lobby white with dark lines instead of black with light ones. */
@@ -68,11 +74,13 @@ export interface LobbyOptions {
    * (`AD_CONFIG.enabled` / `VITE_ADS_ENABLED`).
    */
   ads?: boolean;
+  /** Visit counts and the like, for ranking worlds in the towers. */
+  signals?: SignalSource;
 }
 
 export interface Lobby {
-  /** Add doors for worlds that were not listed yet. */
-  setWorlds(worlds: DoorWorld[]): void;
+  /** Add doors (and tower listings) for worlds that were not listed yet. */
+  setWorlds(worlds: LobbyWorld[]): void;
   /**
    * Switch between the dark and light lobby. Purely local: other visitors
    * keep whatever their own device prefers.
@@ -149,6 +157,10 @@ const BILLBOARD_RANGE = 95;
 const FOCUS_INTERVAL = 0.1;
 /** Billboard bookings are refreshed this often while walking. */
 const BILLBOARD_REFRESH_MS = 60_000;
+/** The random door stands on the citadel's outer wall, this far along it from the gate. */
+const RANDOM_DOOR_ARC = 4.1;
+/** How far the random door stands out from the outer wall. */
+const RANDOM_DOOR_OUT = 0.3;
 
 /**
  * The floor is one mirror plane whose shader also draws the grid. Drawing the
@@ -249,7 +261,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   scene.fog = fog;
   let light = options.light ?? false;
 
-  const camera = new PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 320);
+  const camera = new PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 420);
   camera.layers.enable(FLOOR_LAYER);
 
   const hemisphere = new HemisphereLight(0xffffff, 0x202020, 1.6);
@@ -262,7 +274,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
   const wallMaterial = new MeshStandardMaterial({ side: DoubleSide, roughness: 0.7, metalness: 0 });
   const cityMaterials = createCityMaterials(renderer.capabilities.getMaxAnisotropy());
-  let city: City | null = null;
   let disposed = false;
   // Screen lettering uses the page font, which may still be loading.
   document.fonts?.load('700 100px Urbanist').then(() => {
@@ -275,13 +286,33 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   mirror.rotation.x = -Math.PI / 2;
   scene.add(mirror);
   const floorUniforms = (mirror.material as ShaderMaterial).uniforms;
+  // Up on a bridge or inside a tower the mirror would only cost a second
+  // render of the scene: a plain floor stands in for it there.
+  const plainFloor = new Mesh(new PlaneGeometry(FLOOR_SIZE, FLOOR_SIZE).rotateX(-Math.PI / 2), new MeshBasicMaterial());
+  plainFloor.position.y = -0.02;
+  plainFloor.visible = false;
+  scene.add(plainFloor);
+  const isTouch = window.matchMedia?.('(pointer: coarse)').matches ?? false;
 
-  // Billboard ads: only mount when deliberately enabled (off by default).
-  const adsEnabled = options.ads === true;
+  // The category towers around the plaza: floors of doors, elevators, bridges.
+  const towerCity = new TowerCity({
+    scene,
+    camera,
+    container,
+    light,
+    touch: isTouch,
+    interiorLayer: FLOOR_LAYER,
+    signals: options.signals,
+    onEnterWorld: (listing, returnTo) =>
+      travel({ name: listing.name, url: listing.url, cover: listing.cover, color: listing.color, creator: listing.creator.name }, returnTo, null),
+  });
+
+  // Billboard ads: only mount when deliberately enabled (off by default) and the city has screens for them.
+  const adsEnabled = options.ads === true && towerCity.billboards.length > 0;
   const billboards = adsEnabled
     ? new AdBillboards({
         light,
-        touch: window.matchMedia?.('(pointer: coarse)').matches ?? false,
+        touch: isTouch,
         maxTextureSize: renderer.capabilities.maxTextureSize,
         anisotropy: Math.min(4, renderer.capabilities.getMaxAnisotropy()),
       })
@@ -330,9 +361,10 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   scene.add(randomDoor.group);
   let nearEmpty: Door | null = null;
   let adding = false;
-  const isTouch = window.matchMedia?.('(pointer: coarse)').matches ?? false;
   let time = 0;
-  let warping: Door | null = null;
+  let warping = false;
+  // The lobby door being walked through, if it was one (not a tower door).
+  let warpDoor: Door | null = null;
   let warpTimer = 0;
   // Outside the door the visitor last went through, for when they come back.
   let returnTo: WalkSpot | null = null;
@@ -384,11 +416,13 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       ...wall,
       ...emptyDoors.map((door) => door.face),
       ...(exitDoor ? [exitDoor.face] : []),
-      ...(city?.colliders ?? []),
+      ...towerCity.colliders(),
     ],
     onUpdate: (dt, handle) => {
       time += dt;
       if (emerging) stepEmerging(dt);
+      towerCity.setBlocked(warping || emerging !== null || adModal !== null);
+      towerCity.update(dt);
       const [x, , z] = handle.getState().position;
       if (exitDoor && !emerging) {
         const { x: doorX, z: doorZ } = exitDoor.inFront(0);
@@ -417,24 +451,41 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       updateBillboardFocus(dt, near !== null);
       billboards?.update(dt, camera);
       floorUniforms.uPlayer.value.set(x, z);
-      sky.position.set(x, 0, z);
+      // The sky is centred on the camera, so it stays around it however high the towers take them.
+      sky.position.copy(camera.position);
       // Keep the finite floor under the player. The grid is drawn in world
       // space, so moving the plane does not move the lines.
       mirror.position.set(Math.round(x / 10) * 10, 0, Math.round(z / 10) * 10);
+      mirror.visible = towerCity.wantsMirror;
+      plainFloor.visible = !mirror.visible;
+      plainFloor.position.x = mirror.position.x;
+      plainFloor.position.z = mirror.position.z;
       presence?.update(dt);
       ghost?.shimmer(time);
     },
   });
   if (alias) ghost = makeGhost(world.avatar);
+  towerCity.attach(world);
 
-  /** Walking through a door: flash, then travel to the world's own URL. */
+  /** Walking through a lobby door: flash, then travel to the world's own URL. */
   function enter(door: Door): void {
     const target = door.random ? pickRandomWorld() : door.world;
     if (!target) return;
-    warping = door;
     door.surge();
     const out = door.inFront(RETURN_STEP);
-    returnTo = { position: [out.x, 0, out.z], yaw: out.yaw };
+    travel(target, { position: [out.x, 0, out.z], yaw: out.yaw }, door);
+  }
+
+  /**
+   * Into a world, from a lobby door or a tower door: flash, then go to its
+   * own URL. `spot` is where to come back out.
+   */
+  function travel(target: DoorWorld, spot: WalkSpot, door: Door | null): void {
+    if (warping) return;
+    warping = true;
+    warpDoor = door;
+    towerCity.setBlocked(true);
+    returnTo = spot;
     options.onEnterWorld?.(target, returnTo);
     document.exitPointerLock?.();
     flash.classList.add('active');
@@ -472,20 +523,23 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     window.setTimeout(() => options.onAddWorld?.(), 0);
   }
 
-  // Keyboard: E next to an empty door. The runtime reports E as a plain
-  // interaction when no portal of its own is in reach.
+  // Keyboard: E at a tower door, lift or elevator, or next to an empty door.
+  // The runtime reports E as a plain interaction when no portal of its own is in reach.
   world.on('interact', () => {
+    if (towerCity.interact()) return;
     if (nearEmpty) addWorld();
   });
 
-  // Pointer: clicking or tapping a billboard. While the mouse is captured
-  // there is no cursor, so a click aims where the camera looks.
+  // Pointer: clicking or tapping a tower door or a billboard. While the mouse
+  // is captured there is no cursor, so a click aims where the camera looks.
   const raycaster = new Raycaster();
   const pointer = new Vector2();
   let pressAt: { x: number; y: number; time: number } | null = null;
   const handlePointerDown = (event: PointerEvent) => {
     pressAt = { x: event.clientX, y: event.clientY, time: performance.now() };
     if (document.pointerLockElement !== renderer.domElement || adModal || event.button !== 0) return;
+    // A click aims where the camera looks: a tower door there, or a billboard.
+    if (towerCity.tap(0, 0)) return;
     const hit = billboardAt(0, 0);
     if (hit) activateBillboard(hit);
   };
@@ -497,19 +551,19 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     const moved = Math.hypot(event.clientX - press.x, event.clientY - press.y);
     if (moved > 10 || performance.now() - press.time > 400) return;
     const rect = renderer.domElement.getBoundingClientRect();
-    const hit = billboardAt(
-      ((event.clientX - rect.left) / rect.width) * 2 - 1,
-      -((event.clientY - rect.top) / rect.height) * 2 + 1,
-    );
+    const ndcX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    const ndcY = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    if (towerCity.tap(ndcX, ndcY)) return;
+    const hit = billboardAt(ndcX, ndcY);
     if (hit) activateBillboard(hit);
   };
 
   /** The billboard at a point on screen, unless a wall or tower is in front of it. */
   function billboardAt(ndcX: number, ndcY: number): BillboardHit | null {
-    if (!adsEnabled || !billboards || !city) return null;
+    if (!adsEnabled || !billboards) return null;
     raycaster.setFromCamera(pointer.set(ndcX, ndcY), camera);
     raycaster.far = BILLBOARD_RANGE;
-    return billboards.pick(raycaster, [...wall, ...trim, ...city.occluders]);
+    return billboards.pick(raycaster, [...wall, ...trim]);
   }
 
   /** Follow the crosshair (the middle of the screen on phones) a few times a second. */
@@ -582,19 +636,20 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         if (document.visibilityState === 'visible') void refreshBillboards();
       }, BILLBOARD_REFRESH_MS)
     : 0;
-  if (adsEnabled) {
-    void refreshBillboards();
-    renderer.domElement.addEventListener('pointerdown', handlePointerDown);
-    renderer.domElement.addEventListener('pointerup', handlePointerUp);
-  }
+  if (adsEnabled) void refreshBillboards();
+  // Always listening: taps and clicks also enter tower doors.
+  renderer.domElement.addEventListener('pointerdown', handlePointerDown);
+  renderer.domElement.addEventListener('pointerup', handlePointerUp);
 
   // Coming back with the browser's back button can restore this page as it
   // was left: mid-warp and standing in a doorway. Step the visitor back out.
   const handlePageShow = (event: PageTransitionEvent) => {
     if (!event.persisted) return;
     window.clearTimeout(warpTimer);
-    warping?.settle();
-    warping = null;
+    warpDoor?.settle();
+    warpDoor = null;
+    warping = false;
+    towerCity.setBlocked(false);
     adding = false;
     flash.classList.remove('active');
     if (returnTo) emerge(returnTo);
@@ -634,6 +689,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   /** Come back out of the door behind `spot`, walking a few steps into the hall. */
   function emerge(spot: WalkSpot): void {
     const [x, , z] = spot.position;
+    // Up in a tower: stream in that floor before standing on it.
+    towerCity.syncTo(spot.position);
     // Light up the door they come out of, if it is there yet: community
     // worlds may still be loading.
     const door = [...doors.values(), randomDoor].find((candidate) => {
@@ -709,16 +766,18 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     light = isLight;
     applyTheme();
     for (const door of [...doors.values(), ...emptyDoors, randomDoor]) door.setTheme(light);
+    towerCity.setTheme(light);
   }
 
   function applyTheme(): void {
-    // Light: a plain blue sky over white towers. Dark: black, lit by the screens.
+    // Light: a plain blue sky over pale towers. Dark: black, lit by the towers' windows and doors.
+    // The fog reaches past the towers so they read across the plaza, and swallows their tops.
     background.set(light ? SKY_HORIZON : 0x000000);
     renderer.setClearColor(background);
     sky.visible = light;
     fog.color.copy(background);
-    fog.near = light ? 60 : 35;
-    fog.far = light ? 240 : 170;
+    fog.near = light ? 70 : 45;
+    fog.far = light ? 300 : 230;
     hemisphere.groundColor.set(light ? 0xdde5f2 : 0x202020);
     hemisphere.intensity = light ? 2 : 1.6;
     floorUniforms.uBackground.value.set(light ? 0xf1f4fa : 0x000000);
@@ -728,10 +787,12 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     // Lift the shaded sides so white stays white, not grey.
     wallMaterial.emissive.set(light ? CITY_GLOW_WHITE : 0x000000);
     applyCityTheme(cityMaterials, light);
+    (plainFloor.material as MeshBasicMaterial).color.set(light ? 0xf1f4fa : 0x000000);
     billboards?.setTheme(light);
   }
 
-  function setWorlds(worlds: DoorWorld[]): void {
+  function setWorlds(worlds: LobbyWorld[]): void {
+    towerCity.setWorlds(worlds);
     for (const entry of worlds) {
       if (!known.has(entry.url)) known.set(entry.url, entry);
     }
@@ -894,6 +955,16 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     solid.push(place(new BoxGeometry(bannerW + 0.6, bannerH + 0.6, 1.4), 0, bannerBottom + bannerH / 2, outer - 0.35));
     glow.push(place(new BoxGeometry(bannerW + 0.6, 0.05, 0.05), 0, bannerBottom - 0.35, outer + 0.36));
 
+    // The random door's backing and porch, on the outer wall beside the gate.
+    const doorAngle = RANDOM_DOOR_ARC / outer;
+    const around = (r: number) => [Math.sin(doorAngle) * r, Math.cos(doorAngle) * r] as const;
+    const [backX, backZ] = around(outer - 0.05);
+    solid.push(place(new BoxGeometry(2.4, DOOR_TOP + 2.2, 0.5), backX, (DOOR_TOP + 2.2) / 2, backZ, doorAngle));
+    const [porchX, porchZ] = around(outer + 0.55);
+    solid.push(place(new BoxGeometry(2.4, 0.16, 0.9), porchX, DOOR_TOP + 0.75, porchZ, doorAngle));
+    const [lineX, lineZ] = around(outer + 1.0);
+    glow.push(place(new BoxGeometry(2.4, 0.04, 0.04), lineX, DOOR_TOP + 0.67, lineZ, doorAngle));
+
     const add = (geometries: BufferGeometry[], material: MeshStandardMaterial | typeof cityMaterials.glow) => {
       const mesh = new Mesh(mergeGeometries(geometries), material);
       for (const geometry of geometries) geometry.dispose();
@@ -909,17 +980,15 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     trim.push(banner);
   }
 
-  /** The city only depends on how wide the citadel is. */
+  /** The towers stand around the citadel, so they follow its width. */
   function buildCity(outer: number): void {
-    if (city && city.group.userData.outer === outer) return;
-    billboards?.setSlots([]);
-    city?.dispose();
-    city = createCity(outer, cityMaterials);
-    city.group.userData.outer = outer;
-    scene.add(city.group);
-    billboards?.setSlots(city.billboards);
-    ground.scale.setScalar(city.radius + 2);
-    randomDoor.place(city.entrance.x, city.entrance.z, 0, 0);
+    towerCity.layout(outer);
+    billboards?.setSlots([...towerCity.billboards]);
+    ground.scale.setScalar(towerCity.groundRadius + 2);
+    // The random door: on the outer wall beside the gate, facing the towers.
+    const angle = RANDOM_DOOR_ARC / outer;
+    const r = outer + RANDOM_DOOR_OUT;
+    randomDoor.place(Math.sin(angle) * r, Math.cos(angle) * r, Math.sin(angle) * r * 2, Math.cos(angle) * r * 2);
   }
 
   function dispose(): void {
@@ -928,15 +997,14 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     window.clearTimeout(privateTimer);
     if (billboardTimer) window.clearInterval(billboardTimer);
     billboardFetch?.abort();
+    towerCity.dispose();
     adModal?.close();
     billboards?.dispose();
     adPrompt.remove();
     window.removeEventListener('pageshow', handlePageShow);
     window.removeEventListener('resize', handleResize);
-    if (adsEnabled) {
-      renderer.domElement.removeEventListener('pointerdown', handlePointerDown);
-      renderer.domElement.removeEventListener('pointerup', handlePointerUp);
-    }
+    renderer.domElement.removeEventListener('pointerdown', handlePointerDown);
+    renderer.domElement.removeEventListener('pointerup', handlePointerUp);
     world.dispose();
     for (const door of [...doors.values(), ...emptyDoors, randomDoor]) door.dispose();
     doors.clear();
@@ -944,8 +1012,9 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     addPrompt.remove();
     for (const mesh of [...wall, ...trim]) mesh.geometry.dispose();
     wallMaterial.dispose();
-    city?.dispose();
     cityMaterials.dispose();
+    plainFloor.geometry.dispose();
+    (plainFloor.material as MeshBasicMaterial).dispose();
     sky.geometry.dispose();
     sky.material.dispose();
     ground.geometry.dispose();

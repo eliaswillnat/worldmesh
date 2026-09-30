@@ -1,0 +1,11 @@
+{
+  "towers": [
+    { "category": "explore", "angle": 0 },
+    { "category": "games", "angle": -62 },
+    { "category": "space", "angle": 62 }
+  ],
+  "bridges": [
+    { "from": "explore", "to": "games", "level": 1 },
+    { "from": "explore", "to": "space", "level": 2 }
+  ]
+}
