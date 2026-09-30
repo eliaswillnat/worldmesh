@@ -62,7 +62,11 @@ export interface LobbyOptions {
   onEnterWorld?: (world: DoorWorld, returnTo: WalkSpot) => void;
   /** Called when someone picks an empty door to add their own world. */
   onAddWorld?: () => void;
-  /** Show the city's billboards as bookable ad space. On by default. */
+  /**
+   * Mount the billboard ads UI (outlines, +, prompts, modal, live ads).
+   * Off by default; pass true only when ads are deliberately enabled
+   * (`AD_CONFIG.enabled` / `VITE_ADS_ENABLED`).
+   */
   ads?: boolean;
 }
 
@@ -272,15 +276,17 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   scene.add(mirror);
   const floorUniforms = (mirror.material as ShaderMaterial).uniforms;
 
-  // The towers' screens: ad space, bookable from inside the world.
-  const adsEnabled = options.ads !== false;
-  const billboards = new AdBillboards({
-    light,
-    touch: window.matchMedia?.('(pointer: coarse)').matches ?? false,
-    maxTextureSize: renderer.capabilities.maxTextureSize,
-    anisotropy: Math.min(4, renderer.capabilities.getMaxAnisotropy()),
-  });
-  scene.add(billboards.group);
+  // Billboard ads: only mount when deliberately enabled (off by default).
+  const adsEnabled = options.ads === true;
+  const billboards = adsEnabled
+    ? new AdBillboards({
+        light,
+        touch: window.matchMedia?.('(pointer: coarse)').matches ?? false,
+        maxTextureSize: renderer.capabilities.maxTextureSize,
+        anisotropy: Math.min(4, renderer.capabilities.getMaxAnisotropy()),
+      })
+    : null;
+  if (billboards) scene.add(billboards.group);
   applyTheme();
 
   // The name presence sends right now. It only changes together with a
@@ -357,7 +363,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     event.stopPropagation();
     if (focused) activateBillboard(focused);
   });
-  container.appendChild(adPrompt);
+  if (adsEnabled) container.appendChild(adPrompt);
   let focused: BillboardHit | null = null;
   let sinceFocus = 0;
   let adModal: { close(): void } | null = null;
@@ -409,7 +415,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         addPrompt.classList.toggle('visible', near !== null);
       }
       updateBillboardFocus(dt, near !== null);
-      billboards.update(dt, camera);
+      billboards?.update(dt, camera);
       floorUniforms.uPlayer.value.set(x, z);
       sky.position.set(x, 0, z);
       // Keep the finite floor under the player. The grid is drawn in world
@@ -500,7 +506,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
   /** The billboard at a point on screen, unless a wall or tower is in front of it. */
   function billboardAt(ndcX: number, ndcY: number): BillboardHit | null {
-    if (!adsEnabled || !city) return null;
+    if (!adsEnabled || !billboards || !city) return null;
     raycaster.setFromCamera(pointer.set(ndcX, ndcY), camera);
     raycaster.far = BILLBOARD_RANGE;
     return billboards.pick(raycaster, [...wall, ...trim, ...city.occluders]);
@@ -508,6 +514,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
   /** Follow the crosshair (the middle of the screen on phones) a few times a second. */
   function updateBillboardFocus(dt: number, doorPrompt: boolean): void {
+    if (!adsEnabled || !billboards) return;
     sinceFocus += dt;
     if (sinceFocus < FOCUS_INTERVAL) return;
     sinceFocus = 0;
@@ -532,7 +539,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
   /** Clicked or tapped: book an empty billboard, or visit an ad's website. */
   function activateBillboard(hit: BillboardHit): void {
-    if (adModal || warping) return;
+    if (!adsEnabled || !billboards || adModal || warping) return;
     if (hit.kind === 'ad' && hit.ad) {
       // Checked again here, whatever the server said: only plain https links open.
       const url = normalizeDestinationUrl(hit.ad.url);
@@ -560,7 +567,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
   /** Which billboards carry ads, and which are held for one in review. */
   async function refreshBillboards(): Promise<void> {
-    if (!adsEnabled || disposed) return;
+    if (!adsEnabled || !billboards || disposed) return;
     billboardFetch?.abort();
     const controller = new AbortController();
     billboardFetch = controller;
@@ -570,12 +577,16 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       // Offline or the ads service is down: screens stay as they were.
     }
   }
-  const billboardTimer = window.setInterval(() => {
-    if (document.visibilityState === 'visible') void refreshBillboards();
-  }, BILLBOARD_REFRESH_MS);
-  void refreshBillboards();
-  renderer.domElement.addEventListener('pointerdown', handlePointerDown);
-  renderer.domElement.addEventListener('pointerup', handlePointerUp);
+  const billboardTimer = adsEnabled
+    ? window.setInterval(() => {
+        if (document.visibilityState === 'visible') void refreshBillboards();
+      }, BILLBOARD_REFRESH_MS)
+    : 0;
+  if (adsEnabled) {
+    void refreshBillboards();
+    renderer.domElement.addEventListener('pointerdown', handlePointerDown);
+    renderer.domElement.addEventListener('pointerup', handlePointerUp);
+  }
 
   // Coming back with the browser's back button can restore this page as it
   // was left: mid-warp and standing in a doorway. Step the visitor back out.
@@ -717,7 +728,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     // Lift the shaded sides so white stays white, not grey.
     wallMaterial.emissive.set(light ? CITY_GLOW_WHITE : 0x000000);
     applyCityTheme(cityMaterials, light);
-    billboards.setTheme(light);
+    billboards?.setTheme(light);
   }
 
   function setWorlds(worlds: DoorWorld[]): void {
@@ -901,12 +912,12 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   /** The city only depends on how wide the citadel is. */
   function buildCity(outer: number): void {
     if (city && city.group.userData.outer === outer) return;
-    billboards.setSlots([]);
+    billboards?.setSlots([]);
     city?.dispose();
     city = createCity(outer, cityMaterials);
     city.group.userData.outer = outer;
     scene.add(city.group);
-    billboards.setSlots(adsEnabled ? city.billboards : []);
+    billboards?.setSlots(city.billboards);
     ground.scale.setScalar(city.radius + 2);
     randomDoor.place(city.entrance.x, city.entrance.z, 0, 0);
   }
@@ -915,15 +926,17 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     disposed = true;
     window.clearTimeout(warpTimer);
     window.clearTimeout(privateTimer);
-    window.clearInterval(billboardTimer);
+    if (billboardTimer) window.clearInterval(billboardTimer);
     billboardFetch?.abort();
     adModal?.close();
-    billboards.dispose();
+    billboards?.dispose();
     adPrompt.remove();
     window.removeEventListener('pageshow', handlePageShow);
     window.removeEventListener('resize', handleResize);
-    renderer.domElement.removeEventListener('pointerdown', handlePointerDown);
-    renderer.domElement.removeEventListener('pointerup', handlePointerUp);
+    if (adsEnabled) {
+      renderer.domElement.removeEventListener('pointerdown', handlePointerDown);
+      renderer.domElement.removeEventListener('pointerup', handlePointerUp);
+    }
     world.dispose();
     for (const door of [...doors.values(), ...emptyDoors, randomDoor]) door.dispose();
     doors.clear();

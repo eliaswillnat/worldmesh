@@ -20,6 +20,7 @@ interface WorldEntry {
 }
 
 import communityWorldsStatic from './community.json';
+import { AD_CONFIG } from './ads/config';
 
 const VIEWS_ENDPOINT = import.meta.env.VITE_VIEWS_ENDPOINT as string | undefined;
 const viewCounts: Record<string, number> = {};
@@ -121,9 +122,21 @@ import { getUsername, initAccount } from './account';
 
 initAccount();
 
+/**
+ * Whether walk-mode billboard ads are mounted. Defaults to `AD_CONFIG.enabled`
+ * (off). Set `VITE_ADS_ENABLED=true` in the hub build env to turn them on
+ * without editing source, or `=false` to force them off.
+ */
+function adsEnabled(): boolean {
+  const env = import.meta.env.VITE_ADS_ENABLED as string | undefined;
+  if (env === 'true') return true;
+  if (env === 'false') return false;
+  return AD_CONFIG.enabled;
+}
+
 // Back from a bank redirect in the middle of paying for a billboard ad (rare:
 // card checks normally happen inside the payment form). Confirm with the server.
-if (new URLSearchParams(window.location.search).has('ad_return')) {
+if (adsEnabled() && new URLSearchParams(window.location.search).has('ad_return')) {
   void import('./ads/modal')
     .then(({ resumeReturnedSubmission }) => resumeReturnedSubmission())
     .then((message) => {
@@ -446,6 +459,7 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
       presenceEndpoint: PRESENCE_ENDPOINT,
       playerName: getUsername,
       private: loadWalkPrivate(),
+      ads: adsEnabled(),
       onPresenceCount: (count) => {
         if (count === null) {
           delete walkOnline.dataset.count;

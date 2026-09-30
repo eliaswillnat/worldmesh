@@ -13,6 +13,13 @@ const DAY = 24 * 60 * MINUTE;
 export type AdMediaType = 'image' | 'video';
 
 export const AD_CONFIG = {
+  /**
+   * Hub walk-mode ads UI and live-ad rendering. Off by default so visitors do
+   * not see bookable billboards until the ads Worker is deployed and this is
+   * flipped on. The hub also honours `VITE_ADS_ENABLED=true|false` at build
+   * time (see docs/advertising.md). The Worker ignores this flag.
+   */
+  enabled: false,
   /** What one advertisement costs, in the smallest currency unit. */
   priceCents: 200,
   currency: 'eur',

@@ -32,6 +32,7 @@ All in `apps/hub/src/ads/config.ts`; the hub and the Worker both read it.
 
 | Setting | Default |
 | --- | --- |
+| **Hub ads UI** (`enabled`) | **Off** — billboards are not mounted until deliberately enabled (see below) |
 | Price | €2 (`priceCents: 200`, `currency: 'eur'`) |
 | Run length after approval | 30 days |
 | Unpaid reservation | 15 minutes |
@@ -42,6 +43,20 @@ All in `apps/hub/src/ads/config.ts`; the hub and the Worker both read it.
 | Advertiser name / email / URL | ≤ 80 / 254 / 2048 characters |
 | Unpaid reservations per client | 2 |
 | Files kept after a submission ends | 30 days (1 day if abandoned before payment) |
+
+### Turning the hub ads UI on
+
+Walk mode hides bookable billboards (no +, no “Click to advertise”, no ad
+modal, no live-ad rendering) until this flag is on. Flip it when the ads Worker
+is deployed and ready to take submissions:
+
+1. **Build env (preferred for production):** set `VITE_ADS_ENABLED=true` on the
+   hub Pages project, then redeploy the hub.
+2. **Config constant:** set `enabled: true` in `AD_CONFIG` in
+   `apps/hub/src/ads/config.ts`, then rebuild the hub.
+
+`VITE_ADS_ENABLED=false` forces the UI off even if the config constant is true.
+Leave the env unset to follow `AD_CONFIG.enabled` (default off).
 
 ## How a submission moves
 
@@ -167,7 +182,10 @@ the Stripe dashboard if appropriate.
 5. **Deploy**: `cd workers/ads && npx wrangler deploy`. The route
    `worldmesh.net/api/ads/*` sits in front of the Pages project like the auth
    and federation routes.
-6. **Admin account**: sign in on worldmesh.net with the account whose verified
+6. **Turn on the hub ads UI**: set `VITE_ADS_ENABLED=true` on the hub Pages
+   project (or `AD_CONFIG.enabled = true`) and redeploy the hub. Until then,
+   walk mode does not mount bookable billboards.
+7. **Admin account**: sign in on worldmesh.net with the account whose verified
    email is in `ADMIN_EMAILS` (Google works well).
 
 ## Local development
@@ -177,8 +195,10 @@ cp workers/ads/.dev.vars.example workers/ads/.dev.vars   # Stripe test keys etc.
 npm run db:migrate:local
 npm run dev:ads                                          # port 8790
 stripe listen --forward-to localhost:8790/api/ads/stripe/webhook   # prints the whsec_ for .dev.vars
-npm run dev:hub                                          # proxies /api/ads to 8790
+VITE_ADS_ENABLED=true npm run dev:hub                    # proxies /api/ads to 8790; ads UI on
 ```
 
-To moderate locally, also run `npm run dev:auth` and sign in on localhost.
+Without `VITE_ADS_ENABLED=true`, the hub builds with ads off (tower screens are
+not bookable). To moderate locally, also run `npm run dev:auth` and sign in on
+localhost.
 Tests: `npm test --prefix workers/ads` (in-memory D1 and R2, a fake Stripe).
