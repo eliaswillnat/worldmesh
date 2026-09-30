@@ -266,7 +266,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
   const hemisphere = new HemisphereLight(0xffffff, 0x202020, 1.6);
   scene.add(hemisphere);
-  const sky = createSky(camera);
+  const sky = createSky();
   scene.add(sky);
   const sun = new DirectionalLight(0xffffff, 1.8);
   sun.position.set(4, 10, 6);
