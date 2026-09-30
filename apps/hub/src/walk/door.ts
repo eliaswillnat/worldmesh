@@ -240,6 +240,8 @@ export class Door {
     // Painted on the wall above the doorway; far enough out that long names
     // clear the wall's curve.
     this.label.position.set(0, DOOR_HEIGHT + FRAME + 0.6, 0.25);
+    // The random door has a porch canopy over it: sit its name on top.
+    if (random) this.label.position.set(0, DOOR_HEIGHT + FRAME + 1.55, 0.3);
     this.group.add(this.label);
 
     this.setTheme(light);

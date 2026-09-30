@@ -14,6 +14,7 @@ import {
   SRGBColorSpace,
   ShaderMaterial,
   SphereGeometry,
+  Vector3,
   type BufferGeometry,
 } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
@@ -565,6 +566,8 @@ export interface City {
   readonly colliders: Mesh[];
   /** Where the plaza ends: the ground only needs to reach this far. */
   readonly radius: number;
+  /** Ground spot of the doorway built into the tower next to the gate, facing the citadel. */
+  readonly entrance: { x: number; z: number };
   setTheme(light: boolean): void;
   dispose(): void;
 }
@@ -694,17 +697,27 @@ export function createCity(citadelRadius: number, materials: CityMaterials): Cit
   const builder = new Builder(frame);
   const front = citadelRadius + PLAZA_DEPTH;
 
+  const entrance = { x: 0, z: 0 };
   const ring = (distance: number, spacing: number, scale: number, reachable: boolean) => {
     const count = Math.max(8, Math.round((Math.PI * 2 * distance) / spacing));
     for (let i = 0; i < count; i++) {
+      // The first tower of the front ring, just beside the gate's view, gets a doorway.
+      const doorway = reachable && i === 0;
       // Half a slot off so the gate (angle 0) looks down a gap between towers.
       const angle = ((i + 0.5) / count) * Math.PI * 2 + (rand() - 0.5) * 0.08;
       const depth = 7 + rand() * 3;
       const d = distance + depth / 2 + rand() * 3;
       // Local +Z faces the citadel.
       frame.makeRotationY(angle + Math.PI).setPosition(Math.sin(angle) * d, 0, Math.cos(angle) * d);
-      if (rand() < 0.25) roundTower(builder, rand, scale, tall, reachable);
-      else blockTower(builder, rand, scale, depth, tall, wide, reachable);
+      if (rand() < 0.25 && !doorway) roundTower(builder, rand, scale, tall, reachable);
+      else {
+        const doorZ = blockTower(builder, rand, scale, depth, tall, wide, reachable, doorway);
+        if (doorway) {
+          const spot = new Vector3(0, 0, doorZ).applyMatrix4(frame);
+          entrance.x = spot.x;
+          entrance.z = spot.z;
+        }
+      }
     }
   };
 
@@ -733,6 +746,7 @@ export function createCity(citadelRadius: number, materials: CityMaterials): Cit
     group,
     colliders,
     radius,
+    entrance,
     setTheme: (light) => applyCityTheme(materials, light),
     dispose() {
       for (const child of group.children) {
@@ -755,7 +769,8 @@ function blockTower(
   tall: () => number,
   wide: () => number,
   reachable: boolean,
-): void {
+  doorway = false,
+): number {
   const w = 6 + rand() * 3;
   const h = (16 + rand() * 16) * scale;
   const d = depth;
@@ -776,7 +791,8 @@ function blockTower(
 
   // Screen: tall, framed by a white bezel.
   const screenW = w - 1.8;
-  const screenH = Math.min(screenW * 2, h - 5);
+  // Leave room over the doorway's porch.
+  const screenH = Math.min(screenW * 2, h - (doorway ? 7 : 5));
   const screenY = h - 2 - screenH / 2;
   b.box(screenW + 0.5, screenH + 0.5, 0.3, 0, screenY - screenH / 2 - 0.25, d / 2 + 0.1);
   b.screen(tall(), screenW, screenH, 0, screenY, d / 2 + 0.27);
@@ -789,8 +805,23 @@ function blockTower(
   b.box(wingW, wingH, d - 1, wingX, 0, 1);
   b.box(strip, wingH, strip, wingX + side * (wingW / 2 + 0.02), 0, d / 2 + 0.52, b.glow);
 
-  // Low wide screen in front of the base on some towers.
-  if (rand() < 0.45) {
+  // A porch on the plinth: two cheeks and a canopy, open at the front where
+  // the door stands. Returns how far out the door stands.
+  const porchDepth = 2.6;
+  const porchZ = d / 2 + porchDepth / 2;
+  const doorZ = d / 2 + porchDepth - 0.2;
+  if (doorway) {
+    for (const cheek of [-1, 1]) {
+      b.box(0.4, 3.3, porchDepth, cheek * 1.1, 0, porchZ);
+      b.box(strip, 3.3, strip, cheek * 1.32, 0, d / 2 + porchDepth + 0.02, b.glow);
+      if (reachable) b.collider(0.4, 3.3, porchDepth, cheek * 1.1, porchZ);
+    }
+    b.box(2.8, 0.45, porchDepth + 0.2, 0, 3.2, porchZ + 0.1);
+    b.box(2.8, strip, strip, 0, 3.2, d / 2 + porchDepth + 0.22, b.glow);
+  }
+
+  // Low wide screen in front of the base on some towers (never over the porch).
+  if (rand() < 0.45 && !doorway) {
     const lowW = w + wingW - 1.5;
     const lowH = lowW / 2;
     const lowX = wingX / 2;
@@ -808,6 +839,7 @@ function blockTower(
     b.collider(w + 3, h, d + 2, 0, 0.4);
     b.collider(wingW, wingH, d - 1, wingX, 1);
   }
+  return doorZ;
 }
 
 /** A white drum with a screen wrapped around its face and light rings. */

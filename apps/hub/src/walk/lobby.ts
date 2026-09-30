@@ -76,9 +76,6 @@ const EMPTY_DOOR_REACH = 2.4;
 /** A tap on an empty door this far away still counts. */
 const TAP_RANGE = 40;
 const WARP_MS = 450;
-/** The random door stands out on the plaza, this far past the gate. */
-const RANDOM_DOOR_OUT = 8;
-const RANDOM_DOOR_SIDE = 6;
 
 /**
  * The floor is one mirror plane whose shader also draws the grid. Drawing the
@@ -231,7 +228,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const doors = new Map<string, Door>();
   // Doors with no world behind them yet. Re-laid out with every list change.
   const emptyDoors: Door[] = [];
-  // Outside the gate: a glowing blue door to a random listed world.
+  // Outside, set into the tower beside the gate: a glowing blue door to a
+  // random listed world.
   const randomDoor = new Door(null, light, true);
   scene.add(randomDoor.group);
   let nearEmpty: Door | null = null;
@@ -526,10 +524,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     for (const side of [-1, 1]) block(0.4, GATE_HEIGHT, passageDepth, side * (halfGate + 0.1), 0, passageZ, true);
     block(GATE_WIDTH + 0.4, 0.2, passageDepth, 0, GATE_HEIGHT, passageZ, false);
 
-    // Off to one side of the way out, turned toward the gate so it is the
-    // first thing you see stepping outside, without walking into it by accident.
-    randomDoor.place(RANDOM_DOOR_SIDE, outer + RANDOM_DOOR_OUT, 0, outer);
-
     buildTrim(radius, outer);
     buildCity(outer);
     world.refreshColliders();
@@ -612,6 +606,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     city.group.userData.outer = outer;
     scene.add(city.group);
     ground.scale.setScalar(city.radius + 2);
+    randomDoor.place(city.entrance.x, city.entrance.z, 0, 0);
   }
 
   function dispose(): void {
