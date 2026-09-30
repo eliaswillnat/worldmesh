@@ -283,9 +283,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const wall: Mesh[] = [];
   const trim: Mesh[] = [];
   // Standing on something is required once there are walls to bump into.
-  const ground = new Mesh(new CircleGeometry(1, 48));
+  const ground = new Mesh(
+    new CircleGeometry(1, 48),
+    new MeshStandardMaterial({ opacity: 0, transparent: true, depthWrite: false }),
+  );
   ground.rotation.x = -Math.PI / 2;
-  ground.visible = false;
   scene.add(ground);
 
   const known = new Map<string, DoorWorld>();
@@ -780,6 +782,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     sky.geometry.dispose();
     sky.material.dispose();
     ground.geometry.dispose();
+    (ground.material as MeshStandardMaterial).dispose();
     mirror.dispose();
     mirror.geometry.dispose();
     renderer.dispose();
