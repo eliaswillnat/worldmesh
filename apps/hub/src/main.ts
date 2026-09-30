@@ -118,7 +118,7 @@ let communityWorlds: WorldEntry[] = communityWorldsStatic as WorldEntry[];
 const ALL_WORLDS: WorldEntry[] = [...communityWorlds, ...DEMO_WORLDS];
 
 import { ImageCropper } from './cropper';
-import { getUsername, initAccount } from './account';
+import { getUsername, initAccount, isSignedIn } from './account';
 
 initAccount();
 
@@ -590,7 +590,12 @@ async function fetchCommunityWorlds(): Promise<void> {
   try {
     const res = await fetch('/api/worlds');
     if (!res.ok) return;
-    communityWorlds = (await res.json()) as WorldEntry[];
+    const listed = (await res.json()) as WorldEntry[];
+    if (!Array.isArray(listed)) return;
+    // The directory is D1 now; community.json stays as a floor, so a world
+    // that hasn't been copied into D1 yet still shows.
+    const urls = new Set(listed.map((w) => w.url));
+    communityWorlds = [...listed, ...(communityWorldsStatic as WorldEntry[]).filter((w) => !urls.has(w.url))];
     ALL_WORLDS.length = 0;
     ALL_WORLDS.push(...communityWorlds, ...DEMO_WORLDS);
     render();
@@ -679,8 +684,9 @@ submitWorldBtn.addEventListener('click', async () => {
   }
 
   const email = creatorEmailInput.value.trim();
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    setStatus('Please enter a valid email address (required to manage or remove your world).', true);
+  // Signed in, the world is linked to the account; an email is only needed for guests.
+  if ((email || !isSignedIn()) && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    setStatus(isSignedIn() ? 'That email does not look right.' : 'Log in, or enter your email so we can reach you about your world.', true);
     creatorEmailInput.focus();
     return;
   }
@@ -723,17 +729,51 @@ submitWorldBtn.addEventListener('click', async () => {
     cover: coverToUse,
     creator: creatorName,
     portfolio,
-    email,
+    email: email || undefined,
     submittedAt: new Date().toISOString(),
   };
 
+  submitWorldBtn.disabled = true;
+  const result = await submitWorld(entry);
+  submitWorldBtn.disabled = false;
+  if (result.error) {
+    setStatus(result.error, true);
+    return;
+  }
+
   setAddingMode(false);
-  setStatus('Submitted! Your world will appear once approved.');
+  setStatus(
+    result.owned
+      ? 'Submitted! It is linked to your account and will appear once approved.'
+      : 'Submitted! Your world will appear once approved.',
+  );
 
   saveSubmissionRecord(entry);
-  requestScreenshot(entry);
-  notifySubmission(entry);
+  if (!entry.cover?.startsWith('https://')) requestScreenshot({ ...entry, cover: undefined });
+  if (result.fallback) notifySubmission(entry);
 });
+
+/**
+ * Stores the submission in D1 (workers/auth), owned by the signed-in account.
+ * If that endpoint isn't deployed yet, falls back to the old email-only path.
+ */
+async function submitWorld(entry: WorldEntry): Promise<{ owned?: boolean; error?: string; fallback?: boolean }> {
+  try {
+    const res = await fetch('/api/worlds', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ ...entry, botTrap: botTrap?.value ?? '' }),
+    });
+    const isJson = (res.headers.get('Content-Type') ?? '').includes('application/json');
+    if (!isJson || res.status === 404 || res.status === 405) return { fallback: true };
+    const data = (await res.json()) as { world?: { owned?: boolean }; error?: string };
+    if (!res.ok) return { error: data.error ?? 'Submitting failed. Please try again.' };
+    return { owned: !!data.world?.owned };
+  } catch {
+    return { fallback: true };
+  }
+}
 
 async function saveSubmissionRecord(entry: WorldEntry): Promise<void> {
   const endpoint = SCREENSHOT_ENDPOINT || '/api/screenshot';

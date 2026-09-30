@@ -7,9 +7,10 @@ neither.
 ```
 hub (Cloudflare Pages, worldmesh.net)
  │  /api/auth/*, /api/account/*        ──►  workers/auth        Better Auth: Google, Apple, GitHub, Discord
+ │  /api/worlds, /api/worlds/*         ──►  workers/auth        world directory, submissions, approval
  │  /.well-known/webfinger, /ap/*, /@* ──►  workers/federation  WebFinger + ActivityPub
  │  /api/ads/*                         ──►  workers/ads         billboard ads (see advertising.md)
- │  everything else                    ──►  Pages (static + existing /api Functions, KV)
+ │  everything else                    ──►  Pages (static + /api/notify, /api/cover Functions)
  ▼
 D1 "worldmesh"  (db/migrations)  — canonical WorldMesh data
  ▲
@@ -132,8 +133,36 @@ an https tunnel.
 | `avatar_connection` | Avatar Wallet | a connected VRoid Hub / AT Protocol account (VRoid tokens AES-GCM encrypted; none for AT Protocol) |
 | `avatar` | Avatar Wallet | the one avatar a user picked: provider id, name, thumbnail URL. Never the model |
 
-The public directory still comes from KV (`/api/worlds`). The `world` table is
-empty until worlds are linked to accounts; nothing is copied automatically.
+## Worlds (`workers/auth`, `src/worlds.ts`)
+
+The world directory and submissions live in D1's `world` table:
+
+- `POST /api/worlds` (same-origin, rate-limited, honeypot) stores a `pending`
+  row. Signed in, `owner_user_id` is the account; guests must give an email,
+  kept in `contact_email` and never returned by the API. The admin gets an
+  email with an approval link carrying a one-time token (only its SHA-256 is
+  stored).
+- `GET /api/worlds/approve?id&token` shows a confirm button (mail scanners
+  follow GET links); its `POST` sets the row `published` and emails the owner.
+- `GET /api/worlds` lists `published` rows in the shape `community.json` has
+  always had, plus `owner` (the username). Public, cached 60 s at the edge.
+- `GET /api/account/worlds` lists the signed-in user's own worlds with status.
+
+The hub still ships `community.json` and shows any of its worlds the API does
+not return, so the list never shrinks during a rollout. If `POST /api/worlds`
+is not deployed, the hub falls back to the old email-only `/api/notify`.
+
+Moving the old worlds in (once, after migration `0006`):
+
+```bash
+node scripts/backfill-worlds.mjs [--kv-namespace-id <WORLDS id>] > backfill.sql
+npx wrangler d1 execute worldmesh --remote --config workers/auth/wrangler.toml --file backfill.sql
+```
+
+It copies `community.json` and, given the namespace, KV `approved:`/`pending:`
+entries (pending ones get new approval links on stderr). Re-running is safe.
+A world whose email matches a verified account is owned by it.
+
 Worlds could become actors later (`ap_actor.kind = 'world'` is reserved) without
 changing creator actors.
 
@@ -185,8 +214,9 @@ Not done yet — needed before calling this complete interoperability:
   avatar. Remote servers refresh actors on their own schedule meanwhile.
 - **Account deletion** for WorldMesh users should send `Delete(actor)`; the
   schema cascades locally but nothing is broadcast yet.
-- **A self-service publish flow.** Linking worlds to accounts in the hub, and
-  calling the announce step when a world is approved, is the next piece.
+- **Announcing on approval.** Submitted worlds are linked to accounts and
+  published into D1 (above); calling the announce step when one is approved
+  is the next piece.
 - **Moderation**: blocking domains/actors, handling `Flag` reports.
 - **Scale**: the free plan's 10 ms CPU and 50 subrequests per invocation cap a
   delivery run at ~8 inboxes; followers spread over many servers take several
