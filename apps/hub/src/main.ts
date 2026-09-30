@@ -267,19 +267,77 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-// ── Mobile: the add form opens from a top-right toggle ───────────────────────
+// ── Mobile: a top-right menu with Add world, account and appearance ──────────
 const mobileQuery = window.matchMedia('(max-width: 600px)');
-const mobileAddToggle = document.querySelector<HTMLButtonElement>('#mobile-add-toggle')!;
+const menuToggle = document.querySelector<HTMLButtonElement>('#mobile-menu-toggle')!;
+const menu = document.querySelector<HTMLDivElement>('#mobile-menu')!;
+const accountButton = document.querySelector<HTMLButtonElement>('#account-button')!;
+const menuAccount = document.querySelector<HTMLButtonElement>('#menu-account')!;
 let userScrolled = false;
 for (const ev of ['touchstart', 'wheel', 'keydown'] as const) {
   window.addEventListener(ev, () => { userScrolled = true; }, { once: true, passive: true });
 }
 
-mobileAddToggle.addEventListener('click', () => {
+function setMenuOpen(open: boolean): void {
+  document.documentElement.classList.toggle('menu-open', open);
+  menuToggle.setAttribute('aria-expanded', String(open));
+  if (open) {
+    // Mirror the account button's current state (Log in, or the signed-in name).
+    menuAccount.textContent = accountButton.getAttribute('aria-label')?.startsWith('Account') ? 'Account & settings' : 'Log in';
+  }
+}
+
+menuToggle.addEventListener('click', () => {
+  if (document.documentElement.classList.contains('mobile-adding')) setMobileAdding(false);
+  else setMenuOpen(!document.documentElement.classList.contains('menu-open'));
+});
+document.addEventListener('click', (e) => {
+  const t = e.target as Node;
+  if (!menu.contains(t) && !menuToggle.contains(t)) setMenuOpen(false);
+});
+document.querySelector('#menu-add')!.addEventListener('click', () => {
+  setMenuOpen(false);
+  setMobileAdding(true);
+});
+menuAccount.addEventListener('click', () => {
+  setMenuOpen(false);
+  accountButton.click();
+});
+
+// Appearance: System follows the device; Light/Dark are remembered per browser.
+const THEME_KEY = 'worldmesh.theme';
+type ThemeChoice = 'system' | 'light' | 'dark';
+const themeButtons = document.querySelectorAll<HTMLButtonElement>('[data-theme-choice]');
+
+function applyThemeChoice(choice: ThemeChoice): void {
+  const root = document.documentElement;
+  if (choice === 'system') delete root.dataset.theme;
+  else root.dataset.theme = choice;
+  for (const meta of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) {
+    meta.dataset.default ??= meta.content;
+    const color = choice === 'system' ? meta.dataset.default : choice === 'light' ? '#ffffff' : '#000000';
+    meta.dataset.original = color;
+    if (!walkRoot) meta.content = color;
+  }
+  for (const b of themeButtons) b.setAttribute('aria-pressed', String(b.dataset.themeChoice === choice));
+  applyWalkTheme();
+}
+
+for (const b of themeButtons) {
+  b.addEventListener('click', () => {
+    const choice = b.dataset.themeChoice as ThemeChoice;
+    try {
+      if (choice === 'system') localStorage.removeItem(THEME_KEY);
+      else localStorage.setItem(THEME_KEY, choice);
+    } catch { /* Storage blocked: the choice lasts this visit. */ }
+    applyThemeChoice(choice);
+  });
+}
+
+function setMobileAdding(open: boolean): void {
   userScrolled = true;
-  const open = document.documentElement.classList.toggle('mobile-adding');
-  mobileAddToggle.textContent = open ? 'Close' : 'Add world';
-  mobileAddToggle.setAttribute('aria-expanded', String(open));
+  document.documentElement.classList.toggle('mobile-adding', open);
+  menuToggle.setAttribute('aria-label', open ? 'Close' : 'Menu');
   if (open) {
     document.querySelector('main')!.scrollTo({ top: 0, behavior: 'smooth' });
     input.focus({ preventScroll: true });
@@ -288,7 +346,7 @@ mobileAddToggle.addEventListener('click', () => {
     setStatus('');
     snapFirstCard();
   }
-});
+}
 
 // Cards fill the space below the pinned header.
 const siteHeader = document.querySelector<HTMLElement>('#site-header')!;
@@ -336,6 +394,8 @@ function applyWalkTheme(): void {
 }
 
 lightScheme.addEventListener('change', applyWalkTheme);
+
+applyThemeChoice((document.documentElement.dataset.theme as ThemeChoice | undefined) ?? 'system');
 
 walkToggle.addEventListener('click', () => {
   if (walkRoot) exitWalkMode();
