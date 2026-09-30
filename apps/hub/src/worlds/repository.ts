@@ -76,6 +76,12 @@ export class MemoryWorldRepository implements WorldRepository {
     return this.byId.get(id);
   }
 
+  /** True when some listing already uses this URL, ignoring slash and host case. */
+  hasUrl(url: string): boolean {
+    const key = canonicalUrl(url);
+    return this.listings.some((listing) => canonicalUrl(listing.url) === key);
+  }
+
   inCategory(categoryId: string): readonly WorldListing[] {
     return this.byCategory.get(categoryId) ?? [];
   }

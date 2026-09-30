@@ -46,7 +46,7 @@ export const PALETTES: Record<'dark' | 'light', CityPalette> = {
     glass: 0x9fb4c8,
     shell: 0x24262b,
     shellLine: 0x121316,
-    shellGlow: 0xf0d9a8,
+    shellGlow: 0xffffff,
     interior: 0x2c2e33,
     shutter: 0x4a4d54,
     night: 1,

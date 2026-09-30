@@ -21,9 +21,10 @@ import { PlacementService } from '../discovery/service';
 import { flipInside, type BillboardSlot } from '../walk/city';
 import type { WalkSpot } from '../walk/lobby';
 import { CATEGORIES, type CategoryRegistry } from '../worlds/categories';
-import type { WorldListing, WorldRecordInput } from '../worlds/listing';
+import { canonicalUrl, type WorldListing, type WorldRecordInput } from '../worlds/listing';
 import { MemoryWorldRepository } from '../worlds/repository';
 import { BridgeManager } from './bridges';
+import { PathManager } from './paths';
 import { CardCache, createBadgeAtlas, createStatusAtlas } from './cards';
 import cityData from './city.json';
 import { resolveCityConfig, type CityConfig } from './config';
@@ -118,6 +119,7 @@ export class TowerCity {
   plan: CityPlan | null = null;
   readonly towers = new Map<string, TowerState>();
   bridges: BridgeManager | null = null;
+  paths: PathManager | null = null;
 
   private categories: CategoryRegistry;
   private data: CityData;
@@ -144,6 +146,10 @@ export class TowerCity {
   private rider: TowerState | null = null;
   private focus: DoorView | null = null;
   private focusKey = '';
+  /** An open slot in reach: a world can be placed here. */
+  private claimFocus: DoorView | null = null;
+  /** The lobby opens the place-a-world window. */
+  onClaimEmpty: (() => void) | null = null;
   private nearLift: { tower: TowerState; position: WallPosition } | null = null;
   private nearCall: TowerState | null = null;
   private travel: Travel | null = null;
@@ -319,6 +325,10 @@ export class TowerCity {
     const door = doors.find((candidate) => candidate.mesh === hit.object)!;
     const player = this.playerPosition();
     const distance = Math.hypot(door.center.x - player[0], door.center.z - player[2]);
+    if (!door.listing && distance <= TAP_REACH) {
+      this.onClaimEmpty?.();
+      return true;
+    }
     if (distance > TAP_REACH || !door.enterable) {
       // Too far to enter: light it up so they can find it.
       door.highlight = Math.max(door.highlight, 1.2);
@@ -535,6 +545,8 @@ export class TowerCity {
     }
     this.bridges = new BridgeManager(plan, this.config, this.materials, this.categories);
     this.group.add(this.bridges.group);
+    this.paths = new PathManager(plan, this.config, this.citadelOuter, this.light);
+    this.group.add(this.paths.group);
 
     // The edge of the city: an invisible fence, facing in.
     const r = plan.groundRadius;
@@ -556,6 +568,8 @@ export class TowerCity {
     this.towers.clear();
     this.bridges?.dispose();
     this.bridges = null;
+    this.paths?.dispose();
+    this.paths = null;
     this.fence?.geometry.dispose();
     this.fence = null;
     this.plan = null;
@@ -714,6 +728,7 @@ export class TowerCity {
     this.nearCall = null;
     const tower = this.location.tower;
     if (!tower || this.blocked || this.travel || tower === this.rider) {
+      this.claimFocus = null;
       this.setFocus(null);
       return;
     }
@@ -721,6 +736,7 @@ export class TowerCity {
     const floor = this.location.floor;
     const floorY = floorSurface(tower.plan.floors[floor], this.config);
     if (Math.abs(y - floorY) > 1.6) {
+      this.claimFocus = null;
       this.setFocus(null);
       return;
     }
@@ -733,21 +749,27 @@ export class TowerCity {
     let best: DoorView | null = null;
     let bestDepth = this.config.doorReach;
     for (const door of this.doorList()) {
-      if (door.towerId !== tower.plan.id || door.floor !== floor || !door.listing) continue;
+      if (door.towerId !== tower.plan.id || door.floor !== floor) continue;
       const depth = r - 0.14 - d * Math.cos(angle - door.angle);
       const lateral = d * Math.sin(angle - door.angle);
       if (depth < 0 || Math.abs(lateral) > this.config.doorWidth / 2 + 0.6) continue;
+      // Pressed right up against a world: through the door. An open slot is not a way through.
+      if (door.listing && door.enterable && depth < this.config.enterDepth && Math.abs(lateral) < this.config.doorWidth / 2 - 0.25) {
+        this.enterDoor(door, 'walk');
+        return;
+      }
       if (depth < bestDepth) {
         bestDepth = depth;
         best = door;
       }
-      // Pressed right up against it: through the door.
-      if (door.enterable && depth < this.config.enterDepth && Math.abs(lateral) < this.config.doorWidth / 2 - 0.25) {
-        this.enterDoor(door, 'walk');
-        return;
-      }
     }
-    this.setFocus(best);
+    if (best?.listing) {
+      this.claimFocus = null;
+      this.setFocus(best);
+    } else {
+      this.setFocus(null);
+      this.claimFocus = best;
+    }
 
     if (!best) {
       for (const position of tower.plan.floors[floor].positions) {
@@ -777,11 +799,53 @@ export class TowerCity {
     }
   }
 
+  /** The open slot in front of the player, if they can put a world in it. */
+  claimSlot(): { towerId: string; slotId: string; categoryId: string } | null {
+    const door = this.claimFocus;
+    if (!door?.slotId || !door.towerId || door.listing) return null;
+    const tower = this.towers.get(door.towerId);
+    if (!tower) return null;
+    return { towerId: door.towerId, slotId: door.slotId, categoryId: tower.plan.category.id };
+  }
+
+  /** True when this URL already has a door in any building. */
+  hasDoor(url: string): boolean {
+    return this.repository.hasUrl(url);
+  }
+
+  /**
+   * Put a world on an open slot in the building the player is in.
+   * Refuses when that URL already has a door somewhere.
+   */
+  placeClaim(slotId: string, world: { name: string; url: string; cover?: string }): boolean {
+    if (this.hasDoor(world.url)) return false;
+    const door = this.doorList().find((entry) => entry.slotId === slotId);
+    const tower = door?.towerId ? this.towers.get(door.towerId) : undefined;
+    if (!door?.slotId || !tower) return false;
+    const record: WorldRecordInput = {
+      name: world.name,
+      url: world.url,
+      cover: world.cover,
+      categories: [tower.plan.category.id],
+      source: 'submitted',
+      submittedAt: new Date().toISOString(),
+    };
+    this.repository.merge([record]);
+    const listing = this.repository.all().find((entry) => canonicalUrl(entry.url) === canonicalUrl(world.url));
+    if (!listing) return false;
+    this.rotation.pin(door.slotId, listing.id);
+    return true;
+  }
+
   /** E, a tap on the prompt, or the interact button. */
   private act(via: 'key' | 'tap'): boolean {
     if (this.blocked || this.travel) return false;
     if (this.focus?.enterable) {
       this.enterDoor(this.focus, via);
+      return true;
+    }
+    if (this.claimFocus) {
+      this.onClaimEmpty?.();
       return true;
     }
     if (this.nearLift) {
@@ -890,6 +954,8 @@ export class TowerCity {
       if (this.focus?.listing) {
         const name = this.focus.listing.name;
         prompt = this.focus.enterable ? (touch ? `Tap to enter ${name}` : `Walk in or press E · ${name}`) : 'Reassigning…';
+      } else if (this.claimFocus) {
+        prompt = touch ? 'Tap to put a world in this door' : 'Press E to put a world in this door';
       } else if (this.nearLift) {
         prompt = touch ? 'Tap to take the lift' : 'Press E to take the lift';
       } else if (this.nearCall) {
@@ -902,6 +968,7 @@ export class TowerCity {
 
   private applyTheme(): void {
     this.materials.setTheme(this.light);
+    this.paths?.setTheme(this.light);
     for (const tower of this.towers.values()) tower.shell.setTheme(this.light);
     for (const door of [...this.loaded, ...this.pool]) door.setTheme(this.light);
   }

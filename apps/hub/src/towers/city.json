@@ -2,10 +2,17 @@
   "towers": [
     { "category": "explore", "angle": 0 },
     { "category": "games", "angle": -62 },
-    { "category": "space", "angle": 62 }
+    { "category": "space", "angle": 62 },
+    { "category": "art", "angle": 124 },
+    { "category": "music", "angle": 180 },
+    { "category": "social", "angle": -124 }
   ],
   "bridges": [
     { "from": "explore", "to": "games", "level": 1 },
-    { "from": "explore", "to": "space", "level": 2 }
+    { "from": "explore", "to": "space", "level": 2 },
+    { "from": "space", "to": "art", "level": 1 },
+    { "from": "art", "to": "music", "level": 2 },
+    { "from": "music", "to": "social", "level": 1 },
+    { "from": "social", "to": "games", "level": 2 }
   ]
 }
