@@ -1,5 +1,6 @@
 import {
   BackSide,
+  type Camera,
   CanvasTexture,
   Color,
   DoubleSide,
@@ -35,14 +36,39 @@ const skyFragment = /* glsl */ `
   uniform vec3 uTop;
   uniform vec3 uHorizon;
   uniform float uCurve;
+  uniform float uGrain;
   varying vec3 vDirection;
+
+  float hash(vec3 p) {
+    p = fract(p * 0.3183099 + 0.1);
+    p *= 17.0;
+    return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+  }
+
+  float valueNoise(vec3 p) {
+    vec3 i = floor(p);
+    vec3 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(
+      mix(mix(hash(i), hash(i + vec3(1, 0, 0)), f.x), mix(hash(i + vec3(0, 1, 0)), hash(i + vec3(1, 1, 0)), f.x), f.y),
+      mix(mix(hash(i + vec3(0, 0, 1)), hash(i + vec3(1, 0, 1)), f.x), mix(hash(i + vec3(0, 1, 1)), hash(i + vec3(1, 1, 1)), f.x), f.y),
+      f.z);
+  }
+
   void main() {
-    float h = clamp(normalize(vDirection).y, 0.0, 1.0);
+    vec3 direction = normalize(vDirection);
+    float h = clamp(direction.y, 0.0, 1.0);
     // Light: pale at the horizon, a clean saturated blue overhead.
     // Dark: a faint grey at the horizon, deepening to black overhead.
     vec3 color = mix(uHorizon, uTop, pow(smoothstep(0.0, 0.75, h), uCurve));
     gl_FragColor = vec4(color, 1.0);
     #include <colorspace_fragment>
+    // A little roughness, fixed to the sky so it turns with the view instead of
+    // crawling on screen: soft mottling plus a fine grain, strongest near the horizon.
+    float mottle = valueNoise(direction * 6.0) * 0.6 + valueNoise(direction * 17.0) * 0.4 - 0.5;
+    float grain = hash(floor(direction * 420.0)) - 0.5;
+    float weight = mix(0.45, 1.0, 1.0 - h);
+    gl_FragColor.rgb += (mottle * 0.5 + grain) * uGrain * weight;
   }
 `;
 
@@ -54,8 +80,11 @@ export const SKY_HORIZON = 0xc4defb;
 export const SKY_TOP_DARK = 0x000000;
 export const SKY_HORIZON_DARK = 0x222429;
 
-/** A plain gradient dome. Move it with the player so it never gets closer. */
-export function createSky(): Mesh<SphereGeometry, ShaderMaterial> {
+/**
+ * A plain gradient dome. Move it with the player so it never gets closer.
+ * Its grain is drawn only for `viewer`: in the floor mirror it would read as specks on the floor.
+ */
+export function createSky(viewer: Camera): Mesh<SphereGeometry, ShaderMaterial> {
   const sky = new Mesh(
     new SphereGeometry(SKY_RADIUS, 32, 16),
     new ShaderMaterial({
@@ -65,6 +94,7 @@ export function createSky(): Mesh<SphereGeometry, ShaderMaterial> {
         uTop: { value: new Color(SKY_TOP) },
         uHorizon: { value: new Color(SKY_HORIZON) },
         uCurve: { value: 0.55 },
+        uGrain: { value: 0 },
       },
       side: BackSide,
       depthWrite: false,
@@ -74,6 +104,10 @@ export function createSky(): Mesh<SphereGeometry, ShaderMaterial> {
   sky.name = 'sky';
   sky.renderOrder = -1;
   sky.frustumCulled = false;
+  sky.userData.grain = 0;
+  sky.onBeforeRender = (_renderer, _scene, camera) => {
+    sky.material.uniforms.uGrain.value = camera === viewer ? sky.userData.grain : 0;
+  };
   return sky;
 }
 
@@ -88,6 +122,8 @@ export function applySkyTheme(sky: Mesh<SphereGeometry, ShaderMaterial>, light: 
   uniforms.uHorizon.value.set(skyHorizon(light));
   // The dark sky darkens more gradually, so the grey reads as a glow along the horizon.
   uniforms.uCurve.value = light ? 0.55 : 0.8;
+  // The dark sky is slightly rough rather than a perfectly smooth digital gradient.
+  sky.userData.grain = light ? 0 : 0.03;
 }
 
 // ── The citadel's banner ─────────────────────────────────────────────────────
