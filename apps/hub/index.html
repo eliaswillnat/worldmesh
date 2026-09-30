@@ -845,6 +845,40 @@
       .account-logout { color: var(--muted); }
       .account-message { font-size: 13px; color: var(--muted); }
       .account-message[data-error="true"] { color: #ff9a8a; }
+      /* Avatar Wallet (src/avatars.ts) */
+      .wallet-summary {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 12px;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+      }
+      .wallet-summary-text { flex: 1; min-width: 0; }
+      .wallet-summary-label { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--subtle); }
+      .wallet-summary-name { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
+      .wallet-summary-thumb { width: 40px; height: 40px; border-radius: 10px; object-fit: cover; flex: none; }
+      .wallet-thumb-blank { display: block; background: var(--border); }
+      .wallet-provider { display: flex; flex-direction: column; gap: 8px; padding-top: 6px; }
+      .wallet-provider-header { display: flex; align-items: baseline; gap: 8px; }
+      .wallet-provider-header h3 { margin: 0; font-size: 14px; font-weight: 600; }
+      .wallet-provider-account { flex: 1; min-width: 0; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .wallet-link { margin-left: auto; padding: 0; border: 0; background: none; font-size: 12px; color: var(--muted); text-decoration: underline; }
+      .wallet-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; max-height: 260px; overflow-y: auto; }
+      .wallet-tile {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 4px;
+        padding: 4px;
+        border-radius: 12px;
+        font-size: 11px;
+        min-width: 0;
+      }
+      .wallet-tile span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .wallet-tile-thumb { width: 100%; aspect-ratio: 1; border-radius: 8px; object-fit: cover; }
+      .wallet-tile[data-selected="true"], .wallet-none[data-selected="true"] { border-color: var(--text); box-shadow: 0 0 0 1px var(--text); }
+      .wallet-none { margin-top: 6px; }
       button:disabled { opacity: 0.6; cursor: default; }
       .account-icon { display: none; width: 18px; height: 18px; }
       @media (max-width: 600px) {

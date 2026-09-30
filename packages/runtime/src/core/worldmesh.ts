@@ -1,5 +1,8 @@
 import { Vector3 } from 'three';
 import { resolveAbilities } from '../abilities/abilities.js';
+import { parseAvatarDescriptor, type AvatarDescriptor } from '../avatar/descriptor.js';
+import { resolveWorldMeshAvatar, takeAvatarTicket } from '../avatar/handoff.js';
+import { loadAvatarModel } from '../avatar/loader.js';
 import { CameraRig } from '../camera/cameraRig.js';
 import { Input } from '../controls/input.js';
 import { CollisionWorld } from '../movement/collision.js';
@@ -23,6 +26,7 @@ import { Emitter } from './events.js';
 const MAX_STEP = 1 / 60;
 /** Never simulate more than this per frame, so a backgrounded tab does not catch up violently. */
 const MAX_FRAME = 0.1;
+const DEFAULT_HUB = 'https://worldmesh.net/';
 
 /**
  * Turn an ordinary Three.js scene into a WorldMesh world.
@@ -33,6 +37,9 @@ const MAX_FRAME = 0.1;
  */
 export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   const { scene, camera, renderer } = options;
+  // Always take an avatar handoff ticket out of the address bar, even if this
+  // world shows no avatars: portals still carry it on to the next world.
+  const avatarTicket = takeAvatarTicket();
   const spawn = new Vector3(...(options.spawn ?? [0, 2, 0]));
   const abilities = resolveAbilities(options.abilities);
 
@@ -85,6 +92,8 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   let elapsed = 0;
   let activePortal: ResolvedPortal | null = null;
   let disposed = false;
+  let avatarDescriptor: AvatarDescriptor | null = null;
+  let avatarLoad: AbortController | null = null;
 
   const handle: WorldMeshHandle = {
     scene,
@@ -92,6 +101,9 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     renderer,
     abilities,
     avatar: player.root,
+    get avatarDescriptor() {
+      return avatarDescriptor;
+    },
 
     start,
     stop,
@@ -111,6 +123,9 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     },
     travelTo,
 
+    loadAvatar,
+    clearAvatar,
+
     on: (event, fn) => events.on(event, fn),
     off: (event, fn) => events.off(event, fn),
 
@@ -126,7 +141,63 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
 
   options.network?.attach(handle);
 
+  startAvatar();
+
   return handle;
+
+  /** Brings in the visitor's own avatar, if the world asked for one. The default body stays until it is ready. */
+  function startAvatar(): void {
+    const config = options.avatar;
+    if (!config || !player.root) return;
+    if (config.source === 'descriptor') {
+      const descriptor = parseAvatarDescriptor(config.descriptor);
+      if (descriptor) void loadAvatar(descriptor);
+      else events.emit('avatar:error', { descriptor: null, error: new Error('Invalid avatar descriptor') });
+      return;
+    }
+    if (config.source !== 'worldmesh' || !avatarTicket) return;
+    resolveWorldMeshAvatar(config.hubUrl ?? DEFAULT_HUB, avatarTicket).then(
+      (descriptor) => {
+        if (descriptor && !disposed) void loadAvatar(descriptor);
+      },
+      (error) => events.emit('avatar:error', { descriptor: null, error }),
+    );
+  }
+
+  async function loadAvatar(descriptor: AvatarDescriptor): Promise<boolean> {
+    if (disposed || !player.root) return false;
+    avatarLoad?.abort();
+    const load = (avatarLoad = new AbortController());
+    try {
+      const loaded = await loadAvatarModel(descriptor, {
+        height,
+        maxBytes: options.avatar?.maxBytes,
+        signal: load.signal,
+      });
+      if (disposed || load.signal.aborted) {
+        loaded.dispose();
+        return false;
+      }
+      if (!player.setExternalBody(loaded)) return false;
+      avatarDescriptor = descriptor;
+      applyViewVisibility();
+      events.emit('avatar:load', { descriptor });
+      return true;
+    } catch (error) {
+      if (load.signal.aborted) return false;
+      console.warn('[worldmesh] Could not load the avatar; keeping the default body.', error);
+      events.emit('avatar:error', { descriptor, error });
+      return false;
+    } finally {
+      if (avatarLoad === load) avatarLoad = null;
+    }
+  }
+
+  function clearAvatar(): void {
+    avatarLoad?.abort();
+    player.clearExternalBody();
+    avatarDescriptor = null;
+  }
 
   function start(): void {
     if (running || disposed) return;
@@ -302,6 +373,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     if (disposed) return;
     disposed = true;
     stop();
+    avatarLoad?.abort();
     window.removeEventListener('resize', handleResize);
     options.network?.detach?.();
     input.dispose();

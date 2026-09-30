@@ -43,6 +43,7 @@ overlay, gravity, jumping and respawning.
 | `abilities` | all `false` | See below. |
 | `portals` | `[]` | See below. |
 | `player` | 1.8m tall, 0.35m radius | `avatar` replaces the default white figure, `avatar: false` removes it. |
+| `avatar` | off | `{ source: 'worldmesh' }` shows the visitor's Avatar Wallet character (VRM/glTF, loaded from the platform that hosts it); `{ source: 'descriptor', descriptor }` loads one you resolved yourself. Falls back to the default body. See [avatar-wallet.md](avatar-wallet.md). |
 | `view` | `{ mode: 'first', distance: 5 }` | Starting camera mode, boom length, mouse sensitivity, initial `yaw`/`pitch`. |
 | `movement` | see `DEFAULT_TUNING` | `gravity`, `walkSpeed`, `jumpSpeed`, `fallLimit`, … |
 | `keymap` | the convention | Add bindings; do not move the core row. |
@@ -110,13 +111,16 @@ world.respawn()
 world.setViewMode('first' | 'third')
 world.addPortal(portal)
 world.travelTo(url)
+world.loadAvatar(descriptor) // external VRM/glTF body; resolves false and keeps the default on failure
+world.clearAvatar()
 world.refreshColliders()    // after adding geometry
 world.on(event, fn)         // returns an unsubscribe function
 world.dispose()
 ```
 
 Events: `update`, `portal:enter`, `portal:exit`, `portal:activate`,
-`view:change`, `pointer:lock`, `interact`, `respawn`.
+`view:change`, `pointer:lock`, `interact`, `respawn`, `avatar:load`,
+`avatar:error`.
 
 ## The manifest
 

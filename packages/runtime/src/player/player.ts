@@ -1,4 +1,5 @@
 import { Group, Mesh, Object3D, type Vector3 } from 'three';
+import type { LoadedAvatar } from '../avatar/loader.js';
 import type { PlayerOptions } from '../types.js';
 import {
   animateDefaultAvatar,
@@ -30,6 +31,9 @@ export class Player {
   facing = 0;
 
   private isDefaultAvatar: boolean;
+  /** The body the world started with, kept aside while an external avatar is shown. */
+  private baseBody: Object3D | null = null;
+  private external: LoadedAvatar | null = null;
 
   constructor(options: PlayerAvatarOptions) {
     this.height = options.height;
@@ -48,6 +52,38 @@ export class Player {
 
     const body = options.avatar ?? createDefaultAvatar(options.height);
     this.root.add(body as Object3D);
+    this.baseBody = body;
+  }
+
+  /** Whether an external avatar (e.g. from the visitor's Avatar Wallet) is shown. */
+  get hasExternalBody(): boolean {
+    return !!this.external;
+  }
+
+  /**
+   * Show an external avatar instead of the world's body. The original body is
+   * kept, so `clearExternalBody()` brings it back. Ignored when the world
+   * turned the avatar off (`avatar: false`).
+   */
+  setExternalBody(avatar: LoadedAvatar): boolean {
+    if (!this.root || !this.baseBody) {
+      avatar.dispose();
+      return false;
+    }
+    this.clearExternalBody();
+    this.baseBody.visible = false;
+    this.root.scale.y = 1;
+    this.root.add(avatar.object);
+    this.external = avatar;
+    return true;
+  }
+
+  clearExternalBody(): void {
+    if (!this.external) return;
+    this.external.object.removeFromParent();
+    this.external.dispose();
+    this.external = null;
+    if (this.baseBody) this.baseBody.visible = true;
   }
 
   /** Place the avatar at the player's feet, facing `yaw`, and animate it for `motion`. */
@@ -61,16 +97,18 @@ export class Player {
     if (!this.root) return;
     this.root.position.copy(feet);
     this.root.rotation.y = this.facing;
-    if (this.isDefaultAvatar) {
+    if (this.external) {
+      if (motion) this.external.animate(motion);
+    } else if (this.isDefaultAvatar) {
       // Squash the default body while crouching instead of rebuilding it.
       this.root.scale.y = currentHeight / this.height;
-      if (motion) animateDefaultAvatar(this.root.children[0], motion);
+      if (motion && this.baseBody) animateDefaultAvatar(this.baseBody, motion);
     }
   }
 
   setExpression(expression: AvatarExpression): void {
     this.expression = expression;
-    if (this.root && this.isDefaultAvatar) setAvatarExpression(this.root.children[0], expression);
+    if (this.baseBody && this.isDefaultAvatar) setAvatarExpression(this.baseBody, expression);
   }
 
   setVisible(visible: boolean): void {
@@ -78,6 +116,7 @@ export class Player {
   }
 
   dispose(): void {
+    this.clearExternalBody();
     this.root?.traverse((child) => {
       if (child instanceof Mesh) {
         child.geometry.dispose();

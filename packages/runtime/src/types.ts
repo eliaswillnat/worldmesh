@@ -1,3 +1,4 @@
+import type { AvatarDescriptor } from './avatar/descriptor.js';
 import type { AvatarExpression } from './player/avatar.js';
 import type { Camera, Object3D, PerspectiveCamera, Scene, WebGLRenderer } from 'three';
 
@@ -78,6 +79,30 @@ export interface PlayerOptions {
   avatar?: Object3D | false;
 }
 
+/**
+ * Let visitors bring their own character. Entirely optional: without it, or
+ * whenever resolving or loading fails, the player keeps the world's body.
+ *
+ * - `worldmesh`: the avatar the visitor picked in their WorldMesh Avatar
+ *   Wallet, handed over through the URL fragment when they arrive from the
+ *   hub or another world. The model loads from the avatar platform itself;
+ *   this world never sees the visitor's account or platform credentials.
+ * - `descriptor`: an avatar the world resolved on its own.
+ */
+export type AvatarOptions =
+  | {
+      source: 'worldmesh';
+      /** The WorldMesh hub that resolves handoff tickets. Defaults to https://worldmesh.net/. */
+      hubUrl?: string;
+      /** Refuse models larger than this many bytes. Defaults to 40 MB. */
+      maxBytes?: number;
+    }
+  | {
+      source: 'descriptor';
+      descriptor: AvatarDescriptor;
+      maxBytes?: number;
+    };
+
 export interface ViewOptions {
   mode?: ViewMode;
   /** Third-person boom length in metres. */
@@ -149,6 +174,10 @@ export interface WorldMeshEvents {
   /** E pressed with nothing else claiming it. */
   interact: { position: Vec3Tuple };
   respawn: { reason: 'fell' | 'manual' };
+  /** The visitor's own avatar replaced the default body. */
+  'avatar:load': { descriptor: AvatarDescriptor };
+  /** An external avatar could not be shown; the default body stays. */
+  'avatar:error': { descriptor: AvatarDescriptor | null; error: unknown };
 }
 
 /**
@@ -180,6 +209,8 @@ export interface WorldMeshOptions {
   colliders?: Object3D[] | (() => Object3D[]);
   portals?: PortalOptions[];
   player?: PlayerOptions;
+  /** Show the visitor's own avatar. Off by default. */
+  avatar?: AvatarOptions;
   view?: ViewOptions;
   keymap?: Partial<Keymap>;
   movement?: Partial<MovementTuning>;
@@ -203,6 +234,8 @@ export interface WorldMeshHandle {
   readonly abilities: Readonly<Abilities>;
   /** The avatar root. Move it and you move the player. */
   readonly avatar: Object3D | null;
+  /** The external avatar being shown, or null while the default body is. */
+  readonly avatarDescriptor: AvatarDescriptor | null;
 
   start(): void;
   stop(): void;
@@ -224,6 +257,11 @@ export interface WorldMeshHandle {
 
   on<K extends keyof WorldMeshEvents>(event: K, fn: (payload: WorldMeshEvents[K]) => void): () => void;
   off<K extends keyof WorldMeshEvents>(event: K, fn: (payload: WorldMeshEvents[K]) => void): void;
+
+  /** Show an external avatar. Resolves to false (default body kept) if it cannot be loaded. */
+  loadAvatar(descriptor: AvatarDescriptor): Promise<boolean>;
+  /** Go back to the world's default body. */
+  clearAvatar(): void;
 
   /** Refresh the collider list after the world adds geometry. */
   refreshColliders(): void;

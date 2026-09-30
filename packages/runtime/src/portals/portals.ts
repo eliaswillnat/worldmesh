@@ -11,6 +11,7 @@ import {
   TorusGeometry,
   Vector3,
 } from 'three';
+import { withAvatarTicket } from '../avatar/handoff.js';
 import type { PortalMode, PortalOptions } from '../types.js';
 
 export interface ResolvedPortal extends PortalOptions {
@@ -107,14 +108,17 @@ export class PortalManager {
   }
 }
 
-/** Build the destination URL, carrying a back-reference to this world. */
+/**
+ * Build the destination URL, carrying a back-reference to this world, and the
+ * visitor's avatar handoff ticket (in the fragment) if they arrived with one.
+ */
 export function buildTravelUrl(target: string): string {
   try {
     const url = new URL(target, window.location.href);
     if (!url.searchParams.has('from')) {
       url.searchParams.set('from', window.location.origin + window.location.pathname);
     }
-    return url.toString();
+    return withAvatarTicket(url).toString();
   } catch {
     return target;
   }

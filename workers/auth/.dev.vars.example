@@ -22,3 +22,11 @@ APPLE_PRIVATE_KEY=
 # Optional: email verification + password reset for email/password accounts
 # RESEND_API_KEY=
 # AUTH_FROM_EMAIL=WorldMesh <accounts@worldmesh.net>
+# Avatar Wallet (docs/avatar-wallet.md). Off until AVATAR_SECRET is set.
+AVATAR_SECRET=dev-only-avatar-secret-change-me-dev-only
+# VRoid Hub app with redirect URI http://localhost:5170/api/account/avatar/callback/vroid
+VROID_CLIENT_ID=
+VROID_CLIENT_SECRET=
+# at3d / AT Protocol needs no client credentials, but its localhost client only
+# accepts loopback IPs: to test it, set BETTER_AUTH_URL=http://127.0.0.1:5170
+# and open the hub at that address.

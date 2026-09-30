@@ -19,6 +19,19 @@ export {
 } from './player/avatar.js';
 export type { AvatarExpression, AvatarMotion } from './player/avatar.js';
 export { PortalManager, buildTravelUrl, getReferringWorld } from './portals/portals.js';
+export { isLoadableUrl, parseAvatarDescriptor } from './avatar/descriptor.js';
+export type { AvatarDescriptor, AvatarFormat } from './avatar/descriptor.js';
+export {
+  AVATAR_TICKET_PARAM,
+  AVATAR_TICKET_STORAGE_KEY,
+  getAvatarTicket,
+  resolveWorldMeshAvatar,
+  setAvatarTicket,
+  takeAvatarTicket,
+  withAvatarTicket,
+} from './avatar/handoff.js';
+export { loadAvatarModel } from './avatar/loader.js';
+export type { LoadAvatarOptions, LoadedAvatar } from './avatar/loader.js';
 export { Overlay } from './ui/overlay.js';
 export { deserializePlayerState, serializePlayerState } from './net/adapter.js';
 
@@ -28,6 +41,7 @@ export const WORLDMESH_PROTOCOL = 1;
 
 export type {
   Abilities,
+  AvatarOptions,
   InputAction,
   Keymap,
   MovementTuning,
