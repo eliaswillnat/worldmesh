@@ -1,4 +1,5 @@
 import {
+  AdditiveBlending,
   BoxGeometry,
   CanvasTexture,
   Color,
@@ -65,6 +66,7 @@ const portalFragment = /* glsl */ `
   uniform float uEmpty;
   uniform float uLight;
   uniform float uHover;
+  uniform float uRandom;
   varying vec2 vUv;
 
   // An empty doorway: a plain recess with a soft "+" asking to be filled.
@@ -85,8 +87,32 @@ const portalFragment = /* glsl */ `
     return mix(color, ink, plus * breathe);
   }
 
+  // The random door: a slow blue whirlpool, bright at the heart.
+  vec3 randomDoor(vec2 p) {
+    vec2 q = vec2(p.x / 0.54, p.y);
+    float r = length(q);
+    float a = atan(q.y, q.x);
+    float swirl = 0.5 + 0.5 * sin(a * 3.0 + 9.0 * r - uTime * 2.2);
+    float fine = 0.5 + 0.5 * sin(a * 7.0 - 16.0 * r + uTime * 1.3);
+    vec3 deep = vec3(0.01, 0.05, 0.18);
+    vec3 bright = vec3(0.3, 0.72, 1.0);
+    float fall = 1.0 - smoothstep(0.0, 1.0, r);
+    vec3 color = mix(deep, bright, (swirl * 0.75 + fine * 0.25) * fall);
+    color += vec3(0.55, 0.85, 1.0) * 0.12 / (r * 4.0 + 0.12) * (0.85 + 0.15 * sin(uTime * 2.0));
+    return color;
+  }
+
   void main() {
     vec2 p = vUv - 0.5;
+    if (uRandom > 0.5) {
+      vec3 color = randomDoor(p);
+      float edge = max(abs(p.x) * 2.0, abs(p.y) * 2.0);
+      color = mix(color, vec3(0.55, 0.85, 1.0), smoothstep(0.8, 1.0, edge) * 0.6);
+      color += uGlow * 0.6;
+      gl_FragColor = vec4(min(color, vec3(1.0)), 1.0);
+      #include <colorspace_fragment>
+      return;
+    }
     if (uEmpty > 0.5) {
       gl_FragColor = vec4(emptyDoor(p) + uGlow * 0.3, 1.0);
       #include <colorspace_fragment>
@@ -122,9 +148,14 @@ const portalFragment = /* glsl */ `
  *
  * Local +Z faces the room; the wall runs along local X at z = 0.
  */
+/** The random door's blue, for its frame, halo and name. */
+const RANDOM_BLUE = 0x4db2ff;
+
 export class Door {
   readonly group = new Group();
   readonly world: DoorWorld | null;
+  /** Leads to a different listed world each time, picked on the way in. */
+  readonly random: boolean;
 
   private portal: Mesh<PlaneGeometry, ShaderMaterial>;
   private frameMaterial: MeshStandardMaterial;
@@ -133,11 +164,13 @@ export class Door {
   private drawLabel: (light: boolean) => void;
   private cover: Texture | null = null;
   private placeholder: Texture;
+  private halo: Mesh<PlaneGeometry, MeshBasicMaterial> | null = null;
   private disposed = false;
 
-  constructor(world: DoorWorld | null, light: boolean) {
+  constructor(world: DoorWorld | null, light: boolean, random = false) {
     this.world = world;
-    this.group.name = world ? `door:${world.name}` : 'door:empty';
+    this.random = random;
+    this.group.name = random ? 'door:random' : world ? `door:${world.name}` : 'door:empty';
 
     const tint = new Color(world?.color ?? '#ffffff');
     // Keep the lobby monochrome-ish: only a hint of the world's colour.
@@ -150,6 +183,7 @@ export class Door {
       uLight: { value: light ? 1 : 0 },
       uEmpty: { value: world ? 0 : 1 },
       uHover: { value: 0 },
+      uRandom: { value: random ? 1 : 0 },
     };
 
     this.frameMaterial = new MeshStandardMaterial({ roughness: 0.4, metalness: 0.05 });
@@ -189,7 +223,18 @@ export class Door {
     this.portal.position.set(0, DOOR_HEIGHT / 2, -0.02);
     this.group.add(this.portal);
 
-    const label = world ? createLabel(world.name, world.creator) : createLabel('Your world here', undefined, true);
+    if (random) {
+      // A soft blue glow spilling around the frame.
+      this.halo = createHalo();
+      this.halo.position.set(0, DOOR_HEIGHT / 2, -0.06);
+      this.group.add(this.halo);
+    }
+
+    const label = random
+      ? createLabel('Random Door', undefined, false, 'Somewhere new every time')
+      : world
+        ? createLabel(world.name, world.creator)
+        : createLabel('Your world here', undefined, true);
     this.label = label.mesh;
     this.drawLabel = label.draw;
     // Painted on the wall above the doorway; far enough out that long names
@@ -202,7 +247,7 @@ export class Door {
   }
 
   get empty(): boolean {
-    return this.world === null;
+    return this.world === null && !this.random;
   }
 
   /**
@@ -255,6 +300,12 @@ export class Door {
     this.portal.material.uniforms.uLight.value = light ? 1 : 0;
     // White doors on the black grid, ink doors on the white one.
     this.frameMaterial.color.set(light ? 0x1c1c1c : 0xf2f2f2);
+    if (this.random) {
+      this.frameMaterial.color.set(light ? 0x1a5fa8 : 0xbfe4ff);
+      this.frameMaterial.emissive.set(RANDOM_BLUE);
+      this.frameMaterial.emissiveIntensity = light ? 0.35 : 0.8;
+      this.halo!.material.opacity = light ? 0.55 : 0.9;
+    }
     this.drawLabel(light);
   }
 
@@ -273,6 +324,9 @@ export class Door {
     this.portal.material.dispose();
     for (const geometry of this.geometries) geometry.dispose();
     this.frameMaterial.dispose();
+    this.halo?.geometry.dispose();
+    this.halo?.material.map?.dispose();
+    this.halo?.material.dispose();
     this.label.material.map?.dispose();
     this.label.geometry.dispose();
     this.label.material.dispose();
@@ -334,10 +388,40 @@ async function loadCoverTexture(src: string): Promise<Texture | null> {
   return null;
 }
 
+/** A soft rounded glow a little larger than the doorway, drawn additively. */
+function createHalo(): Mesh<PlaneGeometry, MeshBasicMaterial> {
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d')!;
+  const blue = new Color(RANDOM_BLUE);
+  const rgb = `${Math.round(blue.r * 255)}, ${Math.round(blue.g * 255)}, ${Math.round(blue.b * 255)}`;
+  // Stretch a round gradient to the doorway's tall shape.
+  ctx.scale(1, 2);
+  const gradient = ctx.createRadialGradient(64, 64, 20, 64, 64, 64);
+  gradient.addColorStop(0, `rgba(${rgb}, 0.9)`);
+  gradient.addColorStop(0.5, `rgba(${rgb}, 0.35)`);
+  gradient.addColorStop(1, `rgba(${rgb}, 0)`);
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, 128, 128);
+  const texture = new CanvasTexture(canvas);
+  texture.colorSpace = SRGBColorSpace;
+  const material = new MeshBasicMaterial({
+    map: texture,
+    transparent: true,
+    depthWrite: false,
+    blending: AdditiveBlending,
+    side: DoubleSide,
+    fog: false,
+  });
+  return new Mesh(new PlaneGeometry(DOOR_WIDTH + 2.4, DOOR_HEIGHT + 2.4), material);
+}
+
 function createLabel(
   name: string,
   creator?: string,
   quiet = false,
+  subtitle?: string,
 ): { mesh: Mesh<PlaneGeometry, MeshBasicMaterial>; draw: (light: boolean) => void } {
   const canvas = document.createElement('canvas');
   const texture = new CanvasTexture(canvas);
@@ -352,7 +436,7 @@ function createLabel(
     const titleFont = '600 88px Urbanist, ui-sans-serif, system-ui, sans-serif';
     const subFont = '500 44px Urbanist, ui-sans-serif, system-ui, sans-serif';
     const title = name.length > 32 ? `${name.slice(0, 31)}…` : name;
-    const sub = creator ? `by ${creator}`.slice(0, 48) : '';
+    const sub = subtitle ?? (creator ? `by ${creator}`.slice(0, 48) : '');
 
     ctx.font = titleFont;
     const titleWidth = ctx.measureText(title).width;
@@ -369,6 +453,12 @@ function createLabel(
     ctx.shadowBlur = 12;
     ctx.font = titleFont;
     ctx.fillStyle = quiet ? (light ? 'rgba(0, 0, 0, 0.38)' : 'rgba(255, 255, 255, 0.4)') : light ? '#111111' : '#ffffff';
+    if (subtitle) {
+      // The random door's name glows blue.
+      ctx.fillStyle = light ? '#1a6fd0' : '#8fd0ff';
+      ctx.shadowColor = light ? 'rgba(255, 255, 255, 0.9)' : 'rgba(77, 178, 255, 0.9)';
+      ctx.shadowBlur = 24;
+    }
     ctx.fillText(title, canvas.width / 2, 92);
     if (sub) {
       ctx.font = subFont;

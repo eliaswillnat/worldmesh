@@ -76,6 +76,9 @@ const EMPTY_DOOR_REACH = 2.4;
 /** A tap on an empty door this far away still counts. */
 const TAP_RANGE = 40;
 const WARP_MS = 450;
+/** The random door stands out on the plaza, this far past the gate. */
+const RANDOM_DOOR_OUT = 8;
+const RANDOM_DOOR_SIDE = 6;
 
 /**
  * The floor is one mirror plane whose shader also draws the grid. Drawing the
@@ -228,6 +231,9 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const doors = new Map<string, Door>();
   // Doors with no world behind them yet. Re-laid out with every list change.
   const emptyDoors: Door[] = [];
+  // Outside the gate: a glowing blue door to a random listed world.
+  const randomDoor = new Door(null, light, true);
+  scene.add(randomDoor.group);
   let nearEmpty: Door | null = null;
   let adding = false;
   const isTouch = window.matchMedia?.('(pointer: coarse)').matches ?? false;
@@ -263,7 +269,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     onUpdate: (dt, handle) => {
       time += dt;
       const [x, , z] = handle.getState().position;
-      for (const door of doors.values()) {
+      for (const door of [...doors.values(), randomDoor]) {
         door.update(time);
         if (!warping && door.contains(x, z)) enter(door);
       }
@@ -294,16 +300,22 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
   /** Walking through a door: flash, then travel to the world's own URL. */
   function enter(door: Door): void {
-    if (!door.world) return;
+    const target = door.random ? pickRandomWorld() : door.world;
+    if (!target) return;
     warping = door;
     door.surge();
-    options.onEnterWorld?.(door.world);
+    options.onEnterWorld?.(target);
     document.exitPointerLock?.();
     flash.classList.add('active');
-    const url = buildTravelUrl(door.world.url);
+    const url = buildTravelUrl(target.url);
     warpTimer = window.setTimeout(() => {
       window.location.href = url;
     }, WARP_MS);
+  }
+
+  function pickRandomWorld(): DoorWorld | null {
+    const worlds = [...known.values()];
+    return worlds.length ? worlds[Math.floor(Math.random() * worlds.length)] : null;
   }
 
   /** An empty door was picked: hand over to the page's add-world form. */
@@ -388,7 +400,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     if (isLight === light) return;
     light = isLight;
     applyTheme();
-    for (const door of [...doors.values(), ...emptyDoors]) door.setTheme(light);
+    for (const door of [...doors.values(), ...emptyDoors, randomDoor]) door.setTheme(light);
   }
 
   function applyTheme(): void {
@@ -514,6 +526,10 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     for (const side of [-1, 1]) block(0.4, GATE_HEIGHT, passageDepth, side * (halfGate + 0.1), 0, passageZ, true);
     block(GATE_WIDTH + 0.4, 0.2, passageDepth, 0, GATE_HEIGHT, passageZ, false);
 
+    // Off to one side of the way out, turned toward the gate so it is the
+    // first thing you see stepping outside, without walking into it by accident.
+    randomDoor.place(RANDOM_DOOR_SIDE, outer + RANDOM_DOOR_OUT, 0, outer);
+
     buildTrim(radius, outer);
     buildCity(outer);
     world.refreshColliders();
@@ -606,7 +622,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     renderer.domElement.removeEventListener('pointerdown', handlePointerDown);
     renderer.domElement.removeEventListener('pointerup', handlePointerUp);
     world.dispose();
-    for (const door of [...doors.values(), ...emptyDoors]) door.dispose();
+    for (const door of [...doors.values(), ...emptyDoors, randomDoor]) door.dispose();
     doors.clear();
     emptyDoors.length = 0;
     addPrompt.remove();
