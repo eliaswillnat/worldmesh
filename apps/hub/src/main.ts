@@ -371,6 +371,10 @@ fetchCommunityWorlds();
 
 const walkToggle = document.querySelector<HTMLButtonElement>('#walk-toggle')!;
 const walkOnline = document.querySelector<HTMLDivElement>('#walk-online')!;
+const walkPrivate = document.querySelector<HTMLButtonElement>('#walk-private')!;
+const walkPrivateLabel = document.querySelector<HTMLSpanElement>('#walk-private-label')!;
+/** Remembered per browser, so a reload never quietly makes someone public again. */
+const PRIVATE_KEY = 'worldmesh.walkPrivate';
 let walkRoot: HTMLDivElement | null = null;
 let lobby: import('./walk/lobby').Lobby | null = null;
 let walkLoading = false;
@@ -419,6 +423,7 @@ async function enterWalkMode(): Promise<void> {
       light: walkIsLight(),
       presenceEndpoint: PRESENCE_ENDPOINT,
       playerName: getUsername,
+      private: loadWalkPrivate(),
       onPresenceCount: (count) => {
         if (count === null) {
           delete walkOnline.dataset.count;
@@ -432,6 +437,7 @@ async function enterWalkMode(): Promise<void> {
       onAddWorld: openAddFormFromWalk,
     });
     applyWalkTheme();
+    showWalkPrivate(lobby.alias);
     history.replaceState(null, '', '#walk');
     setWalkToggleLabel('Back to the list');
   } catch (error) {
@@ -457,6 +463,44 @@ function exitWalkMode(): void {
     history.replaceState(null, '', window.location.pathname + window.location.search);
   }
   setWalkToggleLabel('Walk between worlds');
+}
+
+// Private mode: a ghost with a made-up name, back at the start. P toggles it
+// too, including while the mouse is captured and there is no cursor.
+walkPrivate.addEventListener('click', toggleWalkPrivate);
+window.addEventListener('keydown', (event) => {
+  if (!lobby || event.code !== 'KeyP' || event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
+  const target = event.target as HTMLElement | null;
+  if (target?.closest('input, textarea, select, [contenteditable="true"]')) return;
+  toggleWalkPrivate();
+});
+
+function toggleWalkPrivate(): void {
+  if (!lobby) return;
+  const on = walkPrivate.getAttribute('aria-pressed') !== 'true';
+  const alias = lobby.setPrivate(on);
+  try {
+    if (alias) localStorage.setItem(PRIVATE_KEY, '1');
+    else localStorage.removeItem(PRIVATE_KEY);
+  } catch {
+    // Storage blocked: private mode just lasts until the page is left.
+  }
+  showWalkPrivate(alias);
+}
+
+function loadWalkPrivate(): boolean {
+  try {
+    return localStorage.getItem(PRIVATE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+/** alias: the made-up name while private, or null while public. */
+function showWalkPrivate(alias: string | null): void {
+  walkPrivate.setAttribute('aria-pressed', String(alias !== null));
+  walkPrivateLabel.textContent = alias === null ? 'Go private' : `Private · ${alias}`;
+  walkPrivate.title = alias === null ? 'Private mode (P)' : 'Go public again (P)';
 }
 
 /** An empty door in the lobby was picked: back to the list, straight into the add form. */

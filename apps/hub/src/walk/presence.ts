@@ -21,8 +21,8 @@ interface Remote {
   yaw: number;
   /** Smoothed horizontal speed, estimated from how far the avatar moves. */
   speed: number;
-  /** Name currently drawn on the tag; '' for a guest. */
-  name: string;
+  /** Text currently drawn on the tag. */
+  label: string;
   tag: Sprite;
 }
 
@@ -30,8 +30,8 @@ interface Remote {
 const TAG_HEIGHT = 2.15;
 
 type ServerMessage =
-  | { t: 'welcome'; id: string; peers: { id: string; p: [number, number, number]; r: number; e?: string; n?: string }[] }
-  | { t: 's'; id: string; p: [number, number, number]; r: number; e?: string; n?: string }
+  | { t: 'welcome'; id: string; peers: { id: string; p: [number, number, number]; r: number; e?: string; n?: string; a?: string }[] }
+  | { t: 's'; id: string; p: [number, number, number]; r: number; e?: string; n?: string; a?: string }
   | { t: 'leave'; id: string };
 
 /**
@@ -57,6 +57,8 @@ export class Presence implements NetworkAdapter {
     scene: Scene,
     private onCount: (count: number | null) => void,
     private getName: () => string | null = () => null,
+    /** Made-up name shown instead of the username in private mode. */
+    private getAlias: () => string | null = () => null,
   ) {
     this.group.name = 'worldmesh:remote-players';
     scene.add(this.group);
@@ -77,7 +79,7 @@ export class Presence implements NetworkAdapter {
     if (now - this.lastSent < 1000 / SEND_RATE) return;
 
     const [x, y, z] = state.position;
-    const payload = JSON.stringify({ t: 's', p: [round(x), round(y), round(z)], r: round(state.facing), e: state.expression, n: this.getName() ?? '' });
+    const payload = JSON.stringify({ t: 's', p: [round(x), round(y), round(z)], r: round(state.facing), e: state.expression, n: this.getName() ?? '', a: this.getAlias() ?? '' });
     if (payload === this.lastPayload && now - this.lastSent < HEARTBEAT_MS) return;
 
     socket.send(payload);
@@ -101,6 +103,18 @@ export class Presence implements NetworkAdapter {
       remote.speed += (moved / Math.max(dt, 1e-4) - remote.speed) * blend;
       animateDefaultAvatar(remote.root, { dt, speed: remote.speed, grounded: remote.root.position.y < 0.05 });
     }
+  }
+
+  /**
+   * Leave and re-enter the room as a new peer. Everyone else sees this
+   * visitor leave and someone new arrive, with nothing linking the two.
+   */
+  rejoin(): void {
+    if (this.closed) return;
+    window.clearTimeout(this.reconnectTimer);
+    this.disconnect();
+    this.backoff = 1000;
+    this.connect();
   }
 
   detach(): void {
@@ -169,10 +183,10 @@ export class Presence implements NetworkAdapter {
         this.backoff = 1000;
         this.lastPayload = '';
         this.lastSent = 0;
-        for (const peer of message.peers) this.upsert(peer.id, peer.p, peer.r, peer.e, peer.n, true);
+        for (const peer of message.peers) this.upsert(peer.id, peer.p, peer.r, peer.e, nameLabel(peer.n, peer.a), true);
         break;
       case 's':
-        if (message.id !== this.selfId) this.upsert(message.id, message.p, message.r, message.e, message.n, false);
+        if (message.id !== this.selfId) this.upsert(message.id, message.p, message.r, message.e, nameLabel(message.n, message.a), false);
         break;
       case 'leave': {
         const remote = this.remotes.get(message.id);
@@ -189,7 +203,7 @@ export class Presence implements NetworkAdapter {
     p: [number, number, number],
     yaw: number,
     expression: unknown,
-    name: unknown,
+    label: string,
     snap: boolean,
   ): void {
     if (!Array.isArray(p) || p.length !== 3 || !p.every(Number.isFinite) || !Number.isFinite(yaw)) return;
@@ -197,20 +211,19 @@ export class Presence implements NetworkAdapter {
     let remote = this.remotes.get(id);
     if (!remote) {
       const root = createDefaultAvatar();
-      const tag = createNameTag('');
+      const tag = createNameTag(GUEST);
       tag.position.y = TAG_HEIGHT;
       root.add(tag);
       this.group.add(root);
-      remote = { root, target: new Vector3(), targetYaw: yaw, yaw, speed: 0, name: '', tag };
+      remote = { root, target: new Vector3(), targetYaw: yaw, yaw, speed: 0, label: GUEST, tag };
       this.remotes.set(id, remote);
       snap = true;
     }
     remote.target.set(p[0], p[1], p[2]);
     remote.targetYaw = yaw;
     if (typeof expression === 'string') setAvatarExpression(remote.root, expression);
-    const label = typeof name === 'string' ? name : '';
-    if (label !== remote.name) {
-      remote.name = label;
+    if (label !== remote.label) {
+      remote.label = label;
       disposeObject(remote.tag);
       remote.tag = createNameTag(label);
       remote.tag.position.y = TAG_HEIGHT;
@@ -248,9 +261,20 @@ function round(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
-/** A camera-facing label: '@username', or 'Guest' for visitors who are not signed in. */
-function createNameTag(name: string): Sprite {
-  const text = name ? `@${name}` : 'Guest';
+const GUEST = 'Guest';
+
+/**
+ * '@username' for a signed-in visitor, their made-up name in private mode,
+ * or 'Guest'. Only real usernames get the '@'.
+ */
+function nameLabel(name: unknown, alias: unknown): string {
+  if (typeof name === 'string' && name) return `@${name}`;
+  if (typeof alias === 'string' && alias) return alias;
+  return GUEST;
+}
+
+/** A camera-facing label over a remote avatar. Guests are drawn dimmer. */
+function createNameTag(text: string): Sprite {
   const scale = 2; // Canvas pixels per CSS pixel, for crisp text.
   const font = `600 ${22 * scale}px system-ui, -apple-system, sans-serif`;
   const canvas = document.createElement('canvas');
@@ -266,7 +290,7 @@ function createNameTag(name: string): Sprite {
   context.beginPath();
   context.roundRect(0, 0, canvas.width, height, height / 2);
   context.fill();
-  context.fillStyle = name ? '#ffffff' : 'rgba(255, 255, 255, 0.7)';
+  context.fillStyle = text === GUEST ? 'rgba(255, 255, 255, 0.7)' : '#ffffff';
   context.textAlign = 'center';
   context.textBaseline = 'middle';
   context.fillText(text, canvas.width / 2, height / 2 + scale);

@@ -9,9 +9,9 @@ import { DurableObject } from 'cloudflare:workers';
  * visitors of the same space see each other.
  *
  * Protocol (JSON text frames):
- *   server → client  { t: 'welcome', id, peers: [{ id, p, r, e, n }] }
- *   client → server  { t: 's', p: [x, y, z], r: yaw, e?: expression, n?: username }
- *   server → client  { t: 's', id, p, r, e, n }   another peer moved ('' n = guest)
+ *   server → client  { t: 'welcome', id, peers: [{ id, p, r, e, n, a }] }
+ *   client → server  { t: 's', p: [x, y, z], r: yaw, e?: expression, n?: username, a?: alias }
+ *   server → client  { t: 's', id, p, r, e, n, a }   another peer moved ('' n and a = guest)
  *   server → client  { t: 'leave', id }        another peer left
  */
 
@@ -30,6 +30,11 @@ interface Peer {
   e: string;
   /** Username shown above the avatar; '' for guests. Self-reported by the client, not verified. */
   n: string;
+  /**
+   * Made-up display name for a signed-in visitor in private mode, e.g.
+   * 'Quiet Fox'. Never an account name: clients draw it without an '@'.
+   */
+  a: string;
   /** False until the peer has sent its first position. */
   seen: boolean;
 }
@@ -41,6 +46,8 @@ const MAX_COORD = 10_000;
 const EXPRESSION = /^[a-z]{1,16}$/;
 /** Same shape as workers/auth USERNAME_PATTERN. */
 const USERNAME = /^[a-z][a-z0-9_]{2,29}$/;
+/** Two capitalised words; cannot be mistaken for a username, which is lower case. */
+const ALIAS = /^[A-Z][a-z]{1,11} [A-Z][a-z]{1,11}$/;
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -63,7 +70,7 @@ export class Room extends DurableObject<Env> {
     if (sockets.length >= MAX_PEERS) return new Response('Room is full', { status: 503 });
 
     const { 0: client, 1: server } = new WebSocketPair();
-    const peer: Peer = { id: crypto.randomUUID().slice(0, 8), p: [0, 0, 0], r: 0, e: 'smile', n: '', seen: false };
+    const peer: Peer = { id: crypto.randomUUID().slice(0, 8), p: [0, 0, 0], r: 0, e: 'smile', n: '', a: '', seen: false };
 
     this.ctx.acceptWebSocket(server);
     server.serializeAttachment(peer);
@@ -71,7 +78,7 @@ export class Room extends DurableObject<Env> {
     const peers = sockets
       .map((ws) => ws.deserializeAttachment() as Peer | null)
       .filter((other): other is Peer => !!other?.seen)
-      .map(({ id, p, r, e, n }) => ({ id, p, r, e, n: n ?? '' }));
+      .map(({ id, p, r, e, n, a }) => ({ id, p, r, e, n: n ?? '', a: a ?? '' }));
     server.send(JSON.stringify({ t: 'welcome', id: peer.id, peers }));
 
     return new Response(null, { status: 101, webSocket: client });
@@ -80,7 +87,7 @@ export class Room extends DurableObject<Env> {
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     if (typeof message !== 'string' || message.length > MAX_MESSAGE_BYTES) return;
 
-    let data: { t?: unknown; p?: unknown; r?: unknown; e?: unknown; n?: unknown };
+    let data: { t?: unknown; p?: unknown; r?: unknown; e?: unknown; n?: unknown; a?: unknown };
     try {
       data = JSON.parse(message);
     } catch {
@@ -106,10 +113,11 @@ export class Room extends DurableObject<Env> {
     peer.r = round(yaw);
     if (typeof data.e === 'string' && EXPRESSION.test(data.e)) peer.e = data.e;
     if (typeof data.n === 'string') peer.n = USERNAME.test(data.n) ? data.n : '';
+    peer.a = typeof data.a === 'string' && ALIAS.test(data.a) ? data.a : '';
     peer.seen = true;
     ws.serializeAttachment(peer);
 
-    this.broadcast(JSON.stringify({ t: 's', id: peer.id, p: peer.p, r: peer.r, e: peer.e, n: peer.n ?? '' }), ws);
+    this.broadcast(JSON.stringify({ t: 's', id: peer.id, p: peer.p, r: peer.r, e: peer.e, n: peer.n ?? '', a: peer.a ?? '' }), ws);
   }
 
   async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
