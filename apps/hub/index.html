@@ -628,6 +628,13 @@
         background: var(--card);
         color: var(--text);
         font-family: inherit;
+        /* showModal() focuses the dialog, and the browser paints its focus
+           ring around the whole card. The 1px border is the card chrome. */
+        outline: none;
+      }
+      .account-dialog:focus,
+      .account-dialog:focus-visible {
+        outline: none;
       }
       .account-dialog::backdrop { background: rgba(0, 0, 0, 0.5); }
       .account-body { display: flex; flex-direction: column; gap: 10px; }
