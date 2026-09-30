@@ -6,7 +6,7 @@ import {
   type PlayerState,
   type WorldMeshHandle,
 } from '@worldmesh/runtime';
-import { Group, Mesh, Vector3, type Object3D, type Scene } from 'three';
+import { CanvasTexture, Group, Mesh, Sprite, SpriteMaterial, Vector3, type Object3D, type Scene } from 'three';
 
 /** How often the local position goes out, per second. */
 const SEND_RATE = 10;
@@ -21,11 +21,17 @@ interface Remote {
   yaw: number;
   /** Smoothed horizontal speed, estimated from how far the avatar moves. */
   speed: number;
+  /** Name currently drawn on the tag; '' for a guest. */
+  name: string;
+  tag: Sprite;
 }
 
+/** Height of the name tag's centre above the avatar's feet. */
+const TAG_HEIGHT = 2.15;
+
 type ServerMessage =
-  | { t: 'welcome'; id: string; peers: { id: string; p: [number, number, number]; r: number; e?: string }[] }
-  | { t: 's'; id: string; p: [number, number, number]; r: number; e?: string }
+  | { t: 'welcome'; id: string; peers: { id: string; p: [number, number, number]; r: number; e?: string; n?: string }[] }
+  | { t: 's'; id: string; p: [number, number, number]; r: number; e?: string; n?: string }
   | { t: 'leave'; id: string };
 
 /**
@@ -50,6 +56,7 @@ export class Presence implements NetworkAdapter {
     private room: string,
     scene: Scene,
     private onCount: (count: number | null) => void,
+    private getName: () => string | null = () => null,
   ) {
     this.group.name = 'worldmesh:remote-players';
     scene.add(this.group);
@@ -70,7 +77,7 @@ export class Presence implements NetworkAdapter {
     if (now - this.lastSent < 1000 / SEND_RATE) return;
 
     const [x, y, z] = state.position;
-    const payload = JSON.stringify({ t: 's', p: [round(x), round(y), round(z)], r: round(state.facing), e: state.expression });
+    const payload = JSON.stringify({ t: 's', p: [round(x), round(y), round(z)], r: round(state.facing), e: state.expression, n: this.getName() ?? '' });
     if (payload === this.lastPayload && now - this.lastSent < HEARTBEAT_MS) return;
 
     socket.send(payload);
@@ -162,10 +169,10 @@ export class Presence implements NetworkAdapter {
         this.backoff = 1000;
         this.lastPayload = '';
         this.lastSent = 0;
-        for (const peer of message.peers) this.upsert(peer.id, peer.p, peer.r, peer.e, true);
+        for (const peer of message.peers) this.upsert(peer.id, peer.p, peer.r, peer.e, peer.n, true);
         break;
       case 's':
-        if (message.id !== this.selfId) this.upsert(message.id, message.p, message.r, message.e, false);
+        if (message.id !== this.selfId) this.upsert(message.id, message.p, message.r, message.e, message.n, false);
         break;
       case 'leave': {
         const remote = this.remotes.get(message.id);
@@ -177,20 +184,38 @@ export class Presence implements NetworkAdapter {
     this.onCount(this.remotes.size + 1);
   }
 
-  private upsert(id: string, p: [number, number, number], yaw: number, expression: unknown, snap: boolean): void {
+  private upsert(
+    id: string,
+    p: [number, number, number],
+    yaw: number,
+    expression: unknown,
+    name: unknown,
+    snap: boolean,
+  ): void {
     if (!Array.isArray(p) || p.length !== 3 || !p.every(Number.isFinite) || !Number.isFinite(yaw)) return;
 
     let remote = this.remotes.get(id);
     if (!remote) {
       const root = createDefaultAvatar();
+      const tag = createNameTag('');
+      tag.position.y = TAG_HEIGHT;
+      root.add(tag);
       this.group.add(root);
-      remote = { root, target: new Vector3(), targetYaw: yaw, yaw, speed: 0 };
+      remote = { root, target: new Vector3(), targetYaw: yaw, yaw, speed: 0, name: '', tag };
       this.remotes.set(id, remote);
       snap = true;
     }
     remote.target.set(p[0], p[1], p[2]);
     remote.targetYaw = yaw;
     if (typeof expression === 'string') setAvatarExpression(remote.root, expression);
+    const label = typeof name === 'string' ? name : '';
+    if (label !== remote.name) {
+      remote.name = label;
+      disposeObject(remote.tag);
+      remote.tag = createNameTag(label);
+      remote.tag.position.y = TAG_HEIGHT;
+      remote.root.add(remote.tag);
+    }
     // A long jump is a teleport or respawn, not a sprint: do not animate it.
     if (remote.root.position.distanceTo(remote.target) > 6) snap = true;
     if (snap) {
@@ -223,9 +248,44 @@ function round(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
+/** A camera-facing label: '@username', or 'Guest' for visitors who are not signed in. */
+function createNameTag(name: string): Sprite {
+  const text = name ? `@${name}` : 'Guest';
+  const scale = 2; // Canvas pixels per CSS pixel, for crisp text.
+  const font = `600 ${22 * scale}px system-ui, -apple-system, sans-serif`;
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d')!;
+  context.font = font;
+  const padX = 12 * scale;
+  const height = 36 * scale;
+  canvas.width = Math.ceil(context.measureText(text).width + padX * 2);
+  canvas.height = height;
+
+  context.font = font;
+  context.fillStyle = 'rgba(0, 0, 0, 0.55)';
+  context.beginPath();
+  context.roundRect(0, 0, canvas.width, height, height / 2);
+  context.fill();
+  context.fillStyle = name ? '#ffffff' : 'rgba(255, 255, 255, 0.7)';
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  context.fillText(text, canvas.width / 2, height / 2 + scale);
+
+  const texture = new CanvasTexture(canvas);
+  texture.anisotropy = 4;
+  const sprite = new Sprite(new SpriteMaterial({ map: texture, depthWrite: false, transparent: true }));
+  const worldHeight = 0.26;
+  sprite.scale.set((worldHeight * canvas.width) / height, worldHeight, 1);
+  sprite.name = 'worldmesh:name-tag';
+  return sprite;
+}
+
 function disposeObject(root: Object3D): void {
   root.traverse((child) => {
-    if (child instanceof Mesh) {
+    if (child instanceof Sprite) {
+      child.material.map?.dispose();
+      child.material.dispose();
+    } else if (child instanceof Mesh) {
       child.geometry.dispose();
       const material = child.material;
       if (Array.isArray(material)) material.forEach((m) => m.dispose());
