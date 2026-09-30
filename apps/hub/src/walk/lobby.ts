@@ -38,7 +38,7 @@ export interface WalkSpot {
 
 export interface LobbyOptions {
   worlds: DoorWorld[];
-  /** Start here instead of the middle of the hall, e.g. back outside the door someone left through. */
+  /** Walk out of the door behind this spot instead of starting in the middle of the hall. */
   start?: WalkSpot | null;
   /** Draw the lobby white with dark lines instead of black with light ones. */
   light?: boolean;
@@ -103,8 +103,22 @@ const EMPTY_DOOR_REACH = 2.4;
 /** A tap on an empty door this far away still counts. */
 const TAP_RANGE = 40;
 const WARP_MS = 450;
-/** Someone back from a world stands this far out in front of the door they took. */
-const RETURN_STEP = 1.6;
+/** Someone back from a world ends up this far out in front of the door they took. */
+const RETURN_STEP = 1.8;
+/**
+ * Coming back, they appear this far behind the doorway's face, hidden by it,
+ * and walk out through it for WALK_OUT_S seconds.
+ */
+const WALK_OUT_FROM = -0.6;
+const WALK_OUT_S = 1.3;
+/** The flash holds this long before fading, so there is a frame to fade from. */
+const FLASH_HOLD_S = 0.1;
+/**
+ * In third person the camera starts in the hall looking at the door, then
+ * swings round behind them as they finish walking out.
+ */
+const TURN_FROM_S = 0.9;
+const TURN_S = 0.8;
 /** Where every visitor arrives: the middle of the hall, facing the doors. */
 const SPAWN: Vec3Tuple = [0, 0, 0];
 /** How long the screen stays white while switching in or out of private mode. */
@@ -286,9 +300,12 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   let warpTimer = 0;
   // Outside the door the visitor last went through, for when they come back.
   let returnTo: WalkSpot | null = null;
+  let emerging: Emerging | null = null;
 
   const flash = document.createElement('div');
   flash.className = 'walk-flash';
+  // Arriving back from a world: start in the same light the warp left in.
+  if (options.start) flash.classList.add('active');
   container.appendChild(flash);
 
   const addPrompt = document.createElement('button');
@@ -314,10 +331,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     colliders: () => [ground, ...wall, ...emptyDoors.map((door) => door.face), ...(city?.colliders ?? [])],
     onUpdate: (dt, handle) => {
       time += dt;
+      if (emerging) stepEmerging(dt);
       const [x, , z] = handle.getState().position;
       for (const door of [...doors.values(), randomDoor]) {
         door.update(time);
-        if (!warping && door.contains(x, z)) enter(door);
+        if (!warping && !emerging && door.contains(x, z)) enter(door);
       }
       let near: Door | null = null;
       let nearest = EMPTY_DOOR_REACH;
@@ -437,7 +455,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     warping = null;
     adding = false;
     flash.classList.remove('active');
-    if (returnTo) world.teleport(returnTo.position, returnTo.yaw);
+    if (returnTo) emerge(returnTo);
     else world.respawn();
   };
   window.addEventListener('pageshow', handlePageShow);
@@ -457,7 +475,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   setWorlds(options.worlds);
   // Stored coordinates rather than a door to look up: community worlds arrive
   // a moment later and shift every door, and these already match the full list.
-  if (options.start) world.teleport(options.start.position, options.start.yaw);
+  if (options.start) emerge(options.start);
 
   if (import.meta.env.DEV) Object.assign(window, { lobby: world });
 
@@ -471,8 +489,52 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     dispose,
   };
 
+  /** Come back out of the door behind `spot`, walking a few steps into the hall. */
+  function emerge(spot: WalkSpot): void {
+    const [x, , z] = spot.position;
+    // Light up the door they come out of, if it is there yet: community
+    // worlds may still be loading.
+    const door = [...doors.values(), randomDoor].find((candidate) => {
+      const out = candidate.inFront(RETURN_STEP);
+      return Math.hypot(out.x - x, out.z - z) < 0.5;
+    }) ?? null;
+    door?.surge();
+    emerging = { spot, door, time: 0, orbit: world.getViewMode() === 'third' };
+    stepEmerging(0);
+  }
+
+  function stepEmerging(dt: number): void {
+    const { spot, door, orbit } = emerging!;
+    const t = (emerging!.time += dt);
+    if (t >= FLASH_HOLD_S) flash.classList.remove('active');
+
+    // Ease out: a walk that slows to a stop at the spot.
+    const walk = Math.min(t / WALK_OUT_S, 1);
+    const length = RETURN_STEP - WALK_OUT_FROM;
+    const along = WALK_OUT_FROM + length * Math.sin((walk * Math.PI) / 2) - RETURN_STEP;
+    const speed = walk < 1 ? ((length * Math.PI) / 2 / WALK_OUT_S) * Math.cos((walk * Math.PI) / 2) : 0;
+    // Looking along spot.yaw faces out of the door, into the hall.
+    const forwardX = -Math.sin(spot.yaw);
+    const forwardZ = -Math.cos(spot.yaw);
+    const turn = orbit ? Math.min(Math.max((t - TURN_FROM_S) / TURN_S, 0), 1) : 1;
+    const eased = turn * turn * (3 - 2 * turn);
+    world.setState({
+      position: [spot.position[0] + forwardX * along, spot.position[1], spot.position[2] + forwardZ * along],
+      // The velocity is only there so the body walks instead of gliding.
+      velocity: [forwardX * speed, 0, forwardZ * speed],
+      yaw: spot.yaw - Math.PI * (1 - eased),
+      facing: spot.yaw,
+    });
+    door?.surge(1 - walk);
+
+    if (walk === 1 && turn === 1) {
+      door?.settle();
+      emerging = null;
+    }
+  }
+
   function setPrivate(on: boolean): string | null {
-    if (on === !!pendingAlias || warping) return pendingAlias;
+    if (on === !!pendingAlias || warping || emerging) return pendingAlias;
     const next = on ? randomAlias() : null;
     pendingAlias = next;
     // A quick white-out hides the jump back to the start.
@@ -743,6 +805,17 @@ function mirrorResolution(): { textureWidth: number; textureHeight: number } {
     textureWidth: Math.max(256, Math.round(window.innerWidth * scale)),
     textureHeight: Math.max(256, Math.round(window.innerHeight * scale)),
   };
+}
+
+interface Emerging {
+  /** Where the walk out ends. */
+  spot: WalkSpot;
+  /** The door being walked out of, lit up until they are clear of it. */
+  door: Door | null;
+  /** Seconds since it started. */
+  time: number;
+  /** Swing the third-person camera round from the door to behind them. */
+  orbit: boolean;
 }
 
 interface Ghost {

@@ -322,8 +322,8 @@ export class Door {
   }
 
   /** Flare the light while we travel through it. */
-  surge(): void {
-    this.portal.material.uniforms.uGlow.value = 1;
+  surge(amount = 1): void {
+    this.portal.material.uniforms.uGlow.value = amount;
   }
 
   settle(): void {
