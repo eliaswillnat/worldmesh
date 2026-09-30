@@ -7,6 +7,11 @@ export interface InputOptions {
   element: HTMLElement;
   keymap?: Partial<Keymap>;
   onPointerLockChange?: (locked: boolean) => void;
+  /**
+   * Escape toggles the pause screen. Return true when this press captures
+   * the mouse again, so the key's usual "show the cursor" action can be cancelled.
+   */
+  onEscape?: () => boolean | void;
 }
 
 /**
@@ -31,6 +36,7 @@ export class Input {
   private pendingDigit: number | null = null;
   private codeToActions = new Map<string, InputAction[]>();
   private onPointerLockChange?: (locked: boolean) => void;
+  private onEscape?: () => boolean | void;
   private touch?: TouchControls;
   private disposed = false;
 
@@ -38,6 +44,7 @@ export class Input {
     this.element = options.element;
     this.keymap = resolveKeymap(options.keymap);
     this.onPointerLockChange = options.onPointerLockChange;
+    this.onEscape = options.onEscape;
 
     for (const action of Object.keys(this.keymap) as InputAction[]) {
       for (const code of this.keymap[action]) {
@@ -110,7 +117,8 @@ export class Input {
     if (document.pointerLockElement === this.element) {
       document.exitPointerLock();
     }
-    this.setLocked(false);
+    if (this.locked) this.setLocked(false);
+    else this.onPointerLockChange?.(false);
   }
 
   triggerAction(action: InputAction): void {
@@ -193,13 +201,15 @@ export class Input {
   }
 
   /**
-   * Esc releases the cursor. The browser only does this on its own while
-   * pointer lock is active, and a focused field can cancel that, so it is
-   * also handled here. Capture phase runs before those fields.
+   * Escape toggles the pause screen. The browser's own Esc action is what
+   * puts the cursor back, so that is left alone. It is cancelled only when
+   * this press captures the mouse again, or the cursor would vanish immediately.
    */
   private handleEscape = (event: KeyboardEvent): void => {
-    if (event.key !== 'Escape' || event.repeat || this.disposed) return;
-    this.exitPointerLock();
+    if (event.key !== 'Escape' || event.repeat || this.disposed || !this.onEscape) return;
+    if (document.querySelector('dialog[open]')) return;
+    const relock = this.onEscape() === true;
+    if (relock) event.preventDefault();
   };
 
   private handleKeyDown = (event: KeyboardEvent): void => {

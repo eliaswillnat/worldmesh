@@ -68,6 +68,14 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
       overlay.setLocked(locked);
       events.emit('pointer:lock', { locked });
     },
+    onEscape: () => {
+      if (overlay.isPaused()) {
+        input.requestPointerLock();
+        return true;
+      }
+      input.exitPointerLock();
+      return false;
+    },
   });
 
   const cameraRig = new CameraRig({ ...options.view, camera, collision });
