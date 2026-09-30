@@ -37,7 +37,8 @@ light/dark setting. Everyone in
 walk mode sees everyone else, through a tiny presence relay in
 `workers/presence`. The screens on the towers around the lobby are billboards
 anyone can book for €2, reviewed by hand before they go live (`workers/ads`,
-see [docs/advertising.md](docs/advertising.md)).
+see [docs/advertising.md](docs/advertising.md)) — the hub ads UI stays off
+until deliberately enabled (`AD_CONFIG.enabled` / `VITE_ADS_ENABLED`).
 
 ## Repo layout
 
