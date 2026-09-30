@@ -104,21 +104,27 @@ const EMPTY_DOOR_REACH = 2.4;
 const TAP_RANGE = 40;
 const WARP_MS = 450;
 /** Someone back from a world ends up this far out in front of the door they took. */
-const RETURN_STEP = 1.8;
+const RETURN_STEP = 2.4;
 /**
  * Coming back, they appear this far behind the doorway's face, hidden by it,
  * and walk out through it for WALK_OUT_S seconds.
  */
 const WALK_OUT_FROM = -0.6;
-const WALK_OUT_S = 1.3;
+const WALK_OUT_S = 1.5;
 /** The flash holds this long before fading, so there is a frame to fade from. */
 const FLASH_HOLD_S = 0.1;
 /**
  * In third person the camera starts in the hall looking at the door, then
  * swings round behind them as they finish walking out.
  */
-const TURN_FROM_S = 0.9;
+const TURN_FROM_S = 1.1;
 const TURN_S = 0.8;
+/**
+ * The door just walked out of stays shut until they are this far from it.
+ * Otherwise the camera, swung round behind them, backs out through the
+ * open doorway and ends up looking at the back of the door.
+ */
+const EXIT_CLEAR = 4;
 /** Where every visitor arrives: the middle of the hall, facing the doors. */
 const SPAWN: Vec3Tuple = [0, 0, 0];
 /** How long the screen stays white while switching in or out of private mode. */
@@ -301,6 +307,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   // Outside the door the visitor last went through, for when they come back.
   let returnTo: WalkSpot | null = null;
   let emerging: Emerging | null = null;
+  let exitDoor: Door | null = null;
 
   const flash = document.createElement('div');
   flash.className = 'walk-flash';
@@ -328,11 +335,21 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     ui: { title: 'WorldMesh', badge: false, crosshair: false },
     network: presence,
     // Empty doors are closed: their faces stop you like the wall does.
-    colliders: () => [ground, ...wall, ...emptyDoors.map((door) => door.face), ...(city?.colliders ?? [])],
+    colliders: () => [
+      ground,
+      ...wall,
+      ...emptyDoors.map((door) => door.face),
+      ...(exitDoor ? [exitDoor.face] : []),
+      ...(city?.colliders ?? []),
+    ],
     onUpdate: (dt, handle) => {
       time += dt;
       if (emerging) stepEmerging(dt);
       const [x, , z] = handle.getState().position;
+      if (exitDoor && !emerging) {
+        const { x: doorX, z: doorZ } = exitDoor.inFront(0);
+        if (Math.hypot(x - doorX, z - doorZ) > EXIT_CLEAR) setExitDoor(null);
+      }
       for (const door of [...doors.values(), randomDoor]) {
         door.update(time);
         if (!warping && !emerging && door.contains(x, z)) enter(door);
@@ -499,6 +516,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       return Math.hypot(out.x - x, out.z - z) < 0.5;
     }) ?? null;
     door?.surge();
+    // Open until they are out: it would stop them walking through it.
+    if (exitDoor) setExitDoor(null);
     emerging = { spot, door, time: 0, orbit: world.getViewMode() === 'third' };
     stepEmerging(0);
   }
@@ -510,6 +529,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
     // Ease out: a walk that slows to a stop at the spot.
     const walk = Math.min(t / WALK_OUT_S, 1);
+    // Out in front of it now: shut it behind them before the camera comes round.
+    if (walk === 1 && door && exitDoor !== door) setExitDoor(door);
     const length = RETURN_STEP - WALK_OUT_FROM;
     const along = WALK_OUT_FROM + length * Math.sin((walk * Math.PI) / 2) - RETURN_STEP;
     const speed = walk < 1 ? ((length * Math.PI) / 2 / WALK_OUT_S) * Math.cos((walk * Math.PI) / 2) : 0;
@@ -531,6 +552,12 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       door?.settle();
       emerging = null;
     }
+  }
+
+  /** Shut `door` behind someone who just walked out of it, or null to open it again. */
+  function setExitDoor(door: Door | null): void {
+    exitDoor = door;
+    world.refreshColliders();
   }
 
   function setPrivate(on: boolean): string | null {
