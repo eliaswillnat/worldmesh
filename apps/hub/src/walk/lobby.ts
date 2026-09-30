@@ -20,6 +20,7 @@ import {
   Scene,
   ShaderMaterial,
   Vector2,
+  Vector3,
   WebGLRenderer,
   type BufferGeometry,
   type Object3D,
@@ -29,6 +30,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { CITY_GLOW_WHITE, applyCityTheme, applySkyTheme, createBeamRefraction, createCityMaterials, createSky, createSpawnRay, flipInside, skyHorizon } from './city';
 import { Presence } from './presence';
 import { DOOR_HALF_SPAN, DOOR_TOP, Door, type DoorWorld } from './door';
+import { ImageCropper } from '../cropper';
 import { describeBillboard } from './layout';
 import { fetchBillboards } from '../ads/api';
 import { AdBillboards, type BillboardHit } from '../ads/billboards';
@@ -70,6 +72,11 @@ export interface LobbyOptions {
   onEnterWorld?: (world: DoorWorld, returnTo: WalkSpot) => void;
   /** Called when someone picks an empty door to add their own world. */
   onAddWorld?: () => void;
+  /**
+   * Someone claimed an empty door from inside the lobby. The door already
+   * shows their world here; this asks the gallery to list it as well.
+   */
+  onClaimWorld?: (world: ClaimedWorld) => void;
   /**
    * Mount the billboard ads UI (outlines, +, prompts, modal, live ads).
    * Off by default; pass true only when ads are deliberately enabled
@@ -477,7 +484,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const randomDoor = new Door(null, light, true);
   scene.add(randomDoor.group);
   let nearEmpty: Door | null = null;
-  let adding = false;
   let time = 0;
   let warping = false;
   let beamWobble = 0;
@@ -498,7 +504,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const addPrompt = document.createElement('button');
   addPrompt.type = 'button';
   addPrompt.className = 'walk-add-prompt';
-  addPrompt.textContent = isTouch ? 'Tap to add your world here' : 'Press E or click to add your world here';
+  addPrompt.textContent = isTouch ? 'Tap to put your world in this door' : 'Press E or click to put your world in this door';
   addPrompt.addEventListener('click', (event) => {
     event.stopPropagation();
     addWorld();
@@ -517,6 +523,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   let focused: BillboardHit | null = null;
   let sinceFocus = 0;
   let adModal: { close(): void } | null = null;
+  let claimModal: { close(): void } | null = null;
   let billboardFetch: AbortController | null = null;
 
   const world = createWorldMesh({
@@ -540,7 +547,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     onUpdate: (dt, handle) => {
       time += dt;
       if (emerging) stepEmerging(dt);
-      towerCity.setBlocked(warping || emerging !== null || adModal !== null);
+      towerCity.setBlocked(warping || emerging !== null || adModal !== null || claimModal !== null);
       towerCity.update(dt);
       const [x, , z] = handle.getState().position;
       if (exitDoor && !emerging) {
@@ -604,9 +611,109 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       plainFloor.position.x = mirror.position.x;
       plainFloor.position.z = mirror.position.z;
       presence?.update(dt);
+      placeChatBubble();
     },
   });
   if (alias) ghost = makeGhost(world.avatar);
+
+  // Chat is a bubble over your head. Enter opens it, Enter sends it, then it
+  // follows you around until it fades. There is no transcript.
+  const chatBubble = document.createElement('form');
+  chatBubble.className = 'walk-bubble';
+  const chatField = document.createElement('input');
+  chatField.type = 'text';
+  chatField.maxLength = 80;
+  chatField.autocomplete = 'off';
+  chatField.placeholder = 'say something';
+  chatField.setAttribute('aria-label', 'Say something');
+  const chatSaid = document.createElement('p');
+  chatBubble.append(chatField, chatSaid);
+  container.appendChild(chatBubble);
+  for (const type of ['pointerdown', 'pointermove', 'pointerup', 'keydown', 'keyup']) {
+    chatBubble.addEventListener(type, (event) => event.stopPropagation());
+  }
+  let chatting = false;
+  let chatUntil = 0;
+  const chatPoint = new Vector3();
+
+  chatField.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    // Do not preventDefault: that cancels the browser leaving pointer lock.
+    closeChat();
+  });
+
+  chatBubble.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const line = chatField.value.trim();
+    chatting = false;
+    chatField.blur();
+    chatField.value = '';
+    endChat();
+    if (!line) {
+      chatUntil = 0;
+      chatBubble.classList.remove('visible', 'saying');
+      return;
+    }
+    chatSaid.textContent = line;
+    chatUntil = performance.now() + 7000;
+    chatBubble.classList.remove('saying');
+    presence?.say(line);
+  });
+
+  const handleChatKey = (event: KeyboardEvent) => {
+    if (event.key !== 'Enter' || event.repeat || chatting) return;
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('input, textarea, select, [contenteditable="true"]')) return;
+    if (claimModal || adModal || warping) return;
+    // The pause screen goes away by clicking Continue, not by pressing Enter.
+    if (document.querySelector('.wm-overlay')?.getAttribute('data-locked') !== 'true') return;
+    event.preventDefault();
+    chatting = true;
+    chatSaid.textContent = '';
+    chatBubble.classList.add('saying');
+    // Keep the mouse captured. Releasing it is what brings up the click-to-enter overlay.
+    document.documentElement.classList.add('chatting');
+    chatField.focus();
+  };
+  window.addEventListener('keydown', handleChatKey);
+
+  /** Mouse look stays put while the bubble is open, without unlocking the cursor. */
+  const holdLook = (event: Event) => {
+    if (chatting) event.stopPropagation();
+  };
+  document.addEventListener('mousemove', holdLook, true);
+  document.addEventListener('wheel', holdLook, true);
+
+  function closeChat(): void {
+    chatting = false;
+    chatField.value = '';
+    chatField.blur();
+    chatBubble.classList.remove('saying');
+    endChat();
+  }
+
+  function endChat(): void {
+    document.documentElement.classList.remove('chatting');
+  }
+
+  /** Pin the local bubble to the head. Everyone else's is glued to their figure. */
+  function placeChatBubble(): void {
+    const show = chatting || performance.now() < chatUntil;
+    if (!show) {
+      chatBubble.classList.remove('visible');
+      return;
+    }
+    const [x, y, z] = world.getState().position;
+    chatPoint.set(x, y + 2.45, z).project(camera);
+    if (chatPoint.z > 1) {
+      chatBubble.classList.remove('visible');
+      return;
+    }
+    const rect = renderer.domElement.getBoundingClientRect();
+    chatBubble.style.left = `${(chatPoint.x * 0.5 + 0.5) * rect.width}px`;
+    chatBubble.style.top = `${(-chatPoint.y * 0.5 + 0.5) * rect.height}px`;
+    chatBubble.classList.add('visible');
+  }
   // Fire as soon as the world is running — before doors/towers finish building —
   // and backdate to the Walk click so the beam does not wait on load.
   if (!options.start) triggerSpawnFx(options.enteredAt);
@@ -658,14 +765,41 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     return worlds.length ? worlds[Math.floor(Math.random() * worlds.length)] : null;
   }
 
-  /** An empty door was picked: hand over to the page's add-world form. */
+  /** An empty door was picked: claim it from inside the lobby. */
   function addWorld(): void {
-    if (adding || warping) return;
-    adding = true;
+    if (warping || !nearEmpty || claimModal) return;
     document.exitPointerLock?.();
-    // E arrives mid-frame, and the page may tear the lobby down in response:
-    // let the frame finish drawing first.
-    window.setTimeout(() => options.onAddWorld?.(), 0);
+    const door = nearEmpty;
+    claimModal = openClaimModal(light, {
+      taken: (url) => known.has(url),
+      onClose: () => {
+        claimModal = null;
+      },
+      onClaim: (world) => {
+        placeClaim(door, world);
+        options.onClaimWorld?.(world);
+      },
+    });
+  }
+
+  /** The first person at this empty door keeps it: their world opens here. */
+  function placeClaim(empty: Door, world: ClaimedWorld): void {
+    const angle = typeof empty.group.userData.angle === 'number' ? empty.group.userData.angle : Math.atan2(empty.group.position.x, empty.group.position.z);
+    const { x, z } = empty.group.position;
+    const index = emptyDoors.indexOf(empty);
+    if (index >= 0) emptyDoors.splice(index, 1);
+    if (nearEmpty === empty) {
+      nearEmpty = null;
+      addPrompt.classList.remove('visible');
+    }
+    empty.dispose();
+    saveClaim({ angle, name: world.name, url: world.url, cover: world.cover });
+    const door = new Door({ name: world.name, url: world.url, cover: world.cover }, light);
+    scene.add(door.group);
+    door.place(x, z, 0, 0);
+    door.group.userData.angle = angle;
+    known.set(world.url, { name: world.name, url: world.url, cover: world.cover });
+    doors.set(world.url, door);
   }
 
   // Keyboard: E at a tower door, lift or elevator, or next to an empty door.
@@ -682,7 +816,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   let pressAt: { x: number; y: number; time: number } | null = null;
   const handlePointerDown = (event: PointerEvent) => {
     pressAt = { x: event.clientX, y: event.clientY, time: performance.now() };
-    if (document.pointerLockElement !== renderer.domElement || adModal || event.button !== 0) return;
+    if (document.pointerLockElement !== renderer.domElement || adModal || claimModal || event.button !== 0) return;
     // A click aims where the camera looks: a tower door there, or a billboard.
     if (towerCity.tap(0, 0)) return;
     const hit = billboardAt(0, 0);
@@ -691,7 +825,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const handlePointerUp = (event: PointerEvent) => {
     const press = pressAt;
     pressAt = null;
-    if (!press || document.pointerLockElement === renderer.domElement || adModal) return;
+    if (!press || document.pointerLockElement === renderer.domElement || adModal || claimModal) return;
     // A tap, not a drag to look around or a push on the joystick.
     const moved = Math.hypot(event.clientX - press.x, event.clientY - press.y);
     if (moved > 10 || performance.now() - press.time > 400) return;
@@ -717,7 +851,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     sinceFocus += dt;
     if (sinceFocus < FOCUS_INTERVAL) return;
     sinceFocus = 0;
-    const active = !adModal && !warping && !doorPrompt && (document.pointerLockElement === renderer.domElement || isTouch);
+    const active = !adModal && !claimModal && !warping && !doorPrompt && (document.pointerLockElement === renderer.domElement || isTouch);
     const hit = active ? billboardAt(0, 0) : null;
     const same = hit?.slot === focused?.slot && hit?.kind === focused?.kind;
     focused = hit;
@@ -795,7 +929,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     warpDoor = null;
     warping = false;
     towerCity.setBlocked(false);
-    adding = false;
     flash.classList.remove('active');
     if (returnTo) emerge(returnTo);
     else {
@@ -972,7 +1105,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
     // Everyone with the same list gets the same ring, so visitors who see
     // each other also see the same doors around them.
-    const urls = [...known.keys()].sort();
+    // A door claimed inside the lobby stays on the opening it was given.
+    // Once that world is published, it joins the ordinary ring instead.
+    const claims = loadClaims().filter((claim) => !worlds.some((entry) => entry.url === claim.url));
+    const claimUrls = new Set(claims.map((claim) => claim.url));
+    const urls = [...known.keys()].filter((url) => !claimUrls.has(url)).sort();
     const total = Math.max(MIN_DOORS, urls.length + SPARE_DOORS);
     const gateArc = GATE_COUNT * (GATE_WIDTH + GATE_MARGIN * 2);
     const radius = Math.max(WALL_MIN_RADIUS, (total * DOOR_SPACING + gateArc) / (Math.PI * 2));
@@ -1001,9 +1138,24 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     addPrompt.classList.remove('visible');
     const taken = new Set(slots);
     for (const slot of angles.map((_, i) => i).filter((i) => !taken.has(i))) {
+      const angle = angles[slot];
+      const claim = claims.find((entry) => angleDelta(entry.angle, angle) < 0.08);
+      if (claim) {
+        let door = doors.get(claim.url);
+        if (!door) {
+          door = new Door({ name: claim.name, url: claim.url, cover: claim.cover }, light);
+          scene.add(door.group);
+          known.set(claim.url, { name: claim.name, url: claim.url, cover: claim.cover });
+          doors.set(claim.url, door);
+        }
+        at(door, slot);
+        door.group.userData.angle = angle;
+        continue;
+      }
       const door = new Door(null, light);
       scene.add(door.group);
       at(door, slot);
+      door.group.userData.angle = angle;
       emptyDoors.push(door);
     }
     buildWall(radius, angles);
@@ -1195,6 +1347,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     billboardFetch?.abort();
     towerCity.dispose();
     adModal?.close();
+    claimModal?.close();
     billboards?.dispose();
     adPrompt.remove();
     window.removeEventListener('pageshow', handlePageShow);
@@ -1206,6 +1359,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     doors.clear();
     emptyDoors.length = 0;
     addPrompt.remove();
+    window.removeEventListener('keydown', handleChatKey);
+    document.removeEventListener('mousemove', holdLook, true);
+    document.removeEventListener('wheel', holdLook, true);
+    document.documentElement.classList.remove('chatting');
+    chatBubble.remove();
     for (const mesh of [...wall, ...trim]) mesh.geometry.dispose();
     wallMaterial.dispose();
     cityMaterials.dispose();
@@ -1268,6 +1426,306 @@ interface Ghost {
  * Only this browser draws it that way: the presence server never hears about
  * it, so everyone else sees an ordinary figure.
  */
+const CLAIMS_KEY = 'worldmesh.lobby.claims';
+
+interface ClaimedWorld {
+  name: string;
+  url: string;
+  email: string;
+  /** Picture shown in the doorway. */
+  cover?: string;
+}
+
+interface DoorClaim {
+  angle: number;
+  name: string;
+  url: string;
+  cover?: string;
+}
+
+function angleDelta(a: number, b: number): number {
+  const turn = Math.PI * 2;
+  const d = Math.abs(a - b) % turn;
+  return Math.min(d, turn - d);
+}
+
+function loadClaims(): DoorClaim[] {
+  try {
+    const raw = localStorage.getItem(CLAIMS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (entry): entry is DoorClaim =>
+        !!entry &&
+        typeof entry === 'object' &&
+        typeof (entry as DoorClaim).angle === 'number' &&
+        typeof (entry as DoorClaim).name === 'string' &&
+        typeof (entry as DoorClaim).url === 'string' &&
+        ((entry as DoorClaim).cover === undefined || typeof (entry as DoorClaim).cover === 'string'),
+    );
+  } catch {
+    return [];
+  }
+}
+
+function saveClaim(claim: DoorClaim): void {
+  const rest = loadClaims().filter((entry) => angleDelta(entry.angle, claim.angle) >= 0.08 && entry.url !== claim.url);
+  const next = [...rest, claim];
+  try {
+    localStorage.setItem(CLAIMS_KEY, JSON.stringify(next));
+  } catch {
+    // A large graphic can overflow storage. Keep the door without the picture.
+    try {
+      localStorage.setItem(CLAIMS_KEY, JSON.stringify(next.map(({ cover: _cover, ...entry }) => entry)));
+    } catch {
+      // Storage blocked: the door still shows the world until the page is left.
+    }
+  }
+}
+
+/**
+ * A window inside the lobby for the empty door in front of you. The first
+ * person to place a world here keeps that doorway.
+ */
+function openClaimModal(
+  light: boolean,
+  options: {
+    taken: (url: string) => boolean;
+    onClose: () => void;
+    onClaim: (world: ClaimedWorld) => void;
+  },
+): { close: () => void } {
+  const dialog = document.createElement('dialog');
+  dialog.className = 'world-claim';
+  dialog.setAttribute('aria-labelledby', 'world-claim-title');
+  if (light) dialog.dataset.theme = 'light';
+  for (const type of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'keydown', 'keyup', 'wheel', 'touchstart']) {
+    dialog.addEventListener(type, (event) => event.stopPropagation());
+  }
+
+  const title = document.createElement('h2');
+  title.id = 'world-claim-title';
+  title.textContent = 'Put your world in this door';
+  const note = document.createElement('p');
+  note.textContent = 'You are the first one at this door, so you can place your world here. It opens in the lobby right away and is sent to the gallery for review.';
+  const status = document.createElement('p');
+  status.className = 'world-claim-status';
+
+  const urlInput = document.createElement('input');
+  urlInput.type = 'url';
+  urlInput.required = true;
+  urlInput.placeholder = 'https://your-world.example';
+  urlInput.autocomplete = 'off';
+  const emailInput = document.createElement('input');
+  emailInput.type = 'email';
+  emailInput.required = true;
+  emailInput.placeholder = 'Email, so you can manage it';
+  emailInput.autocomplete = 'email';
+
+  const coverSection = document.createElement('div');
+  coverSection.className = 'cover-section';
+  const coverInput = document.createElement('input');
+  coverInput.type = 'file';
+  coverInput.accept = 'image/*';
+  coverInput.hidden = true;
+  const coverTrigger = document.createElement('button');
+  coverTrigger.type = 'button';
+  coverTrigger.className = 'cover-upload-trigger';
+  coverTrigger.innerHTML =
+    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg><span>Add cover image (optional, portrait 3:4)</span>';
+  const cropperBox = document.createElement('div');
+  cropperBox.className = 'cropper-container';
+  cropperBox.style.display = 'none';
+  const previewCard = document.createElement('div');
+  previewCard.className = 'cropper-preview-card';
+  const canvas = document.createElement('canvas');
+  canvas.width = 600;
+  canvas.height = 800;
+  const hint = document.createElement('div');
+  hint.className = 'cropper-overlay-hint';
+  hint.textContent = 'Drag to move · Scroll to zoom';
+  previewCard.append(canvas, hint);
+  const zoomOut = document.createElement('button');
+  zoomOut.type = 'button';
+  zoomOut.className = 'cropper-icon-btn';
+  zoomOut.title = 'Zoom out';
+  zoomOut.textContent = '−';
+  const zoomIn = document.createElement('button');
+  zoomIn.type = 'button';
+  zoomIn.className = 'cropper-icon-btn';
+  zoomIn.title = 'Zoom in';
+  zoomIn.textContent = '+';
+  const zoomSlider = document.createElement('input');
+  zoomSlider.type = 'range';
+  zoomSlider.min = '1';
+  zoomSlider.max = '3';
+  zoomSlider.step = '0.01';
+  zoomSlider.value = '1';
+  const zoomGroup = document.createElement('div');
+  zoomGroup.className = 'cropper-zoom-group';
+  zoomGroup.append(zoomOut, zoomSlider, zoomIn);
+  const reset = document.createElement('button');
+  reset.type = 'button';
+  reset.className = 'cropper-text-btn';
+  reset.textContent = 'Reset';
+  const change = document.createElement('button');
+  change.type = 'button';
+  change.className = 'cropper-text-btn';
+  change.textContent = 'Change';
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'cropper-text-btn danger';
+  remove.textContent = 'Remove';
+  const cropActions = document.createElement('div');
+  cropActions.className = 'cropper-actions';
+  cropActions.append(reset, change, remove);
+  const toolbar = document.createElement('div');
+  toolbar.className = 'cropper-toolbar';
+  toolbar.append(zoomGroup, cropActions);
+  cropperBox.append(previewCard, toolbar);
+  coverSection.append(coverInput, coverTrigger, cropperBox);
+
+  const cropper = new ImageCropper(canvas, {
+    onZoomChange: (zoom) => {
+      zoomSlider.value = String(zoom);
+    },
+    onImageLoaded: () => {
+      cropperBox.style.display = 'flex';
+      coverTrigger.style.display = 'none';
+      zoomSlider.value = '1';
+    },
+    onClear: () => {
+      cropperBox.style.display = 'none';
+      coverTrigger.style.display = '';
+      coverInput.value = '';
+    },
+  });
+  const loadCoverFile = (file: File | undefined) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      status.textContent = 'Please select an image file.';
+      return;
+    }
+    void cropper.loadFile(file).then(
+      () => {
+        status.textContent = '';
+      },
+      () => {
+        status.textContent = 'Failed to load image. Please try another one.';
+      },
+    );
+  };
+  coverTrigger.addEventListener('click', () => coverInput.click());
+  change.addEventListener('click', () => coverInput.click());
+  coverInput.addEventListener('change', () => loadCoverFile(coverInput.files?.[0]));
+  zoomSlider.addEventListener('input', () => cropper.setZoom(parseFloat(zoomSlider.value)));
+  zoomIn.addEventListener('click', () => cropper.setZoom(cropper.getZoom() + 0.25));
+  zoomOut.addEventListener('click', () => cropper.setZoom(cropper.getZoom() - 0.25));
+  reset.addEventListener('click', () => cropper.resetTransform());
+  remove.addEventListener('click', () => cropper.clear());
+  for (const dropTarget of [coverTrigger, cropperBox]) {
+    dropTarget.addEventListener('dragover', (event) => {
+      event.preventDefault();
+      coverTrigger.classList.add('drag-over');
+    });
+    dropTarget.addEventListener('dragleave', () => coverTrigger.classList.remove('drag-over'));
+    dropTarget.addEventListener('drop', (event) => {
+      event.preventDefault();
+      coverTrigger.classList.remove('drag-over');
+      loadCoverFile(event.dataTransfer?.files?.[0]);
+    });
+  }
+
+  const frame = document.createElement('iframe');
+  frame.className = 'world-claim-frame';
+  frame.hidden = true;
+  frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-pointer-lock');
+  frame.title = 'Preview of your world';
+
+  const preview = document.createElement('button');
+  preview.type = 'button';
+  preview.textContent = 'Look inside';
+  const claim = document.createElement('button');
+  claim.type = 'button';
+  claim.className = 'world-claim-primary';
+  claim.textContent = 'Place it here';
+  const closeButton = document.createElement('button');
+  closeButton.type = 'button';
+  closeButton.className = 'world-claim-close';
+  closeButton.setAttribute('aria-label', 'Close');
+  closeButton.textContent = '×';
+
+  const actions = document.createElement('div');
+  actions.className = 'world-claim-actions';
+  actions.append(preview, claim);
+  dialog.append(closeButton, title, note, urlInput, emailInput, coverSection, status, frame, actions);
+  document.body.appendChild(dialog);
+  window.dispatchEvent(new Event('blur'));
+  dialog.showModal();
+  urlInput.focus();
+
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    dialog.close();
+    dialog.remove();
+    options.onClose();
+  };
+  closeButton.addEventListener('click', close);
+  dialog.addEventListener('cancel', (event) => {
+    event.preventDefault();
+    close();
+  });
+  dialog.addEventListener('click', (event) => {
+    if (event.target === dialog) close();
+  });
+
+  const readUrl = (): URL | null => {
+    const raw = urlInput.value.trim();
+    if (!raw) return null;
+    try {
+      return new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+    } catch {
+      return null;
+    }
+  };
+
+  preview.addEventListener('click', () => {
+    const url = readUrl();
+    if (!url) {
+      status.textContent = 'That does not look like a URL.';
+      return;
+    }
+    status.textContent = '';
+    frame.hidden = false;
+    frame.src = url.toString();
+  });
+
+  claim.addEventListener('click', () => {
+    const url = readUrl();
+    const email = emailInput.value.trim();
+    if (!url) {
+      status.textContent = 'That does not look like a URL.';
+      return;
+    }
+    if (options.taken(url.toString())) {
+      status.textContent = 'That world already has a door.';
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      status.textContent = 'Enter an email so you can manage this world.';
+      return;
+    }
+    const picture = cropper.hasImage() ? cropper.exportWebP(0.82) : '';
+    options.onClaim({ name: url.hostname, url: url.toString(), email, cover: picture || undefined });
+    close();
+  });
+
+  return { close };
+}
+
 function makeGhost(root: Object3D | null): Ghost | null {
   if (!root) return null;
   const saved = new Map<Material, { opacity: number; transparent: boolean; depthWrite: boolean; emissive?: number }>();

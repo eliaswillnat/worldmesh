@@ -12,6 +12,8 @@ import { DurableObject } from 'cloudflare:workers';
  *   server → client  { t: 'welcome', id, peers: [{ id, p, r, e, n, a }] }
  *   client → server  { t: 's', p: [x, y, z], r: yaw, e?: expression, n?: username, a?: alias }
  *   server → client  { t: 's', id, p, r, e, n, a }   another peer moved ('' n and a = guest)
+ *   client → server  { t: 'c', m }             a short line of chat
+ *   server → client  { t: 'c', id, m }         that line, for everyone else
  *   server → client  { t: 'leave', id }        another peer left
  */
 
@@ -37,6 +39,8 @@ interface Peer {
   a: string;
   /** False until the peer has sent its first position. */
   seen: boolean;
+  /** Last time this peer sent a chat line, so they cannot flood the room. */
+  chatAt: number;
 }
 
 const MAX_PEERS = 64;
@@ -70,7 +74,7 @@ export class Room extends DurableObject<Env> {
     if (sockets.length >= MAX_PEERS) return new Response('Room is full', { status: 503 });
 
     const { 0: client, 1: server } = new WebSocketPair();
-    const peer: Peer = { id: crypto.randomUUID().slice(0, 8), p: [0, 0, 0], r: 0, e: 'smile', n: '', a: '', seen: false };
+    const peer: Peer = { id: crypto.randomUUID().slice(0, 8), p: [0, 0, 0], r: 0, e: 'smile', n: '', a: '', seen: false, chatAt: 0 };
 
     this.ctx.acceptWebSocket(server);
     server.serializeAttachment(peer);
@@ -87,10 +91,14 @@ export class Room extends DurableObject<Env> {
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     if (typeof message !== 'string' || message.length > MAX_MESSAGE_BYTES) return;
 
-    let data: { t?: unknown; p?: unknown; r?: unknown; e?: unknown; n?: unknown; a?: unknown };
+    let data: { t?: unknown; p?: unknown; r?: unknown; e?: unknown; n?: unknown; a?: unknown; m?: unknown };
     try {
       data = JSON.parse(message);
     } catch {
+      return;
+    }
+    if (data?.t === 'c') {
+      this.relayChat(ws, data.m);
       return;
     }
     if (data?.t !== 's') return;
@@ -148,6 +156,20 @@ export class Room extends DurableObject<Env> {
     } catch {
       // Notifications are best-effort.
     }
+  }
+
+  /** One short line, forwarded as-is. Nothing is stored. */
+  private relayChat(ws: WebSocket, raw: unknown): void {
+    if (typeof raw !== 'string') return;
+    const text = raw.replace(/[\u0000-\u001f]/g, '').trim().slice(0, 80);
+    if (!text) return;
+    const peer = ws.deserializeAttachment() as Peer | null;
+    if (!peer?.seen) return;
+    const now = Date.now();
+    if (now - peer.chatAt < 400) return;
+    peer.chatAt = now;
+    ws.serializeAttachment(peer);
+    this.broadcast(JSON.stringify({ t: 'c', id: peer.id, m: text }), ws);
   }
 
   private leave(ws: WebSocket): void {
