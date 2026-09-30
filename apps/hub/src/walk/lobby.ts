@@ -162,6 +162,9 @@ const RANDOM_DOOR_ARC = 4.1;
 /** How far the random door stands out from the outer wall. */
 const RANDOM_DOOR_OUT = 0.3;
 
+/** How rough the floor is: 0 is a perfect mirror, 1 a softly blurred, uneven stone. */
+const FLOOR_ROUGHNESS = 1;
+
 /**
  * The floor is one mirror plane whose shader also draws the grid. Drawing the
  * grid as a second plane just above the mirror depth-fights on GPUs with low
@@ -177,6 +180,7 @@ const floorShader = {
     uLight: { value: 0 },
     uBackground: { value: new Color() },
     uHaze: { value: new Color() },
+    uRough: { value: FLOOR_ROUGHNESS },
   },
   vertexShader: /* glsl */ `
     uniform mat4 textureMatrix;
@@ -199,6 +203,7 @@ const floorShader = {
     uniform float uLight;
     uniform vec3 uBackground;
     uniform vec3 uHaze;
+    uniform float uRough;
     varying vec4 vUv;
     varying vec3 vWorld;
 
@@ -209,10 +214,42 @@ const floorShader = {
       return 1.0 - min(min(g.x, g.y), 1.0);
     }
 
+    float hash(vec2 p) {
+      vec3 q = fract(vec3(p.xyx) * 0.1031);
+      q += dot(q, q.yzx + 33.33);
+      return fract((q.x + q.y) * q.z);
+    }
+
+    float valueNoise(vec2 p) {
+      vec2 i = floor(p);
+      vec2 f = fract(p);
+      f = f * f * (3.0 - 2.0 * f);
+      return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
+    }
+
     void main() {
       #include <logdepthbuf_fragment>
 
-      vec3 reflection = texture2DProj(tDiffuse, vUv).rgb;
+      // A slightly rough floor rather than a perfect mirror: the surface is a
+      // little uneven, so reflections waver and soften, and its sheen varies
+      // from spot to spot. All of it is pinned to the floor, so nothing crawls.
+      vec2 ground = vWorld.xz;
+      vec2 wobble = vec2(valueNoise(ground * 1.3), valueNoise(ground * 1.3 + 17.0)) - 0.5;
+      vec4 uv = vUv;
+      // texture2DProj divides by w, so offsets scaled by w are in texture space.
+      uv.xy += wobble * (0.004 * uRough) * uv.w;
+      vec2 spread = vec2(0.004 * uRough) * uv.w;
+      vec3 reflection = texture2DProj(tDiffuse, uv).rgb * 0.4
+        + texture2DProj(tDiffuse, uv + vec4(spread.x, spread.y * 0.5, 0.0, 0.0)).rgb * 0.15
+        + texture2DProj(tDiffuse, uv + vec4(-spread.x * 0.5, spread.y, 0.0, 0.0)).rgb * 0.15
+        + texture2DProj(tDiffuse, uv + vec4(-spread.x, -spread.y * 0.5, 0.0, 0.0)).rgb * 0.15
+        + texture2DProj(tDiffuse, uv + vec4(spread.x * 0.5, -spread.y, 0.0, 0.0)).rgb * 0.15;
+      // Patchy sheen, plus a fine grain that fades out before it gets smaller than a pixel.
+      float patches = valueNoise(ground * 0.45) * 0.6 + valueNoise(ground * 2.1) * 0.4;
+      vec2 grainCoord = ground * 26.0;
+      float grainVisible = 1.0 - smoothstep(0.35, 0.9, max(fwidth(grainCoord).x, fwidth(grainCoord).y));
+      float grain = (valueNoise(grainCoord) - 0.5) * grainVisible;
+      float rough = ((patches - 0.5) * 0.9 + grain * 1.2) * uRough;
 
       float minor = gridLine(vWorld.xz / 2.0);
       float major = gridLine(vWorld.xz / 10.0);
@@ -225,13 +262,14 @@ const floorShader = {
       float lines = max(minor * 0.08 * minorFade, major * 0.2) * fade * (1.0 + glow * 1.6);
 
       // A mirror under a tinted glaze: glossier at grazing angles, faint
-      // looking straight down.
+      // looking straight down. The rough patches take some of the shine off.
       vec3 toCamera = normalize(cameraPosition - vWorld);
-      float glaze = mix(0.6, 0.88, abs(toCamera.y));
+      float glaze = clamp(mix(0.6, 0.88, abs(toCamera.y)) + rough * 0.18, 0.0, 1.0);
 
-      // Dark: black glass with light lines. Light: white glass with ink lines.
-      vec3 darkFloor = reflection * (1.0 - glaze) * (1.0 - lines) + vec3(lines);
-      vec3 lightFloor = mix(reflection, uBackground, glaze) * (1.0 - min(lines * 1.4, 1.0));
+      // Dark: black stone with light lines. Light: white stone with ink lines.
+      // A faint speckle keeps the black from reading as a flat void.
+      vec3 darkFloor = reflection * (1.0 - glaze) * (1.0 - lines) + vec3(lines) + vec3(max(rough, 0.0) * 0.006);
+      vec3 lightFloor = mix(reflection, uBackground * (1.0 - rough * 0.035), glaze) * (1.0 - min(lines * 1.4, 1.0));
 
       // Melt into the fog at the horizon, like everything else.
       float haze = smoothstep(60.0, 230.0, dist);
