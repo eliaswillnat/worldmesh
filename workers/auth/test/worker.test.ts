@@ -73,14 +73,54 @@ describe('schema', () => {
   });
 });
 
+describe('email and password', () => {
+  const post = (path: string, body: unknown, cookie?: string) =>
+    call(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: ORIGIN, ...(cookie && { Cookie: cookie }) },
+      body: JSON.stringify(body),
+    });
+  const sessionCookie = (res: Response) =>
+    res.headers.getSetCookie().find((c) => c.startsWith(`${SESSION_COOKIE}=`))?.split(';')[0];
+
+  it('signs up, stores a PBKDF2 hash and signs in', async () => {
+    const signUp = await post('/api/auth/sign-up/email', { name: 'Pat', email: 'pat@example.com', password: 'correct horse battery' });
+    expect(signUp.status).toBe(200);
+    const cookie = sessionCookie(signUp);
+    expect(cookie).toBeTruthy();
+    const me = (await (await call('/api/account/me', { headers: { Cookie: cookie! } })).json()) as { user: { name: string } };
+    expect(me.user.name).toBe('Pat');
+
+    const row = await env.DB.prepare(
+      `select a.password from account a join "user" u on u.id = a.userId where u.email = 'pat@example.com' and a.providerId = 'credential'`,
+    ).first<{ password: string }>();
+    expect(row?.password).toMatch(/^pbkdf2-sha256\$100000\$/);
+    expect(row?.password).not.toContain('correct horse');
+
+    const signIn = await post('/api/auth/sign-in/email', { email: 'pat@example.com', password: 'correct horse battery' });
+    expect(signIn.status).toBe(200);
+    expect(sessionCookie(signIn)).toBeTruthy();
+  });
+
+  it('refuses a wrong password, a short password and a taken email', async () => {
+    await post('/api/auth/sign-up/email', { name: 'Sam', email: 'sam@example.com', password: 'a-good-password' });
+    expect((await post('/api/auth/sign-in/email', { email: 'sam@example.com', password: 'wrong-password' })).status).toBe(401);
+    expect((await post('/api/auth/sign-up/email', { name: 'X', email: 'x@example.com', password: 'short' })).status).toBe(400);
+    const again = await post('/api/auth/sign-up/email', { name: 'Sam', email: 'sam@example.com', password: 'another-password' });
+    expect(again.ok).toBe(false);
+  });
+});
+
 describe('sign-in', () => {
   it('lists configured providers in display order', async () => {
     expect(await (await call('/api/account/providers')).json()).toEqual({
       providers: ['google', 'apple', 'github', 'discord'],
+      email: true,
+      passwordReset: false,
     });
     const { APPLE_PRIVATE_KEY: _key, DISCORD_CLIENT_SECRET: _secret, ...partial } = env;
     const res = await worker.fetch(new Request(`${ORIGIN}/api/account/providers`), partial as Env);
-    expect(await res.json()).toEqual({ providers: ['google', 'github'] });
+    expect(await res.json()).toEqual({ providers: ['google', 'github'], email: true, passwordReset: false });
   });
 
   it.each(['google', 'apple', 'github', 'discord'])('starts %s OAuth with state bound to this browser', async (provider) => {

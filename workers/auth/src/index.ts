@@ -1,19 +1,19 @@
 /**
- * WorldMesh accounts: Better Auth (Google, GitHub) on D1, plus the two
+ * WorldMesh accounts: Better Auth (email + password, Google, Apple, GitHub, Discord) on D1, plus the two
  * account endpoints the hub needs. Served on the hub's own origin through
  * Worker routes, so the session cookie is first-party and host-only.
  *
  * Deliberately knows nothing about ActivityPub; workers/federation reads the
  * same D1 tables on its own.
  */
-import { AUTH_BASE_PATH, configuredProviders, getAuth, type Env } from './auth';
+import { AUTH_BASE_PATH, configuredProviders, getAuth, passwordOptions, type Env } from './auth';
 import { getMe, setUsername } from './account';
 import { HttpError, json, secure } from './http';
 
 export type { Env };
 
 /** Endpoints worth a per-IP limit in front of everything else. */
-const LIMITED = /^\/api\/auth\/(sign-in|callback|sign-out)\b|^\/api\/account\/username$/;
+const LIMITED = /^\/api\/auth\/(sign-in|sign-up|callback|sign-out|request-password-reset|reset-password|send-verification-email)\b|^\/api\/account\/username$/;
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -33,7 +33,7 @@ export default {
         return secure(await (await getAuth(env)).handler(request));
       }
       if (url.pathname === '/api/account/providers' && request.method === 'GET') {
-        return secure(json({ providers: configuredProviders(env) }));
+        return secure(json({ providers: configuredProviders(env), ...passwordOptions(env) }));
       }
       if (url.pathname === '/api/account/me' && request.method === 'GET') {
         return secure(await getMe(request, env, await getAuth(env)));

@@ -1,11 +1,13 @@
 import { betterAuth } from 'better-auth';
 import { appleClientSecret, appleConfigured, type AppleCredentials } from './apple';
+import { mailConfigured, sendMail, type MailEnv } from './mail';
+import { hashPassword, verifyPassword } from './password';
 
 export interface RateLimiter {
   limit(options: { key: string }): Promise<{ success: boolean }>;
 }
 
-export interface Env extends AppleCredentials {
+export interface Env extends AppleCredentials, MailEnv {
   DB: D1Database;
   /** Public origin of the hub, e.g. https://worldmesh.net. OAuth callbacks live under it. */
   BETTER_AUTH_URL: string;
@@ -25,6 +27,11 @@ export const AUTH_BASE_PATH = '/api/auth';
 
 /** Apple posts its OAuth callback to us from this origin (response_mode=form_post). */
 const APPLE_ORIGIN = 'https://appleid.apple.com';
+
+/** What the login dialog can offer besides OAuth. */
+export function passwordOptions(env: Env) {
+  return { email: true, passwordReset: mailConfigured(env) };
+}
 
 export type ProviderId = 'google' | 'apple' | 'github' | 'discord';
 
@@ -48,6 +55,11 @@ export function createAuth(env: Env, appleSecret?: string) {
   }
   const baseURL = new URL(env.BETTER_AUTH_URL);
   const origin = baseURL.origin;
+
+  // With mail set up, a password account must prove its address before it can
+  // sign in. That stops someone claiming another person's email ahead of them,
+  // and lets Google/GitHub link to it later (linking needs a verified email).
+  const mail = mailConfigured(env);
 
   const socialProviders: Parameters<typeof betterAuth>[0]['socialProviders'] = {};
   if (env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET) {
@@ -87,6 +99,30 @@ export function createAuth(env: Env, appleSecret?: string) {
     // against trusted origins before bouncing it to a same-site GET.
     trustedOrigins: appleSecret ? [origin, APPLE_ORIGIN] : [origin],
     socialProviders,
+    emailAndPassword: {
+      enabled: true,
+      minPasswordLength: 8,
+      maxPasswordLength: 128,
+      autoSignIn: true,
+      requireEmailVerification: mail,
+      revokeSessionsOnPasswordReset: true,
+      password: { hash: hashPassword, verify: verifyPassword },
+      ...(mail && {
+        sendResetPassword: async ({ user, url }) => {
+          await sendMail(env, user.email, 'Reset your WorldMesh password', 'Someone asked to reset the password for your WorldMesh account.', 'Choose a new password', url);
+        },
+      }),
+    },
+    ...(mail && {
+      emailVerification: {
+        sendOnSignUp: true,
+        sendOnSignIn: true,
+        autoSignInAfterVerification: true,
+        sendVerificationEmail: async ({ user, url }) => {
+          await sendMail(env, user.email, 'Confirm your WorldMesh email', 'Welcome to WorldMesh! Confirm your email to finish creating your account.', 'Confirm email', url);
+        },
+      },
+    }),
     user: {
       additionalFields: {
         // Set only through POST /api/account/username; `input: false` keeps it
@@ -128,6 +164,10 @@ export function createAuth(env: Env, appleSecret?: string) {
       max: 60,
       customRules: {
         '/sign-in/*': { window: 60, max: 10 },
+        '/sign-up/*': { window: 60, max: 5 },
+        '/request-password-reset': { window: 60, max: 3 },
+        '/reset-password': { window: 60, max: 5 },
+        '/send-verification-email': { window: 60, max: 3 },
         '/callback/*': { window: 60, max: 20 },
       },
     },

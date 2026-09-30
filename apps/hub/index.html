@@ -5,6 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
+    <script>
+      try {
+        const t = localStorage.getItem('worldmesh.theme');
+        if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+      } catch {}
+    </script>
     <title>WorldMesh</title>
     <meta name="description" content="A lightweight open network for independently hosted 3D worlds." />
     <link rel="icon" type="image/webp" href="/favicon.webp" />
@@ -94,7 +100,8 @@
       .tagline { color: var(--muted); font-size: 15px; margin: 0 0 20px; line-height: 1.5; }
       form { display: flex; gap: 10px; margin-bottom: 10px; }
       input[type="text"],
-      input[type="email"] {
+      input[type="email"],
+      input[type="password"] {
         flex: 1;
         padding: 14px 16px;
         border-radius: 25px;
@@ -566,27 +573,93 @@
         .card-grid > .card::after { border-radius: 12px; }
       }
 
-      /* ── Mobile: add form behind a top-right toggle ─────────────── */
-      .mobile-add-toggle { display: none; }
+      /* ── Mobile: a top-right menu (add world, account, theme) ───── */
+      .mobile-menu-toggle, .mobile-menu { display: none; }
       @media (max-width: 600px) {
-        .mobile-add-toggle {
-          display: block;
+        .mobile-menu-toggle {
+          display: flex;
+          align-items: center;
+          justify-content: center;
           position: fixed;
-          top: calc(max(20px, env(safe-area-inset-top)) - 4px);
+          top: max(16px, env(safe-area-inset-top));
           right: max(16px, env(safe-area-inset-right));
           z-index: 100;
-          padding: 8px 14px;
-          font-size: 13px;
+          width: 44px;
+          height: 44px;
+          padding: 0;
+          border-radius: 50%;
+          color: var(--text);
           background: color-mix(in srgb, var(--bg) 70%, transparent);
           -webkit-backdrop-filter: blur(10px);
           backdrop-filter: blur(10px);
         }
-        .mobile-add-toggle:hover { color: var(--text); border-color: var(--subtle); }
-        html.walking .mobile-add-toggle { display: none; }
+        .mobile-menu-toggle svg { width: 22px; height: 22px; display: block; }
+        .mobile-profile { display: flex; }
+        .mobile-profile .account-icon { display: block; }
+        .mobile-profile .account-avatar { width: 32px; height: 32px; }
+        .mobile-menu-toggle .icon-close { display: none; }
+        html.mobile-adding .mobile-menu-toggle .icon-menu,
+        html.menu-open .mobile-menu-toggle .icon-menu { display: none; }
+        html.mobile-adding .mobile-menu-toggle .icon-close,
+        html.menu-open .mobile-menu-toggle .icon-close { display: block; }
+        html.walking .mobile-menu-toggle, html.walking .mobile-menu { display: none !important; }
+        html.menu-open .mobile-menu {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          position: fixed;
+          top: calc(max(16px, env(safe-area-inset-top)) + 52px);
+          right: max(16px, env(safe-area-inset-right));
+          z-index: 100;
+          min-width: 220px;
+          padding: 8px;
+          border-radius: 16px;
+          border: 1px solid var(--border);
+          background: var(--card);
+          box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+        }
+        .mobile-menu-item {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          width: 100%;
+          padding: 12px 14px;
+          border: none;
+          border-radius: 10px;
+          background: transparent;
+          color: var(--text);
+          font-size: 15px;
+          text-align: left;
+        }
+        .mobile-menu-item:hover { background: var(--hover-overlay); }
+        .mobile-menu-label {
+          margin: 8px 14px 2px;
+          font-size: 11px;
+          letter-spacing: 0.22em;
+          text-transform: uppercase;
+          color: var(--muted);
+          font-weight: 600;
+        }
+        .theme-switch { display: flex; gap: 4px; padding: 4px 6px 6px; }
+        .theme-switch button {
+          flex: 1;
+          padding: 8px 0;
+          font-size: 13px;
+          border-radius: 10px;
+        }
+        .theme-switch button[aria-pressed="true"] {
+          background: var(--text);
+          color: var(--bg);
+          border-color: var(--text);
+        }
+        /* The walk toggle sits to the left of the menu button. */
+        html:not(.walking) .walk-toggle { right: calc(max(16px, env(safe-area-inset-right)) + 52px); }
+        /* The account button lives in the menu on phones. */
+        .account-button { display: none !important; }
         html:not(.mobile-adding) #add-form,
         html:not(.mobile-adding) #creator-fields,
         html:not(.mobile-adding) #status { display: none !important; }
-        /* Keep the title clear of the toggle. */
+        /* Keep the title clear of the two buttons. */
         h1 { padding-right: 116px; letter-spacing: 0.2em; }
       }
 
@@ -624,13 +697,16 @@
       .account-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .account-dialog {
         margin: auto;
-        width: min(360px, calc(100vw - 32px));
-        padding: 24px;
-        border-radius: 20px;
+        width: min(400px, calc(100vw - 32px));
+        max-height: calc(100dvh - 32px);
+        overflow-y: auto;
+        padding: 32px 28px 28px;
+        border-radius: 24px;
         border: 1px solid var(--border);
         background: var(--card);
         color: var(--text);
         font-family: inherit;
+        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
         /* showModal() focuses the dialog, and the browser paints its focus
            ring around the whole card. The 1px border is the card chrome. */
         outline: none;
@@ -639,15 +715,117 @@
       .account-dialog:focus-visible {
         outline: none;
       }
-      .account-dialog::backdrop { background: rgba(0, 0, 0, 0.5); }
-      .account-body { display: flex; flex-direction: column; gap: 10px; }
+      .account-dialog[open] { animation: account-in 180ms ease-out; }
+      @keyframes account-in {
+        from { opacity: 0; transform: translateY(8px) scale(0.98); }
+      }
+      @media (prefers-reduced-motion: reduce) { .account-dialog[open] { animation: none; } }
+      .account-dialog::backdrop {
+        background: rgba(0, 0, 0, 0.55);
+        -webkit-backdrop-filter: blur(6px);
+        backdrop-filter: blur(6px);
+      }
+      .account-body { position: relative; display: flex; flex-direction: column; gap: 12px; }
       .account-title {
-        margin: 0 0 8px;
-        font-size: 11px;
-        letter-spacing: 0.22em;
-        text-transform: uppercase;
+        margin: 0 0 4px;
+        font-size: 22px;
+        letter-spacing: -0.01em;
+        text-transform: none;
+        color: var(--text);
+        font-weight: 700;
+      }
+      .account-close {
+        position: absolute;
+        top: -18px;
+        right: -12px;
+        width: 34px;
+        height: 34px;
+        padding: 0;
+        border-radius: 50%;
+        border-color: transparent;
+        background: transparent;
         color: var(--muted);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .account-close:hover { color: var(--text); background: var(--hover-overlay); }
+      .account-tabs {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 4px;
+        padding: 4px;
+        border-radius: 12px;
+        background: var(--input-bg);
+        border: 1px solid var(--border);
+      }
+      .account-tabs button {
+        padding: 8px 0;
+        border: none;
+        border-radius: 9px;
+        background: transparent;
+        color: var(--muted);
+        font-size: 14px;
+      }
+      .account-tabs button[aria-selected="true"] {
+        background: var(--card);
+        color: var(--text);
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+      }
+      .account-form { display: flex; flex-direction: column; gap: 12px; margin: 0; padding: 0 !important; }
+      .account-username { padding: 0 !important; }
+      .account-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); }
+      .account-field input { width: 100%; box-sizing: border-box; }
+      .account-password { position: relative; }
+      .account-password input { padding-right: 64px; }
+      .account-reveal {
+        position: absolute;
+        top: 50%;
+        right: 6px;
+        transform: translateY(-50%);
+        padding: 4px 10px;
+        font-size: 12px;
+        border: none;
+        background: transparent;
+        color: var(--muted);
+      }
+      .account-reveal:hover { color: var(--text); }
+      .account-submit {
+        margin-top: 4px;
+        padding: 12px;
         font-weight: 600;
+        background: var(--text);
+        color: var(--bg);
+        border-color: var(--text);
+      }
+      .account-submit:hover { opacity: 0.9; color: var(--bg); border-color: var(--text); }
+      .account-tabs button:hover { color: var(--text); }
+      .account-link {
+        align-self: center;
+        padding: 4px 8px;
+        border: none;
+        background: transparent;
+        color: var(--muted);
+        font-size: 13px;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+      .account-link:hover { color: var(--text); }
+      .account-divider {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin: 4px 0;
+        font-size: 12px;
+        color: var(--subtle);
+        text-transform: uppercase;
+        letter-spacing: 0.15em;
+      }
+      .account-divider::before, .account-divider::after {
+        content: "";
+        flex: 1;
+        height: 1px;
+        background: var(--border);
       }
       .account-provider {
         display: flex;
@@ -707,8 +885,6 @@
       }
       .walk-toggle svg { width: 22px; height: 22px; display: block; }
       .walk-toggle .icon-list { display: none; }
-      /* Walk mode is unlisted for now: locked, not reachable yet. */
-      html:not(.walking) .walk-toggle { display: none; }
       html.walking .walk-toggle {
         color: #fff;
         background: rgba(0, 0, 0, 0.45);
@@ -866,7 +1042,20 @@
         <rect x="14" y="14" width="7" height="7" rx="1.5"/>
       </svg>
     </button>
-    <button type="button" class="mobile-add-toggle" id="mobile-add-toggle" aria-expanded="false">Add world</button>
+    <button type="button" class="mobile-menu-toggle" id="mobile-menu-toggle" aria-label="Account and menu" aria-expanded="false" aria-controls="mobile-menu">
+      <span class="icon-menu mobile-profile" id="mobile-profile"></span>
+      <svg class="icon-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+    </button>
+    <div class="mobile-menu" id="mobile-menu">
+      <button type="button" class="mobile-menu-item" id="menu-add">Add world</button>
+      <button type="button" class="mobile-menu-item" id="menu-account">Log in</button>
+      <p class="mobile-menu-label">Appearance</p>
+      <div class="theme-switch" role="group" aria-label="Appearance">
+        <button type="button" data-theme-choice="system">System</button>
+        <button type="button" data-theme-choice="light">Light</button>
+        <button type="button" data-theme-choice="dark">Dark</button>
+      </div>
+    </div>
     <div class="walk-online" id="walk-online" aria-live="polite"></div>
     <main>
       <header class="site-header" id="site-header">
