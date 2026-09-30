@@ -307,6 +307,45 @@ describe('/api/account', () => {
     expect(await res.json()).toEqual({ error: 'That username is taken.' });
   });
 
+  it('issues presence tickets only to signed-in users with a username, from our own origin', async () => {
+    const { verifyPresenceTicket } = await import('../../presence/src/ticket');
+    const post = (cookie?: string, origin = ORIGIN) =>
+      call('/api/account/presence-ticket', {
+        method: 'POST',
+        headers: { Origin: origin, ...(cookie ? { Cookie: cookie } : {}) },
+      });
+
+    const { cookie } = await signedInUser('walker@example.com');
+    // Off until the secret is set.
+    expect((await post(cookie)).status).toBe(404);
+
+    env.PRESENCE_SECRET = 'presence-secret-presence-secret-1234';
+    try {
+      expect((await post()).status).toBe(401);
+      expect((await post(cookie, 'https://evil.example')).status).toBe(403);
+      expect((await post(cookie)).status).toBe(409);
+
+      const claim = await call('/api/account/username', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: ORIGIN, Cookie: cookie },
+        body: JSON.stringify({ username: 'walker' }),
+      });
+      expect(claim.status).toBe(200);
+      const refreshed = claim.headers
+        .getSetCookie()
+        .map((c) => c.split(';')[0])
+        .filter((c) => c.startsWith('__Secure-worldmesh.session_data='));
+
+      const res = await post([cookie, ...refreshed].join('; '));
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Cache-Control')).toBe('no-store');
+      const { ticket } = (await res.json()) as { ticket: string };
+      expect(await verifyPresenceTicket(env.PRESENCE_SECRET, ticket)).toBe('walker');
+    } finally {
+      delete env.PRESENCE_SECRET;
+    }
+  });
+
   it('requires a session to claim a username', async () => {
     const res = await call('/api/account/username', {
       method: 'POST',

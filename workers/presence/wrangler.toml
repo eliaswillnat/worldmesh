@@ -13,5 +13,11 @@ class_name = "Room"
 tag = "v1"
 new_sqlite_classes = ["Room"]
 
+# Optional secret (npx wrangler secret put PRESENCE_SECRET):
+#   PRESENCE_SECRET   the same value as on worldmesh-auth. With it, a username
+#                     is shown only with a valid ticket from
+#                     /api/account/presence-ticket; without it, names are
+#                     self-reported. See docs/cloudflare-deployment.md, step 5.
+
 # Deploy with:
 # cd workers/presence && npx wrangler deploy

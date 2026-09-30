@@ -117,6 +117,21 @@ relayed by a small Worker with one Durable Object per room, in
    VITE_PRESENCE_ENDPOINT=wss://presence.worldmesh.net
    ```
 
+3. Verified names. Without this step, the name above each visitor is whatever
+   their browser sends, so anyone can walk around as `@elias`. Set the same
+   random secret (at least 32 characters) on both Workers:
+   ```bash
+   openssl rand -base64 32   # copy the output
+   npx wrangler secret put PRESENCE_SECRET --config workers/auth/wrangler.toml
+   npx wrangler secret put PRESENCE_SECRET --config workers/presence/wrangler.toml
+   ```
+   Signed-in visitors then get a 10-minute ticket from
+   `POST /api/account/presence-ticket` when they join the lobby, and the
+   presence Worker shows a username only with a valid ticket for it. Everyone
+   else shows as a guest; private-mode aliases are unchanged. Set it on
+   `worldmesh-auth` first, so tickets exist before the lobby starts
+   requiring them.
+
 If the presence Worker is unreachable, walk mode still works single-player.
 
 Walk-mode doors show each world's cover image inside WebGL, which needs CORS. The

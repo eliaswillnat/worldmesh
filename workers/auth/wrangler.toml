@@ -50,6 +50,9 @@ simple = { limit = 20, period = 60 }
 #                          still works, unverified and with no password reset.
 #   AVATAR_SECRET          random, at least 32 bytes; turns on the Avatar Wallet
 #                          (seals VRoid tokens, OAuth flow cookies, handoff tickets)
+#   PRESENCE_SECRET        random, at least 32 bytes, and the same value on
+#                          worldmesh-presence; turns on verified walk mode names
+#                          (POST /api/account/presence-ticket)
 #   VROID_CLIENT_ID        VROID_CLIENT_SECRET   (VRoid Hub in the Avatar Wallet;
 #                          redirect https://worldmesh.net/api/account/avatar/callback/vroid)
 # Production OAuth redirect for each provider:

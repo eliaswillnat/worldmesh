@@ -1,4 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
+import { verifyPresenceTicket } from './ticket';
 
 /**
  * Presence relay: who is standing where (and what face they are pulling), nothing else.
@@ -13,10 +14,17 @@ import { DurableObject } from 'cloudflare:workers';
  *   client → server  { t: 's', p: [x, y, z], r: yaw, e?: expression, n?: username, a?: alias }
  *   server → client  { t: 's', id, p, r, e, n, a }   another peer moved ('' n and a = guest)
  *   server → client  { t: 'leave', id }        another peer left
+ *
+ * Names: with PRESENCE_SECRET set, a username is shown only when the socket
+ * was opened with a valid ticket for it (`/room/<name>?ticket=…`, signed by
+ * workers/auth; see ./ticket.ts). Anyone else is a guest. Without the secret,
+ * names are self-reported, as before tickets existed.
  */
 
 interface Env {
   ROOMS: DurableObjectNamespace<Room>;
+  /** Shared with workers/auth, which signs the tickets. Without it, names are unverified. */
+  PRESENCE_SECRET?: string;
   /** Optional: set both (wrangler secret put) to get a Telegram message when someone enters. */
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_CHAT_ID?: string;
@@ -28,8 +36,10 @@ interface Peer {
   r: number;
   /** Avatar expression name, e.g. 'smile'. Clients ignore names they do not know. */
   e: string;
-  /** Username shown above the avatar; '' for guests. Self-reported by the client, not verified. */
+  /** Username shown above the avatar; '' for guests. Verified against `v` when tickets are on. */
   n: string;
+  /** The username this socket's ticket vouched for; '' without a valid ticket. Never sent to anyone. */
+  v: string;
   /**
    * Made-up display name for a signed-in visitor in private mode, e.g.
    * 'Quiet Fox'. Never an account name: clients draw it without an '@'.
@@ -65,12 +75,24 @@ export default {
 };
 
 export class Room extends DurableObject<Env> {
-  async fetch(_request: Request): Promise<Response> {
+  async fetch(request: Request): Promise<Response> {
     const sockets = this.ctx.getWebSockets();
     if (sockets.length >= MAX_PEERS) return new Response('Room is full', { status: 503 });
 
+    const secret = this.env.PRESENCE_SECRET;
+    const ticket = new URL(request.url).searchParams.get('ticket');
+    let verified = '';
+    if (secret) {
+      try {
+        verified = (await verifyPresenceTicket(secret, ticket)) ?? '';
+      } catch (error) {
+        // A misconfigured secret must not close the lobby: everyone is a guest instead.
+        console.error('presence ticket check failed', error);
+      }
+    }
+
     const { 0: client, 1: server } = new WebSocketPair();
-    const peer: Peer = { id: crypto.randomUUID().slice(0, 8), p: [0, 0, 0], r: 0, e: 'smile', n: '', a: '', seen: false };
+    const peer: Peer = { id: crypto.randomUUID().slice(0, 8), p: [0, 0, 0], r: 0, e: 'smile', n: '', v: verified, a: '', seen: false };
 
     this.ctx.acceptWebSocket(server);
     server.serializeAttachment(peer);
@@ -112,7 +134,7 @@ export class Room extends DurableObject<Env> {
     peer.p = position.map(round) as Peer['p'];
     peer.r = round(yaw);
     if (typeof data.e === 'string' && EXPRESSION.test(data.e)) peer.e = data.e;
-    if (typeof data.n === 'string') peer.n = USERNAME.test(data.n) ? data.n : '';
+    if (typeof data.n === 'string') peer.n = this.acceptName(peer, data.n);
     peer.a = typeof data.a === 'string' && ALIAS.test(data.a) ? data.a : '';
     peer.seen = true;
     ws.serializeAttachment(peer);
@@ -131,6 +153,17 @@ export class Room extends DurableObject<Env> {
 
   async webSocketError(ws: WebSocket): Promise<void> {
     this.leave(ws);
+  }
+
+  /**
+   * The name to show for what a peer claims. With tickets on, only the name
+   * its ticket vouched for, and only while it asks to be shown by name
+   * (private mode sends ''); everyone else is a guest.
+   */
+  private acceptName(peer: Peer, claimed: string): string {
+    if (!USERNAME.test(claimed)) return '';
+    if (!this.env.PRESENCE_SECRET) return claimed;
+    return claimed === peer.v ? claimed : '';
   }
 
   /** Tell the owner on Telegram that someone started walking in this room. */

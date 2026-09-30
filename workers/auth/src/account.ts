@@ -1,6 +1,7 @@
 import type { Auth, Env } from './auth';
 import { HttpError, isSameOrigin, json, readJson } from './http';
 import { checkUsername } from './username';
+import { PRESENCE_TICKET_TTL_S, signPresenceTicket } from '../../presence/src/ticket';
 
 interface SessionUser {
   id: string;
@@ -89,4 +90,23 @@ function cookiesOf(headers: Headers | null | undefined): Headers {
   const out = new Headers();
   for (const cookie of headers?.getSetCookie() ?? []) out.append('Set-Cookie', cookie);
   return out;
+}
+
+/**
+ * POST /api/account/presence-ticket — a short-lived ticket proving this
+ * visitor's username to the walk mode presence server (workers/presence), so
+ * nobody else can walk around under their name. It carries the username and
+ * an expiry only. Off until PRESENCE_SECRET is set.
+ */
+export async function getPresenceTicket(request: Request, env: Env, auth: Auth): Promise<Response> {
+  const origin = new URL(env.BETTER_AUTH_URL).origin;
+  if (!isSameOrigin(request, origin)) throw new HttpError(403, 'Cross-site request refused.');
+  if (!env.PRESENCE_SECRET) throw new HttpError(404, 'Not found.');
+
+  const session = await auth.api.getSession({ headers: request.headers });
+  if (!session) throw new HttpError(401, 'Sign in first.');
+  const username = (session.user as SessionUser).username;
+  if (!username) throw new HttpError(409, 'Choose a username first.');
+
+  return json({ ticket: await signPresenceTicket(env.PRESENCE_SECRET, username), expiresIn: PRESENCE_TICKET_TTL_S });
 }

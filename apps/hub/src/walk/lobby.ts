@@ -45,6 +45,8 @@ export interface LobbyOptions {
   presenceEndpoint?: string;
   /** Name shown above this visitor for everyone else; null shows them as a guest. */
   playerName?: () => string | null;
+  /** A ticket proving playerName() to the presence server; without one the name shows as a guest. */
+  presenceTicket?: () => Promise<string | null>;
   /** Start in private mode (see `Lobby.setPrivate`). */
   private?: boolean;
   /** Called with how many people are in the lobby, or null while offline. */
@@ -275,6 +277,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         (count) => options.onPresenceCount?.(count),
         () => (alias ? null : options.playerName?.() ?? null),
         () => alias,
+        // Never while private: the server must not be able to tie the alias to the account.
+        async () => (alias ? null : (await options.presenceTicket?.()) ?? null),
       )
     : undefined;
 
