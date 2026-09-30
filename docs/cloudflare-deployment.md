@@ -88,14 +88,16 @@ The Hub automatically routes world submission alerts to `/api/notify`, which is 
    - Add:
      - `RESEND_API_KEY`: your `re_...` key (encrypt as Secret).
      - `NOTIFICATION_EMAIL`: `elias.willnat@gmail.com` (or your chosen notification email).
-     - `FROM_EMAIL`: `WorldMesh <onboarding@resend.dev>` *(default until domain is verified)*.
+     - `FROM_EMAIL` (optional): defaults to `WorldMesh <accounts@worldmesh.net>`.
 
-3. **Verify `worldmesh.net` in Resend (Optional for custom sender address)**:
+3. **Verify `worldmesh.net` in Resend (required for the default sender)**:
    - In Resend, go to **Domains** > **Add Domain** > enter `worldmesh.net`.
    - Resend will show you 3 DNS records (DKIM TXT, SPF TXT, MX).
    - Because your DNS is on Cloudflare, you can add those 3 records into Cloudflare DNS in 30 seconds.
-   - Once verified, update `FROM_EMAIL` in Cloudflare Pages to:
-     `WorldMesh <notifications@worldmesh.net>`
+   - Resend refuses to send from a domain it has not verified, so until this is
+     done, emails from the hub, `workers/notify` and `workers/ads` fail. To test
+     before then, set `FROM_EMAIL` to `WorldMesh <onboarding@resend.dev>`
+     (Resend's sandbox sender, which only delivers to your own Resend account's email).
 
 ---
 

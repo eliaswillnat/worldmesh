@@ -146,7 +146,7 @@ export async function onRequestPost(context: {
   }
 
   const toEmail = env.NOTIFICATION_EMAIL || 'elias.willnat@gmail.com';
-  const fromEmail = env.FROM_EMAIL || 'WorldMesh <onboarding@resend.dev>';
+  const fromEmail = env.FROM_EMAIL || 'WorldMesh <accounts@worldmesh.net>';
   const submissionId = body.id || `world-${Date.now().toString(36)}`;
 
   const approveToken = generateToken();

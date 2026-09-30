@@ -63,7 +63,7 @@ export async function onRequestGet(context: {
   await env.WORLDS.delete(`pending:${id}`);
 
   if (entry.email && env.RESEND_API_KEY) {
-    const fromEmail = env.FROM_EMAIL || 'WorldMesh <onboarding@resend.dev>';
+    const fromEmail = env.FROM_EMAIL || 'WorldMesh <accounts@worldmesh.net>';
     const creatorName = entry.creator || 'there';
 
     const emailHtml = `

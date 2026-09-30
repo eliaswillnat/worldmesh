@@ -161,6 +161,9 @@ the Stripe dashboard if appropriate.
    npx wrangler secret put RESEND_API_KEY --config workers/ads/wrangler.toml
    npx wrangler secret put ADS_SIGNING_SECRET --config workers/ads/wrangler.toml   # openssl rand -base64 32
    ```
+   Emails go out from `FROM_EMAIL` (default `WorldMesh <accounts@worldmesh.net>`),
+   so `worldmesh.net` must be verified in Resend first
+   ([cloudflare-deployment.md](cloudflare-deployment.md#4-email-notifications-via-resend)).
 5. **Deploy**: `cd workers/ads && npx wrangler deploy`. The route
    `worldmesh.net/api/ads/*` sits in front of the Pages project like the auth
    and federation routes.

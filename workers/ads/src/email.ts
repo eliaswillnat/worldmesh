@@ -23,7 +23,7 @@ async function send(env: Env, message: { to: string; subject: string; html: stri
       method: 'POST',
       headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        from: env.FROM_EMAIL || 'WorldMesh <onboarding@resend.dev>',
+        from: env.FROM_EMAIL || 'WorldMesh <accounts@worldmesh.net>',
         to: [message.to],
         subject: message.subject,
         html: message.html,

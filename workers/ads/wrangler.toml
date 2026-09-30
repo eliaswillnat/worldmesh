@@ -16,7 +16,7 @@ workers_dev = false
 ADS_ORIGIN = "https://worldmesh.net"
 # The admin inbox for moderation emails (same default as the world submissions).
 NOTIFICATION_EMAIL = "elias.willnat@gmail.com"
-FROM_EMAIL = "WorldMesh <onboarding@resend.dev>"
+FROM_EMAIL = "WorldMesh <accounts@worldmesh.net>"
 # WorldMesh accounts allowed to approve or reject, comma-separated. Must be the
 # verified email of an account signed in through workers/auth. Defaults to
 # NOTIFICATION_EMAIL when empty.
