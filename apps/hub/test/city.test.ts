@@ -20,8 +20,11 @@ describe('city plan', () => {
     }
   });
 
-  it('connects towers through bridges without linking every pair', () => {
-    expect(plan.bridges).toHaveLength(2);
+  it('connects every tower through a bridge without linking every pair', () => {
+    for (const tower of plan.towers) {
+      expect(plan.bridges.some((bridge) => bridge.from === tower.id || bridge.to === tower.id)).toBe(true);
+    }
+    expect(plan.bridges.length).toBeLessThan((plan.towers.length * (plan.towers.length - 1)) / 2);
     const games = plan.tower('games')!;
     const space = plan.tower('space')!;
     expect(plan.bridges.some((b) => [b.from, b.to].includes(games.id) && [b.from, b.to].includes(space.id))).toBe(false);

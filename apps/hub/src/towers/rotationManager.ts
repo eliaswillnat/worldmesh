@@ -1,5 +1,7 @@
+import type { Assignment } from '../discovery/placement';
 import type { PlacementService } from '../discovery/service';
 import { unitHash } from '../discovery/random';
+import type { WorldListing } from '../worlds/listing';
 import type { WorldRepository } from '../worlds/repository';
 import type { CityConfig } from './config';
 import type { DoorView } from './doorView';
@@ -18,6 +20,8 @@ export class DoorRotationManager {
   private due = new Map<DoorView, number>();
   private revision = 0;
   private seenRevision = 0;
+  /** Slot id → listing placed there by someone standing at the door. */
+  private pins = new Map<string, string>();
 
   constructor(
     private service: PlacementService,
@@ -41,6 +45,17 @@ export class DoorRotationManager {
   detach(door: DoorView): void {
     this.doors.delete(door);
     this.due.delete(door);
+  }
+
+  /** Keep `listingId` on this slot, and off every other door. */
+  pin(slotId: string, listingId: string): void {
+    this.pins.set(slotId, listingId);
+    this.service.setReserved(this.pins.values());
+    this.refresh();
+    const door = [...this.doors].find((entry) => entry.slotId === slotId);
+    if (!door) return;
+    const { listing, assignment } = this.lookup(door);
+    door.showNow(listing, assignment);
   }
 
   /** Placement inputs changed (new listings, new signals): re-check every door. */
@@ -87,8 +102,18 @@ export class DoorRotationManager {
     return busy;
   }
 
-  private lookup(door: DoorView) {
+  private lookup(door: DoorView): { listing: WorldListing | null; assignment: Assignment | null } {
     if (!door.towerId || !door.slotId) return { listing: null, assignment: null };
+    const pinnedId = this.pins.get(door.slotId);
+    if (pinnedId) {
+      const pinned = this.repository.get(pinnedId) ?? null;
+      if (pinned) {
+        return {
+          listing: pinned,
+          assignment: { slotId: door.slotId, listingId: pinned.id, strategy: 'fresh', badge: 'new', sponsored: false },
+        };
+      }
+    }
     const assignment = this.service.placement(door.towerId, this.window).get(door.slotId) ?? null;
     const listing = assignment ? this.repository.get(assignment.listingId) ?? null : null;
     return { listing, assignment: listing ? assignment : null };

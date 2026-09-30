@@ -67,6 +67,8 @@ const shellFragment = /* glsl */ `
   uniform float uTopFloor;
   uniform float uInterior;
   uniform float uNight;
+  uniform float uSignBottom;
+  uniform float uSignTop;
   uniform vec4 uOpenings[MAX_OPENINGS];
   uniform int uOpeningCount;
   varying vec3 vWorld;
@@ -113,7 +115,8 @@ const shellFragment = /* glsl */ `
       color = mix(color, uLine, joint * 0.8);
       float plinth = step(y, 9.0);
       float slitX = abs(fract(rib) - 0.5);
-      float slit = (1.0 - smoothstep(0.07, 0.07 + fwidth(rib) * 1.5, slitX)) * step(0.34, f) * step(f, 0.78) * (1.0 - plinth);
+      float inSign = step(uSignBottom, y) * step(y, uSignTop);
+      float slit = (1.0 - smoothstep(0.07, 0.07 + fwidth(rib) * 1.5, slitX)) * step(0.34, f) * step(f, 0.78) * (1.0 - plinth) * (1.0 - inSign);
       float lit = step(0.38, hash21(vec2(floor(rib), floorIndex))) * step(floorIndex, uTopFloor);
       vec3 glass = mix(uLine * 0.7, uGlow, lit * uNight * 0.85);
       color = mix(color, glass, slit);
@@ -183,6 +186,8 @@ export function createTowerShell(tower: TowerPlan, config: CityConfig, materials
         uTopFloor: { value: tower.floorCount - 1 },
         uInterior: { value: interior ? 1 : 0 },
         uNight: { value: 1 },
+        uSignBottom: { value: 0 },
+        uSignTop: { value: 0 },
         uOpenings: {
           value: Array.from({ length: MAX_OPENINGS }, (_, i) => {
             const opening = tower.openings[i];
@@ -251,6 +256,14 @@ export function createTowerShell(tower: TowerPlan, config: CityConfig, materials
   colliders.push(wallCollider);
 
   // The tower's name wrapped around it above the entrance, readable across the plaza.
+  // Window slits stay out of this band: the name is always here.
+  const nameHeight = 5.2;
+  const nameBottom = config.entranceHeight + 3.4;
+  const nameTop = nameBottom + nameHeight;
+  for (const material of [exteriorMaterial, interiorMaterial]) {
+    material.uniforms.uSignBottom.value = nameBottom - 0.35;
+    material.uniforms.uSignTop.value = nameTop + 0.35;
+  }
   const nameTexture = drawBand(
     [
       { text: spaced(tower.category.name), color: '#ffffff', font: `700 150px ${SIGN_FONT}` },
@@ -259,7 +272,6 @@ export function createTowerShell(tower: TowerPlan, config: CityConfig, materials
     { width: 4096, height: 220, repeat: 3, gap: 90 },
   );
   const nameMaterial = new MeshBasicMaterial({ map: nameTexture, transparent: true, depthWrite: false, toneMapped: false, side: DoubleSide });
-  const nameHeight = 5.2;
   const nameRing = new Mesh(new CylinderGeometry(outer + 0.08, outer + 0.08, nameHeight, 128, 1, true), nameMaterial);
   // The first name sits over the entrance.
   nameRing.rotation.y = entrance.angle - Math.PI / 3;

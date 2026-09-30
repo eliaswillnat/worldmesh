@@ -21,6 +21,27 @@
       "tagline": "Orbit and beyond",
       "color": "#a3adff",
       "keywords": ["space", "mars", "orbit", "planet", "star", "station", "galaxy", "moon", "cosmos", "astronaut", "rocket"]
+    },
+    {
+      "id": "art",
+      "name": "Art",
+      "tagline": "Things to look at",
+      "color": "#f4a3c8",
+      "keywords": ["art", "gallery", "sculpture", "museum", "painting", "installation", "exhibition", "canvas"]
+    },
+    {
+      "id": "music",
+      "name": "Music",
+      "tagline": "Something to hear",
+      "color": "#e36d8a",
+      "keywords": ["music", "song", "concert", "audio", "sound", "dj", "listen", "band", "instrument"]
+    },
+    {
+      "id": "social",
+      "name": "Social",
+      "tagline": "People to meet",
+      "color": "#6ec6e0",
+      "keywords": ["social", "hangout", "party", "friends", "meetup", "lounge", "community", "gather"]
     }
   ]
 }

@@ -41,6 +41,8 @@ export class PlacementService {
   private towers = new Map<string, TowerSlots>();
   private placements = new Map<string, Placement>();
   private scoreCache = new Map<string, Map<string, ListingScores>>();
+  /** Listings placed by hand on one door. They are not offered to any other slot. */
+  private reserved = new Set<string>();
 
   constructor(private deps: PlacementServiceDeps) {}
 
@@ -50,6 +52,12 @@ export class PlacementService {
 
   setTowers(towers: readonly TowerSlots[]): void {
     this.towers = new Map(towers.map((tower) => [tower.towerId, tower]));
+    this.invalidate();
+  }
+
+  /** A world someone put on a specific door stays on that door only. */
+  setReserved(ids: Iterable<string>): void {
+    this.reserved = new Set(ids);
     this.invalidate();
   }
 
@@ -97,7 +105,7 @@ export class PlacementService {
   private compute(towerId: string, window: number, history: Placement[]): Placement {
     const tower = this.towers.get(towerId);
     if (!tower) return new Map();
-    const listings = this.deps.repository.inCategory(tower.categoryId);
+    const listings = this.deps.repository.inCategory(tower.categoryId).filter((listing) => !this.reserved.has(listing.id));
     return placeTower(
       {
         towerId,

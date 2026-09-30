@@ -38,7 +38,7 @@ import { AD_CONFIG, normalizeDestinationUrl } from '../ads/config';
 import { openAdModal } from '../ads/modal';
 import type { SignalSource } from '../discovery/ranking';
 import { TowerCity } from '../towers/towerCity';
-import type { WorldRecordInput } from '../worlds/listing';
+import { canonicalUrl, type WorldRecordInput } from '../worlds/listing';
 
 /** A place in the lobby and the way to face there. */
 export interface WalkSpot {
@@ -220,7 +220,7 @@ const TURN_S = 0.8;
  * open doorway and ends up looking at the back of the door.
  */
 const EXIT_CLEAR = 4;
-/** Where every visitor arrives: the middle of the hall, facing the doors. */
+/** Where every visitor arrives: the middle of the hall. Each arrival looks a different way. */
 const SPAWN: Vec3Tuple = [0, 0, 0];
 /** How long the screen stays white while switching in or out of private mode. */
 const PRIVATE_FADE_MS = 260;
@@ -426,6 +426,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     onEnterWorld: (listing, returnTo) =>
       travel({ name: listing.name, url: listing.url, cover: listing.cover, color: listing.color, creator: listing.creator.name }, returnTo, null),
   });
+  towerCity.onClaimEmpty = () => addWorld();
 
   // Billboard ads: only mount when deliberately enabled (off by default) and the city has screens for them.
   const adsEnabled = options.ads === true && towerCity.billboards.length > 0;
@@ -449,9 +450,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   let privateTimer = 0;
   /** Lobby clock when the local figure started fading in; negative = idle. */
   let appearStarted = Number.NEGATIVE_INFINITY;
-  /** Face the camera once on the first plaza spawn (not on later respawns). */
-  let faceCameraOnSpawn = !options.start;
-
   const presence = options.presenceEndpoint
     ? new Presence(
         options.presenceEndpoint,
@@ -765,18 +763,34 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     return worlds.length ? worlds[Math.floor(Math.random() * worlds.length)] : null;
   }
 
-  /** An empty door was picked: claim it from inside the lobby. */
+  /** True when this URL already opens a door in the hall or in any tower. */
+  function doorTaken(url: string): boolean {
+    const key = canonicalUrl(url);
+    for (const knownUrl of known.keys()) if (canonicalUrl(knownUrl) === key) return true;
+    for (const claim of loadClaims()) if (canonicalUrl(claim.url) === key) return true;
+    return towerCity.hasDoor(url);
+  }
+
+  /** An empty door was picked, in the hall or in a tower: claim it from inside the lobby. */
   function addWorld(): void {
-    if (warping || !nearEmpty || claimModal) return;
+    const slot = towerCity.claimSlot();
+    if (warping || claimModal || (!nearEmpty && !slot)) return;
     document.exitPointerLock?.();
     const door = nearEmpty;
     claimModal = openClaimModal(light, {
-      taken: (url) => known.has(url),
+      taken: doorTaken,
+      note: slot
+        ? 'You are the first one at this door, so you can place your world here. It opens in this building right away and is sent to the gallery for review.'
+        : undefined,
       onClose: () => {
         claimModal = null;
       },
       onClaim: (world) => {
-        placeClaim(door, world);
+        if (doorTaken(world.url)) return;
+        if (slot) {
+          if (!towerCity.placeClaim(slot.slotId, { name: world.name, url: world.url, cover: world.cover })) return;
+        } else if (door) placeClaim(door, world);
+        else return;
         options.onClaimWorld?.(world);
       },
     });
@@ -804,6 +818,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
   // Keyboard: E at a tower door, lift or elevator, or next to an empty door.
   // The runtime reports E as a plain interaction when no portal of its own is in reach.
+  world.on('respawn', () => aimSpawn());
   world.on('interact', () => {
     if (towerCity.interact()) return;
     if (nearEmpty) addWorld();
@@ -975,12 +990,13 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     appearStarted = time;
     if (ghost) ghost.shimmer(time, 0);
     else setLocalAppear(world.avatar, 0);
-    // First plaza spawn: turn the body to face the camera. Leave look direction alone.
-    if (faceCameraOnSpawn) {
-      faceCameraOnSpawn = false;
-      const { yaw } = world.getState();
-      world.setState({ facing: yaw + Math.PI });
-    }
+    aimSpawn();
+  }
+
+  /** Pick a new look direction and turn the body toward the camera. */
+  function aimSpawn(): void {
+    const yaw = Math.random() * Math.PI * 2;
+    world.setState({ yaw, facing: yaw + Math.PI });
   }
 
   /** Come back out of the door behind `spot`, walking a few steps into the hall. */
@@ -1492,6 +1508,7 @@ function openClaimModal(
   light: boolean,
   options: {
     taken: (url: string) => boolean;
+    note?: string;
     onClose: () => void;
     onClaim: (world: ClaimedWorld) => void;
   },
@@ -1508,7 +1525,7 @@ function openClaimModal(
   title.id = 'world-claim-title';
   title.textContent = 'Put your world in this door';
   const note = document.createElement('p');
-  note.textContent = 'You are the first one at this door, so you can place your world here. It opens in the lobby right away and is sent to the gallery for review.';
+  note.textContent = options.note ?? 'You are the first one at this door, so you can place your world here. It opens in the lobby right away and is sent to the gallery for review.';
   const status = document.createElement('p');
   status.className = 'world-claim-status';
 
