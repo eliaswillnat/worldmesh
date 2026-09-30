@@ -228,6 +228,10 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const doors = new Map<string, Door>();
   // Doors with no world behind them yet. Re-laid out with every list change.
   const emptyDoors: Door[] = [];
+  // Outside, set into the tower beside the gate: a glowing blue door to a
+  // random listed world.
+  const randomDoor = new Door(null, light, true);
+  scene.add(randomDoor.group);
   let nearEmpty: Door | null = null;
   let adding = false;
   const isTouch = window.matchMedia?.('(pointer: coarse)').matches ?? false;
@@ -263,7 +267,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     onUpdate: (dt, handle) => {
       time += dt;
       const [x, , z] = handle.getState().position;
-      for (const door of doors.values()) {
+      for (const door of [...doors.values(), randomDoor]) {
         door.update(time);
         if (!warping && door.contains(x, z)) enter(door);
       }
@@ -294,16 +298,22 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
   /** Walking through a door: flash, then travel to the world's own URL. */
   function enter(door: Door): void {
-    if (!door.world) return;
+    const target = door.random ? pickRandomWorld() : door.world;
+    if (!target) return;
     warping = door;
     door.surge();
-    options.onEnterWorld?.(door.world);
+    options.onEnterWorld?.(target);
     document.exitPointerLock?.();
     flash.classList.add('active');
-    const url = buildTravelUrl(door.world.url);
+    const url = buildTravelUrl(target.url);
     warpTimer = window.setTimeout(() => {
       window.location.href = url;
     }, WARP_MS);
+  }
+
+  function pickRandomWorld(): DoorWorld | null {
+    const worlds = [...known.values()];
+    return worlds.length ? worlds[Math.floor(Math.random() * worlds.length)] : null;
   }
 
   /** An empty door was picked: hand over to the page's add-world form. */
@@ -388,7 +398,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     if (isLight === light) return;
     light = isLight;
     applyTheme();
-    for (const door of [...doors.values(), ...emptyDoors]) door.setTheme(light);
+    for (const door of [...doors.values(), ...emptyDoors, randomDoor]) door.setTheme(light);
   }
 
   function applyTheme(): void {
@@ -596,6 +606,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     city.group.userData.outer = outer;
     scene.add(city.group);
     ground.scale.setScalar(city.radius + 2);
+    randomDoor.place(city.entrance.x, city.entrance.z, 0, 0);
   }
 
   function dispose(): void {
@@ -606,7 +617,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     renderer.domElement.removeEventListener('pointerdown', handlePointerDown);
     renderer.domElement.removeEventListener('pointerup', handlePointerUp);
     world.dispose();
-    for (const door of [...doors.values(), ...emptyDoors]) door.dispose();
+    for (const door of [...doors.values(), ...emptyDoors, randomDoor]) door.dispose();
     doors.clear();
     emptyDoors.length = 0;
     addPrompt.remove();
