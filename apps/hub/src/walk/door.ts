@@ -374,7 +374,9 @@ export class Door {
  */
 async function loadCoverTexture(src: string): Promise<Texture | null> {
   const candidates: string[] = [];
-  try {
+  if (src.startsWith('data:')) {
+    candidates.push(src);
+  } else try {
     const url = new URL(src, window.location.href);
     if (/^https?:$/.test(url.protocol) && url.origin !== window.location.origin) {
       candidates.push(`/api/cover?url=${encodeURIComponent(url.toString())}`);

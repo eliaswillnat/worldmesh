@@ -205,12 +205,7 @@ export class TowerCity {
     window.addEventListener('keydown', this.handleKey);
     this.applyTheme();
 
-    if (import.meta.env.DEV) {
-      Object.assign(window, { city: this });
-      void import('./debug').then(({ CityDebug }) => {
-        if (!this.disposed) this.debug = new CityDebug(this, options.container);
-      });
-    }
+    if (import.meta.env.DEV) Object.assign(window, { city: this });
   }
 
   /** Where the walkable ground ends. */

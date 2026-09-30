@@ -26,6 +26,9 @@ interface Remote {
   tag: Sprite;
   /** Seconds since this figure first appeared; drives spawn fade-in. */
   appear: number;
+  /** What they just said, stuck above their head until it runs out. */
+  bubble: Sprite | null;
+  bubbleLeft: number;
 }
 
 /** Height of the name tag's centre above the avatar's feet. */
@@ -34,6 +37,7 @@ const TAG_HEIGHT = 2.15;
 type ServerMessage =
   | { t: 'welcome'; id: string; peers: { id: string; p: [number, number, number]; r: number; e?: string; n?: string; a?: string }[] }
   | { t: 's'; id: string; p: [number, number, number]; r: number; e?: string; n?: string; a?: string }
+  | { t: 'c'; id: string; m: string }
   | { t: 'leave'; id: string };
 
 /**
@@ -89,6 +93,14 @@ export class Presence implements NetworkAdapter {
     this.lastSent = now;
   }
 
+  /** Say something. Everyone else gets a bubble; this client draws its own. */
+  say(text: string): void {
+    const socket = this.socket;
+    const line = text.replace(/[\u0000-\u001f]/g, '').trim().slice(0, 80);
+    if (!line || !socket || socket.readyState !== WebSocket.OPEN) return;
+    socket.send(JSON.stringify({ t: 'c', m: line }));
+  }
+
   /** Ease remote avatars toward their last known position. Call once per frame. */
   update(dt: number): void {
     const blend = 1 - Math.exp(-dt * 10);
@@ -104,6 +116,12 @@ export class Presence implements NetworkAdapter {
       const moved = Math.hypot(remote.root.position.x - before.x, remote.root.position.z - before.z);
       remote.speed += (moved / Math.max(dt, 1e-4) - remote.speed) * blend;
       animateDefaultAvatar(remote.root, { dt, speed: remote.speed, grounded: remote.root.position.y < 0.05 });
+
+      if (remote.bubble) {
+        remote.bubbleLeft -= dt;
+        remote.bubble.material.opacity = remote.bubbleLeft < 1 ? Math.max(0, remote.bubbleLeft) : 1;
+        if (remote.bubbleLeft <= 0) dropBubble(remote);
+      }
 
       remote.appear += dt;
       if (remote.appear < APPEAR_FADE + 0.05) {
@@ -196,6 +214,11 @@ export class Presence implements NetworkAdapter {
       case 's':
         if (message.id !== this.selfId) this.upsert(message.id, message.p, message.r, message.e, nameLabel(message.n, message.a), false);
         break;
+      case 'c': {
+        const remote = message.id === this.selfId ? undefined : this.remotes.get(message.id);
+        if (remote && typeof message.m === 'string') showBubble(remote, message.m);
+        break;
+      }
       case 'leave': {
         const remote = this.remotes.get(message.id);
         if (remote) disposeObject(remote.root);
@@ -223,7 +246,7 @@ export class Presence implements NetworkAdapter {
       tag.position.y = TAG_HEIGHT;
       root.add(tag);
       this.group.add(root);
-      remote = { root, target: new Vector3(), targetYaw: yaw, yaw, speed: 0, label: GUEST, tag, appear: 0 };
+      remote = { root, target: new Vector3(), targetYaw: yaw, yaw, speed: 0, label: GUEST, tag, appear: 0, bubble: null, bubbleLeft: 0 };
       this.remotes.set(id, remote);
       setFigureOpacity(root, 0);
       snap = true;
@@ -310,6 +333,60 @@ function nameLabel(name: unknown, alias: unknown): string {
 }
 
 /** A camera-facing label over a remote avatar. Guests are drawn dimmer. */
+const BUBBLE_LIFE = 7;
+
+/** Stick a line of text over a remote figure. The next line replaces it. */
+function showBubble(remote: Remote, text: string): void {
+  dropBubble(remote);
+  const bubble = createSpeechBubble(text);
+  bubble.position.y = TAG_HEIGHT + 0.42;
+  remote.root.add(bubble);
+  remote.bubble = bubble;
+  remote.bubbleLeft = BUBBLE_LIFE;
+}
+
+function dropBubble(remote: Remote): void {
+  const bubble = remote.bubble;
+  if (!bubble) return;
+  bubble.material.map?.dispose();
+  bubble.material.dispose();
+  bubble.removeFromParent();
+  remote.bubble = null;
+}
+
+/** A white speech bubble. One line, cut off if they wrote a novel. */
+function createSpeechBubble(text: string): Sprite {
+  const scale = 2;
+  const font = `600 ${20 * scale}px system-ui, -apple-system, sans-serif`;
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d')!;
+  context.font = font;
+  const padX = 16 * scale;
+  const height = 40 * scale;
+  const maxWidth = 280 * scale;
+  const measured = context.measureText(text).width;
+  canvas.width = Math.ceil(Math.min(maxWidth, measured) + padX * 2);
+  canvas.height = height;
+
+  context.font = font;
+  context.fillStyle = '#ffffff';
+  context.beginPath();
+  context.roundRect(0, 0, canvas.width, height, 14 * scale);
+  context.fill();
+  context.fillStyle = '#111111';
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  context.fillText(text, canvas.width / 2, height / 2, maxWidth);
+
+  const texture = new CanvasTexture(canvas);
+  const sprite = new Sprite(new SpriteMaterial({ map: texture, depthWrite: false, transparent: true }));
+  const worldHeight = 0.34;
+  sprite.scale.set((worldHeight * canvas.width) / height, worldHeight, 1);
+  sprite.name = 'worldmesh:speech';
+  sprite.center.set(0.5, 0);
+  return sprite;
+}
+
 function createNameTag(text: string): Sprite {
   const scale = 2; // Canvas pixels per CSS pixel, for crisp text.
   const font = `600 ${22 * scale}px system-ui, -apple-system, sans-serif`;

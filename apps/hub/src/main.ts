@@ -456,10 +456,11 @@ walkToggle.addEventListener('click', () => {
   else enterWalkMode();
 });
 
-// Back from a world entered through a door: into the lobby, outside that
-// door, however they came back (back button, the world's WorldMesh badge…).
+// Walk mode is the front door. The gallery is there when someone asks for
+// the list. Back from a world entered through a door: into the lobby,
+// outside that door, however they came back.
 const walkReturn = takeWalkReturn();
-if (window.location.hash === '#walk' || walkReturn) enterWalkMode(walkReturn?.spot ?? null, walkReturn?.color ?? null);
+if (window.location.hash !== '#list' || walkReturn) enterWalkMode(walkReturn?.spot ?? null, walkReturn?.color ?? null);
 
 // A back-button return can restore the page with the lobby still running; it
 // puts the visitor back itself, so the stored spot is no longer needed.
@@ -502,6 +503,19 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
         saveWalkReturn(returnTo, walkColor);
       },
       onAddWorld: openAddFormFromWalk,
+      onClaimWorld: (world) => {
+        const entry: WorldEntry = {
+          id: `${slugify(world.name) || 'world'}-${Math.random().toString(36).substring(2, 8)}`,
+          name: world.name,
+          url: world.url,
+          email: world.email,
+          cover: world.cover,
+          submittedAt: new Date().toISOString(),
+        };
+        saveSubmissionRecord(entry);
+        requestScreenshot(entry);
+        notifySubmission(entry);
+      },
       // Lifetime visits, for ranking in the towers (see discovery/ranking.ts).
       signals: { signals: (world) => ({ views: viewCounts[world.url] }) },
     });
@@ -530,9 +544,7 @@ function exitWalkMode(): void {
   delete document.documentElement.dataset.walkTheme;
   setThemeColor(null);
   delete walkOnline.dataset.count;
-  if (window.location.hash === '#walk') {
-    history.replaceState(null, '', window.location.pathname + window.location.search);
-  }
+  history.replaceState(null, '', `${window.location.pathname}${window.location.search}#list`);
   setWalkToggleLabel('Walk between worlds');
 }
 

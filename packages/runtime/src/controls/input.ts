@@ -56,6 +56,7 @@ export class Input {
       });
     }
 
+    window.addEventListener('keydown', this.handleEscape, true);
     window.addEventListener('keydown', this.handleKeyDown);
     window.addEventListener('keyup', this.handleKeyUp);
     window.addEventListener('blur', this.handleBlur);
@@ -179,6 +180,7 @@ export class Input {
   dispose(): void {
     this.disposed = true;
     this.touch?.dispose();
+    window.removeEventListener('keydown', this.handleEscape, true);
     window.removeEventListener('keydown', this.handleKeyDown);
     window.removeEventListener('keyup', this.handleKeyUp);
     window.removeEventListener('blur', this.handleBlur);
@@ -189,6 +191,16 @@ export class Input {
     this.pressed.clear();
     this.justPressed.clear();
   }
+
+  /**
+   * Esc releases the cursor. The browser only does this on its own while
+   * pointer lock is active, and a focused field can cancel that, so it is
+   * also handled here. Capture phase runs before those fields.
+   */
+  private handleEscape = (event: KeyboardEvent): void => {
+    if (event.key !== 'Escape' || event.repeat || this.disposed) return;
+    this.exitPointerLock();
+  };
 
   private handleKeyDown = (event: KeyboardEvent): void => {
     if (event.repeat) return;

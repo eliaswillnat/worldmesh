@@ -67,10 +67,14 @@ const CSS = `
   box-sizing: border-box;
 }
 .wm-lock-title {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  display: block;
+  text-align: center;
   font-size: clamp(22px, 5vw, 34px);
   font-weight: 600;
   letter-spacing: .01em;
-  margin: 0;
 }
 .wm-lock-cta {
   font-size: 13.5px;
@@ -316,11 +320,10 @@ export class Overlay {
     const cta = document.createElement('button');
     cta.type = 'button';
     cta.className = 'wm-lock-cta';
-    cta.textContent = isTouch ? 'Tap to enter' : 'Click to enter';
+    cta.textContent = 'Continue';
     content.appendChild(cta);
 
     const handleEnter = (e: Event) => {
-      e.preventDefault();
       e.stopPropagation();
       const touchInitiated =
         ('pointerType' in e && (e as PointerEvent).pointerType === 'touch') ||
@@ -329,9 +332,15 @@ export class Overlay {
       this.onEnter(touchInitiated);
     };
 
+    // A click or tap on the button resumes. The Enter key does not: that key talks.
+    cta.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') event.preventDefault();
+    });
     cta.addEventListener('click', handleEnter);
-    cta.addEventListener('pointerup', handleEnter);
-    lock.addEventListener('click', handleEnter);
+    lock.addEventListener('click', (event) => {
+      if (event.target === cta) return;
+      handleEnter(event);
+    });
 
     if (options.controlsHint !== false) {
       const keys = document.createElement('div');
