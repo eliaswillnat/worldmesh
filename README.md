@@ -27,15 +27,17 @@ deployable 3D websites can share exactly the same movement, camera and
 navigation runtime.** Optional accounts (Google, Apple, GitHub, Discord) and a first
 ActivityPub foundation, so creators can be followed from Mastodon as
 `@name@worldmesh.net`, live in two small Workers beside the hub — see
-[docs/accounts-and-federation.md](docs/accounts-and-federation.md). No
-moderation yet. See [docs/roadmap.md](docs/roadmap.md).
+[docs/accounts-and-federation.md](docs/accounts-and-federation.md). No moderation of
+listed worlds yet. See [docs/roadmap.md](docs/roadmap.md).
 
 The hub also has a **walk mode**: the directory
 as a place. Every listed world is a doorway set into a round wall around a
 mirrored grid, showing its cover, and walking into one travels there. The lobby is black or white depending on each visitor's own
 light/dark setting. Everyone in
 walk mode sees everyone else, through a tiny presence relay in
-`workers/presence`.
+`workers/presence`. The screens on the towers around the lobby are billboards
+anyone can book for €2, reviewed by hand before they go live (`workers/ads`,
+see [docs/advertising.md](docs/advertising.md)).
 
 ## Repo layout
 
@@ -47,6 +49,7 @@ worldmesh/
 ├── workers/
 │   ├── auth/           accounts: Better Auth + D1 (Google, Apple, GitHub, Discord)
 │   ├── federation/     WebFinger + ActivityPub for creators
+│   ├── ads/            paid billboard ads in walk mode: uploads, Stripe, moderation
 │   └── …               presence, views, screenshot, notify
 ├── db/migrations/      the D1 schema both of them share
 ├── apps/
@@ -119,6 +122,7 @@ reference and [docs/controls.md](docs/controls.md) for the control convention.
 - [Compatibility](docs/compatibility.md) — the world-facing contract
 - [Controls](docs/controls.md) — the navigation convention
 - [Accounts and federation](docs/accounts-and-federation.md) — login, D1, ActivityPub
+- [Billboard advertising](docs/advertising.md) — paid, reviewed ads on walk mode's screens
 - [Publishing](docs/publishing.md) — how the runtime is built and versioned
 - [Roadmap](docs/roadmap.md) — what is deliberately not built yet
 

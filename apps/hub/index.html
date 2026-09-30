@@ -1023,6 +1023,177 @@
         background: rgba(255, 255, 255, 0.75);
         border-color: rgba(0, 0, 0, 0.14);
       }
+      /* ── Billboard ads ─────────────────────────────────────────── */
+      /* The walk-mode prompt reuses .walk-add-prompt; ads get a little more room. */
+      .walk-ad-prompt { max-width: calc(100vw - 32px); overflow: hidden; text-overflow: ellipsis; }
+      .ad-dialog {
+        margin: auto;
+        width: min(480px, calc(100vw - 24px));
+        max-height: calc(100dvh - 24px);
+        padding: 0;
+        border-radius: 20px;
+        border: 1px solid var(--border);
+        background: var(--card);
+        color: var(--text);
+        font-family: inherit;
+        outline: none;
+        overflow: auto;
+        overscroll-behavior: contain;
+        -webkit-overflow-scrolling: touch;
+      }
+      .ad-dialog::backdrop { background: rgba(0, 0, 0, 0.55); }
+      .ad-header {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 18px 20px 12px;
+        background: var(--card);
+      }
+      .ad-header h2 {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 700;
+        letter-spacing: normal;
+        text-transform: none;
+        color: var(--text);
+      }
+      .ad-close {
+        width: 36px;
+        height: 36px;
+        padding: 0;
+        border-radius: 50%;
+        font-size: 22px;
+        line-height: 1;
+        flex: none;
+      }
+      .ad-body { padding: 0 20px 20px; display: flex; flex-direction: column; gap: 12px; }
+      .ad-form { display: flex; flex-direction: column; gap: 12px; margin: 0; }
+      .ad-summary { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.5; }
+      .ad-summary strong { color: var(--text); font-size: 15px; }
+      .ad-review-note {
+        margin: 0;
+        padding: 12px 14px;
+        border-radius: 12px;
+        background: var(--input-bg);
+        border: 1px solid var(--border);
+        font-size: 13px;
+        line-height: 1.5;
+        color: var(--muted);
+      }
+      .ad-review-note strong { color: var(--text); }
+      .ad-segmented {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        padding: 4px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: var(--input-bg);
+      }
+      .ad-segment { position: relative; cursor: pointer; }
+      .ad-segment input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+      .ad-segment span {
+        display: block;
+        padding: 9px 12px;
+        border-radius: 999px;
+        text-align: center;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--muted);
+      }
+      .ad-segment input:checked + span { background: var(--text); color: var(--card); }
+      .ad-segment input:focus-visible + span { outline: 2px solid var(--gradient-border-color); }
+      .ad-drop {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 16px;
+        border-radius: 14px;
+        border: 1.5px dashed var(--gradient-border-color);
+        text-align: center;
+        cursor: pointer;
+      }
+      .ad-drop:hover, .ad-drop:focus-within { border-color: var(--text); }
+      .ad-drop.busy { opacity: 0.6; pointer-events: none; }
+      .ad-file-input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
+      .ad-drop-title { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .ad-drop-hint { font-size: 12px; color: var(--muted); }
+      .ad-preview {
+        position: relative;
+        align-self: center;
+        max-width: 100%;
+        background: #000;
+        border-radius: 10px;
+        overflow: hidden;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid var(--border);
+      }
+      .ad-preview { min-height: 120px; }
+      .ad-preview img, .ad-preview video { width: 100%; height: 100%; object-fit: contain; display: block; }
+      .ad-preview-empty { color: rgba(255, 255, 255, 0.45); font-size: 13px; }
+      .ad-badge {
+        position: absolute;
+        top: 8px;
+        left: 8px;
+        padding: 2px 8px;
+        border-radius: 6px;
+        background: rgba(0, 0, 0, 0.72);
+        border: 1px solid rgba(255, 255, 255, 0.55);
+        color: #fff;
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .ad-hint { margin: -4px 0 0; font-size: 12px; color: var(--subtle); text-align: center; }
+      .ad-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); }
+      .ad-input {
+        padding: 12px 14px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: var(--input-bg);
+        color: var(--text);
+        font-size: 16px; /* 16px keeps iOS from zooming in on focus */
+        font-family: inherit;
+      }
+      .ad-input:focus { outline: none; border-color: var(--gradient-border-color); }
+      .ad-consent { display: flex; align-items: flex-start; gap: 10px; font-size: 13px; line-height: 1.5; color: var(--text); cursor: pointer; }
+      .ad-consent input { margin-top: 3px; width: 18px; height: 18px; flex: none; accent-color: #4af; }
+      .ad-error { margin: 0; min-height: 0; font-size: 13px; color: #ff8a7a; line-height: 1.5; }
+      .ad-error:empty { display: none; }
+      .ad-primary {
+        width: 100%;
+        padding: 15px 20px;
+        border: 0;
+        background: var(--text);
+        color: var(--card);
+        font-weight: 700;
+        font-size: 15px;
+      }
+      .ad-primary:hover { color: var(--card); opacity: 0.88; }
+      .ad-secondary { width: 100%; color: var(--muted); }
+      .ad-secondary:hover { color: #ff9a8a; border-color: #ff9a8a; }
+      .ad-progress { height: 8px; border-radius: 999px; background: var(--input-bg); border: 1px solid var(--border); overflow: hidden; }
+      .ad-progress-bar { height: 100%; width: 0; background: var(--text); transition: width .2s ease; }
+      .ad-status, .ad-timer { margin: 0; font-size: 13px; color: var(--muted); text-align: center; }
+      .ad-payment-element { min-height: 140px; }
+      .ad-done-icon {
+        width: 56px;
+        height: 56px;
+        margin: 8px auto 0;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 28px;
+        background: #34d399;
+        color: #000;
+      }
+      .ad-done { margin: 0; text-align: center; font-size: 15px; line-height: 1.6; }
       .walk-online {
         position: fixed;
         top: max(16px, env(safe-area-inset-top));

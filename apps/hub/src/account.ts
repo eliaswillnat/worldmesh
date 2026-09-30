@@ -75,6 +75,23 @@ export function getUsername(): string | null {
   return user?.username ?? null;
 }
 
+/**
+ * Where to go after signing in, when a page elsewhere on this origin sent the
+ * visitor here to sign in (the ad moderation page: /?login=1&next=/api/ads/admin/...).
+ * Only same-origin paths; never another site.
+ */
+let returnTo: string | null = null;
+
+function safeReturnPath(value: string | null): string | null {
+  if (!value || !value.startsWith('/') || value.startsWith('//') || value.includes('\\')) return null;
+  try {
+    const url = new URL(value, window.location.origin);
+    return url.origin === window.location.origin ? `${url.pathname}${url.search}` : null;
+  } catch {
+    return null;
+  }
+}
+
 export function initAccount(): void {
   openWallet = initAvatarWallet(() => {
     if (dialog.open) renderDialog();
@@ -87,17 +104,29 @@ export function initAccount(): void {
 
   const params = new URLSearchParams(window.location.search);
   const outcome = params.get('auth');
-  if (outcome) {
+  const loginRequested = params.get('login') === '1';
+  returnTo = loginRequested ? safeReturnPath(params.get('next')) : null;
+  if (outcome || loginRequested) {
     resetToken = outcome === 'reset' ? params.get('token') : null;
-    params.delete('auth');
-    params.delete('error');
-    params.delete('token');
+    for (const key of ['auth', 'error', 'token', 'login', 'next']) params.delete(key);
     const query = params.toString();
     history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`);
   }
 
   renderButton();
-  if (outcome === 'error') {
+  if (loginRequested) {
+    // Already signed in: go straight back. Otherwise offer the sign-in options.
+    void refresh(false).then(() => {
+      if (user && returnTo) {
+        window.location.assign(returnTo);
+        return;
+      }
+      message = returnTo ? { text: 'Log in to continue.', error: false } : null;
+      renderDialog();
+      if (!dialog.open) dialog.showModal();
+      if (!providers) void loadProviders();
+    });
+  } else if (outcome === 'error') {
     setHint(false);
     message = { text: 'Sign-in did not complete. Please try again.', error: true };
     renderDialog();
@@ -162,7 +191,7 @@ async function signIn(provider: Provider): Promise<void> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         provider,
-        callbackURL: '/',
+        callbackURL: returnTo ?? '/',
         newUserCallbackURL: '/?auth=new',
         errorCallbackURL: '/?auth=error',
       }),
@@ -242,6 +271,11 @@ async function signedIn(isNew = false): Promise<void> {
   draft = { name: '', email: '', password: '' };
   setHint(true);
   await refresh(isNew);
+  // Sent here to sign in by another page on this origin (the ad moderation page): go back.
+  if (user && returnTo) {
+    window.location.assign(returnTo);
+    return;
+  }
   if (user && (user.username || !isNew)) dialog.close();
 }
 

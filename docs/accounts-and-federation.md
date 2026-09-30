@@ -8,6 +8,7 @@ neither.
 hub (Cloudflare Pages, worldmesh.net)
  │  /api/auth/*, /api/account/*        ──►  workers/auth        Better Auth: Google, Apple, GitHub, Discord
  │  /.well-known/webfinger, /ap/*, /@* ──►  workers/federation  WebFinger + ActivityPub
+ │  /api/ads/*                         ──►  workers/ads         billboard ads (see advertising.md)
  │  everything else                    ──►  Pages (static + existing /api Functions, KV)
  ▼
 D1 "worldmesh"  (db/migrations)  — canonical WorldMesh data
