@@ -34,11 +34,13 @@ const skyVertex = /* glsl */ `
 const skyFragment = /* glsl */ `
   uniform vec3 uTop;
   uniform vec3 uHorizon;
+  uniform float uCurve;
   varying vec3 vDirection;
   void main() {
     float h = clamp(normalize(vDirection).y, 0.0, 1.0);
-    // Pale at the horizon, a clean saturated blue overhead.
-    vec3 color = mix(uHorizon, uTop, pow(smoothstep(0.0, 0.75, h), 0.55));
+    // Light: pale at the horizon, a clean saturated blue overhead.
+    // Dark: a faint grey at the horizon, deepening to black overhead.
+    vec3 color = mix(uHorizon, uTop, pow(smoothstep(0.0, 0.75, h), uCurve));
     gl_FragColor = vec4(color, 1.0);
     #include <colorspace_fragment>
   }
@@ -49,8 +51,10 @@ export const CITY_GLOW_WHITE = 0x6b707c;
 
 export const SKY_TOP = 0x2f80ea;
 export const SKY_HORIZON = 0xc4defb;
+export const SKY_TOP_DARK = 0x000000;
+export const SKY_HORIZON_DARK = 0x222429;
 
-/** A plain blue gradient dome. Move it with the player so it never gets closer. */
+/** A plain gradient dome. Move it with the player so it never gets closer. */
 export function createSky(): Mesh<SphereGeometry, ShaderMaterial> {
   const sky = new Mesh(
     new SphereGeometry(SKY_RADIUS, 32, 16),
@@ -60,6 +64,7 @@ export function createSky(): Mesh<SphereGeometry, ShaderMaterial> {
       uniforms: {
         uTop: { value: new Color(SKY_TOP) },
         uHorizon: { value: new Color(SKY_HORIZON) },
+        uCurve: { value: 0.55 },
       },
       side: BackSide,
       depthWrite: false,
@@ -70,6 +75,19 @@ export function createSky(): Mesh<SphereGeometry, ShaderMaterial> {
   sky.renderOrder = -1;
   sky.frustumCulled = false;
   return sky;
+}
+
+/** The horizon colour the fog and the scene background must match. */
+export function skyHorizon(light: boolean): number {
+  return light ? SKY_HORIZON : SKY_HORIZON_DARK;
+}
+
+export function applySkyTheme(sky: Mesh<SphereGeometry, ShaderMaterial>, light: boolean): void {
+  const { uniforms } = sky.material;
+  uniforms.uTop.value.set(light ? SKY_TOP : SKY_TOP_DARK);
+  uniforms.uHorizon.value.set(skyHorizon(light));
+  // The dark sky darkens more gradually, so the grey reads as a glow along the horizon.
+  uniforms.uCurve.value = light ? 0.55 : 0.8;
 }
 
 // ── The citadel's banner ─────────────────────────────────────────────────────
