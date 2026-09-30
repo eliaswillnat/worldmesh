@@ -131,4 +131,6 @@ cover cannot be loaded show a procedural tunnel instead.
 
 `workers/auth` and `workers/federation` are Workers routed onto the hub's own
 hostname, sharing one D1 database. Setup, secrets and routes are in
-[accounts-and-federation.md](accounts-and-federation.md).
+[accounts-and-federation.md](accounts-and-federation.md), including OAuth
+provider setup (Google, Apple, GitHub, Discord redirect URLs and Worker
+secret names).
