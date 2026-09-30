@@ -1,5 +1,6 @@
 /**
- * The account corner: Log in → Continue with Google / GitHub; once signed in,
+ * The account corner: Log in → email + password or Google / Apple / GitHub /
+ * Discord; once signed in,
  * avatar, name, username and Log out. Talks to workers/auth over plain fetch
  * on the same origin (no auth client library in the bundle).
  *
@@ -38,14 +39,30 @@ let busy = false;
 let message: { text: string; error: boolean } | null = null;
 /** Sign-in options the server has credentials for; asked once, when the dialog first opens. */
 let providers: Provider[] | null = null;
+/** Whether the server can email reset links (and requires verified emails). */
+let passwordReset = false;
+type View = 'sign-in' | 'sign-up' | 'forgot' | 'reset';
+let view: View = 'sign-in';
+/** From a reset link: /?auth=reset&token=… */
+let resetToken: string | null = null;
+/** Kept across re-renders so a failed attempt doesn't wipe what was typed. */
+let draft = { name: '', email: '', password: '' };
+
+const PROFILE_ICON =
+  '<svg class="account-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>';
+/** The mobile menu button shows the same profile icon, or the avatar once signed in. */
+const mobileProfile = document.querySelector<HTMLSpanElement>('#mobile-profile');
+
+export function openAccountDialog(): void {
+  message = null;
+  if (view === 'forgot' || (view === 'reset' && !resetToken)) view = 'sign-in';
+  renderDialog();
+  dialog.showModal();
+  if (!user && !providers) void loadProviders();
+}
 
 export function initAccount(): void {
-  button.addEventListener('click', () => {
-    message = null;
-    renderDialog();
-    dialog.showModal();
-    if (!user && !providers) void loadProviders();
-  });
+  button.addEventListener('click', openAccountDialog);
   dialog.addEventListener('click', (event) => {
     // A click on the backdrop (the dialog element itself) closes it.
     if (event.target === dialog) dialog.close();
@@ -54,8 +71,10 @@ export function initAccount(): void {
   const params = new URLSearchParams(window.location.search);
   const outcome = params.get('auth');
   if (outcome) {
+    resetToken = outcome === 'reset' ? params.get('token') : null;
     params.delete('auth');
     params.delete('error');
+    params.delete('token');
     const query = params.toString();
     history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`);
   }
@@ -67,6 +86,14 @@ export function initAccount(): void {
     renderDialog();
     dialog.showModal();
     void loadProviders();
+  } else if (outcome === 'reset') {
+    view = resetToken ? 'reset' : 'forgot';
+    if (!resetToken) message = { text: 'That reset link is invalid or has expired.', error: true };
+    renderDialog();
+    dialog.showModal();
+  } else if (outcome === 'verified') {
+    setHint(true);
+    void refresh(true);
   } else if (hasHint()) {
     void refresh(outcome === 'new');
   }
@@ -94,9 +121,9 @@ async function loadProviders(): Promise<void> {
     const response = await fetch('/api/account/providers', { credentials: 'same-origin' });
     if (!response.ok) throw new Error();
     const known = Object.keys(PROVIDER_LABELS);
-    providers = ((await response.json()) as { providers: string[] }).providers.filter((p): p is Provider =>
-      known.includes(p),
-    );
+    const data = (await response.json()) as { providers: string[]; passwordReset?: boolean };
+    providers = data.providers.filter((p): p is Provider => known.includes(p));
+    passwordReset = !!data.passwordReset;
   } catch {
     message = { text: 'Log in is unavailable right now.', error: true };
   }
@@ -121,6 +148,77 @@ async function signIn(provider: Provider): Promise<void> {
     setHint(true);
     window.location.assign(data.url);
   });
+}
+
+async function postAuth(path: string, payload: unknown): Promise<{ ok: boolean; data: Record<string, unknown> }> {
+  const response = await fetch(`/api/auth/${path}`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+  if (response.status === 429) throw new Error('Too many attempts. Try again in a minute.');
+  return { ok: response.ok, data };
+}
+
+async function signInWithEmail(email: string, password: string): Promise<void> {
+  await run(async () => {
+    const { ok, data } = await postAuth('sign-in/email', { email, password, callbackURL: '/?auth=verified' });
+    if (!ok) {
+      if (data.code === 'EMAIL_NOT_VERIFIED') {
+        message = { text: `Confirm your email first: we just sent a new link to ${email}.`, error: false };
+        return;
+      }
+      throw new Error('Wrong email or password.');
+    }
+    await signedIn();
+  });
+}
+
+async function signUpWithEmail(name: string, email: string, password: string): Promise<void> {
+  await run(async () => {
+    const { ok, data } = await postAuth('sign-up/email', { name, email, password, callbackURL: '/?auth=verified' });
+    if (!ok) {
+      const code = String(data.code ?? '');
+      if (code.includes('ALREADY_EXISTS')) throw new Error('An account with this email already exists. Log in instead.');
+      if (code.includes('PASSWORD_TOO_SHORT')) throw new Error('Use at least 8 characters for your password.');
+      if (code.includes('INVALID_EMAIL')) throw new Error('That email address looks wrong.');
+      throw new Error(typeof data.message === 'string' ? data.message : 'Could not create your account.');
+    }
+    if (!data.token) {
+      // Mail is set up: the account waits for its email to be confirmed.
+      view = 'sign-in';
+      message = { text: `Almost there! Open the link we sent to ${email} to confirm your account.`, error: false };
+      return;
+    }
+    await signedIn(true);
+  });
+}
+
+async function requestReset(email: string): Promise<void> {
+  await run(async () => {
+    await postAuth('request-password-reset', { email, redirectTo: '/?auth=reset' });
+    // Same answer whether or not the address has an account.
+    message = { text: `If ${email} has an account, a reset link is on its way.`, error: false };
+  });
+}
+
+async function resetPassword(password: string): Promise<void> {
+  await run(async () => {
+    const { ok } = await postAuth('reset-password', { newPassword: password, token: resetToken });
+    if (!ok) throw new Error('That reset link is invalid or has expired. Ask for a new one.');
+    resetToken = null;
+    view = 'sign-in';
+    message = { text: 'Password changed. Log in with your new password.', error: false };
+  });
+}
+
+async function signedIn(isNew = false): Promise<void> {
+  draft = { name: '', email: '', password: '' };
+  setHint(true);
+  await refresh(isNew);
+  if (user && (user.username || !isNew)) dialog.close();
 }
 
 async function signOut(): Promise<void> {
@@ -174,10 +272,14 @@ async function run(task: () => Promise<void>): Promise<void> {
 
 function renderButton(): void {
   button.replaceChildren();
+  if (mobileProfile) {
+    mobileProfile.replaceChildren();
+    if (user) mobileProfile.append(avatar(user, 'account-avatar'));
+    else mobileProfile.innerHTML = PROFILE_ICON;
+  }
   if (!user) {
     // Text on wide screens; a person icon in the compact mobile circle.
-    button.innerHTML =
-      '<svg class="account-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>';
+    button.innerHTML = PROFILE_ICON;
     const label = document.createElement('span');
     label.className = 'account-label';
     label.textContent = 'Log in';
@@ -195,11 +297,9 @@ function renderButton(): void {
 
 function renderDialog(): void {
   body.replaceChildren();
+  body.append(closeButton());
   if (!user) {
-    body.append(
-      heading('Log in to WorldMesh'),
-      ...(providers ?? []).map((provider) => providerButton(provider, PROVIDER_LABELS[provider])),
-    );
+    renderSignedOut();
   } else {
     const who = document.createElement('div');
     who.className = 'account-who';
@@ -232,6 +332,150 @@ function renderDialog(): void {
     note.textContent = message.text;
     body.append(note);
   }
+}
+
+function renderSignedOut(): void {
+  if (view === 'reset') {
+    body.append(heading('Choose a new password'));
+    body.append(emailForm('reset'));
+    return;
+  }
+  if (view === 'forgot') {
+    body.append(heading('Reset your password'));
+    const hint = document.createElement('p');
+    hint.className = 'account-hint';
+    hint.textContent = "Enter your account's email and we'll send you a link to choose a new password.";
+    body.append(hint, emailForm('forgot'), linkButton('Back to log in', () => switchView('sign-in')));
+    return;
+  }
+
+  body.append(heading(view === 'sign-up' ? 'Create your account' : 'Welcome back'));
+  const tabs = document.createElement('div');
+  tabs.className = 'account-tabs';
+  tabs.setAttribute('role', 'tablist');
+  for (const [id, label] of [['sign-in', 'Log in'], ['sign-up', 'Sign up']] as const) {
+    const tab = document.createElement('button');
+    tab.type = 'button';
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('aria-selected', String(view === id));
+    tab.textContent = label;
+    tab.addEventListener('click', () => switchView(id));
+    tabs.append(tab);
+  }
+  body.append(tabs, emailForm(view));
+  if (view === 'sign-in' && passwordReset) {
+    body.append(linkButton('Forgot password?', () => switchView('forgot')));
+  }
+  if (providers?.length) {
+    const divider = document.createElement('p');
+    divider.className = 'account-divider';
+    divider.textContent = 'or';
+    body.append(divider, ...providers.map((provider) => providerButton(provider, PROVIDER_LABELS[provider])));
+  }
+}
+
+function switchView(next: View): void {
+  view = next;
+  draft.password = '';
+  message = null;
+  renderDialog();
+  body.querySelector<HTMLInputElement>('input')?.focus();
+}
+
+function emailForm(kind: View): HTMLFormElement {
+  const form = document.createElement('form');
+  form.className = 'account-form';
+    const field = (label: string, input: HTMLElement) => {
+    const wrap = document.createElement('label');
+    wrap.className = 'account-field';
+    const text = document.createElement('span');
+    text.textContent = label;
+    wrap.append(text, input);
+    return wrap;
+  };
+  const make = (type: string, name: string, autocomplete: string, placeholder: string) => {
+    const input = document.createElement('input');
+    input.type = type;
+    input.name = name;
+    input.autocomplete = autocomplete as AutoFill;
+    input.placeholder = placeholder;
+    input.required = true;
+    input.spellcheck = false;
+    return input;
+  };
+
+  const name = make('text', 'name', 'name', 'Your name');
+  name.maxLength = 60;
+  name.value = draft.name;
+  const email = make('email', 'email', 'email', 'you@example.com');
+  email.value = draft.email;
+  const password = make(
+    'password',
+    'password',
+    kind === 'sign-in' ? 'current-password' : 'new-password',
+    kind === 'sign-in' ? 'Your password' : 'At least 8 characters',
+  );
+  password.minLength = kind === 'sign-in' ? 1 : 8;
+  password.maxLength = 128;
+  password.value = draft.password;
+
+  const passwordRow = document.createElement('div');
+  passwordRow.className = 'account-password';
+  const reveal = document.createElement('button');
+  reveal.type = 'button';
+  reveal.className = 'account-reveal';
+  reveal.textContent = 'Show';
+  reveal.setAttribute('aria-label', 'Show password');
+  reveal.addEventListener('click', () => {
+    const hidden = password.type === 'password';
+    password.type = hidden ? 'text' : 'password';
+    reveal.textContent = hidden ? 'Hide' : 'Show';
+    reveal.setAttribute('aria-label', hidden ? 'Hide password' : 'Show password');
+  });
+  passwordRow.append(password, reveal);
+
+  if (kind === 'sign-up') form.append(field('Name', name));
+  if (kind !== 'reset') form.append(field('Email', email));
+  if (kind !== 'forgot') form.append(field(kind === 'reset' ? 'New password' : 'Password', passwordRow));
+
+  const submit = document.createElement('button');
+  submit.type = 'submit';
+  submit.className = 'account-submit';
+  submit.disabled = busy;
+  submit.textContent = busy
+    ? 'Please wait…'
+    : { 'sign-in': 'Log in', 'sign-up': 'Create account', forgot: 'Send reset link', reset: 'Save password' }[kind];
+  form.append(submit);
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    draft = { name: name.value.trim(), email: email.value.trim(), password: password.value };
+    if (kind === 'sign-in') void signInWithEmail(draft.email, password.value);
+    else if (kind === 'sign-up') void signUpWithEmail(draft.name, draft.email, password.value);
+    else if (kind === 'forgot') void requestReset(draft.email);
+    else void resetPassword(password.value);
+  });
+  return form;
+}
+
+function linkButton(text: string, onClick: () => void): HTMLButtonElement {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'account-link';
+  b.textContent = text;
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+function closeButton(): HTMLButtonElement {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'account-close';
+  b.setAttribute('aria-label', 'Close');
+  b.innerHTML =
+    '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>';
+  b.addEventListener('click', () => dialog.close());
+  return b;
 }
 
 function heading(text: string): HTMLElement {

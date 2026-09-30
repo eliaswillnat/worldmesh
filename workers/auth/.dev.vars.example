@@ -19,3 +19,6 @@ APPLE_CLIENT_ID=
 APPLE_TEAM_ID=
 APPLE_KEY_ID=
 APPLE_PRIVATE_KEY=
+# Optional: email verification + password reset for email/password accounts
+# RESEND_API_KEY=
+# AUTH_FROM_EMAIL=WorldMesh <accounts@worldmesh.net>

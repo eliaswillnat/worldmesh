@@ -337,7 +337,7 @@ for (const b of themeButtons) {
 function setMobileAdding(open: boolean): void {
   userScrolled = true;
   document.documentElement.classList.toggle('mobile-adding', open);
-  menuToggle.setAttribute('aria-label', open ? 'Close' : 'Menu');
+  menuToggle.setAttribute('aria-label', open ? 'Close' : 'Account and menu');
   if (open) {
     document.querySelector('main')!.scrollTo({ top: 0, behavior: 'smooth' });
     input.focus({ preventScroll: true });
