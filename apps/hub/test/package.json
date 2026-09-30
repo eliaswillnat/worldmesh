@@ -1,0 +1,12 @@
+{
+  "name": "worldmesh-hub-tests",
+  "private": true,
+  "type": "module",
+  "description": "Unit tests for the hub's pure modules (listings, discovery, city plan, shutter, elevator, rotation). Kept out of the npm workspace so the deploy lockfile stays untouched. First time: npm install --prefix apps/hub/test --legacy-peer-deps",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.11"
+  }
+}

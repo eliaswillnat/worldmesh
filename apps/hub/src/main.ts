@@ -17,6 +17,13 @@ interface WorldEntry {
   submittedAt?: string;
   addedAt?: string;
   approvedAt?: string;
+  /** Category ids (towers in walk mode). Guessed from the name and description when missing. */
+  categories?: string[];
+  tags?: string[];
+  /** Short muted loop(s) shown on the world's door in walk mode. */
+  preview?: string | string[];
+  featured?: boolean;
+  source?: 'admin' | 'submitted' | 'demo' | 'discovered';
 }
 
 import communityWorldsStatic from './community.json';
@@ -75,6 +82,8 @@ const DEMO_WORLDS: WorldEntry[] = [
     cover: '/covers/forest.webp',
     creator: 'Elias Willnat',
     portfolio: 'https://x.com/eliaswillnat',
+    categories: ['explore'],
+    source: 'demo',
   },
   {
     name: 'Mars',
@@ -84,6 +93,8 @@ const DEMO_WORLDS: WorldEntry[] = [
     cover: '/covers/mars.webp',
     creator: 'Elias Willnat',
     portfolio: 'https://x.com/eliaswillnat',
+    categories: ['space'],
+    source: 'demo',
   },
   {
     name: 'Neon City',
@@ -93,6 +104,8 @@ const DEMO_WORLDS: WorldEntry[] = [
     cover: '/covers/city.webp',
     creator: 'Elias Willnat',
     portfolio: 'https://x.com/eliaswillnat',
+    categories: ['explore'],
+    source: 'demo',
   },
   {
     name: 'Medieval Village',
@@ -102,6 +115,8 @@ const DEMO_WORLDS: WorldEntry[] = [
     cover: '/covers/medieval.webp',
     creator: 'Elias Willnat',
     portfolio: 'https://x.com/eliaswillnat',
+    categories: ['explore'],
+    source: 'demo',
   },
   {
     name: 'Space Station',
@@ -111,6 +126,8 @@ const DEMO_WORLDS: WorldEntry[] = [
     cover: '/covers/space.webp',
     creator: 'Elias Willnat',
     portfolio: 'https://x.com/eliaswillnat',
+    categories: ['space'],
+    source: 'demo',
   },
 ];
 
@@ -474,6 +491,8 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
         saveWalkReturn(returnTo);
       },
       onAddWorld: openAddFormFromWalk,
+      // Lifetime visits, for ranking in the towers (see discovery/ranking.ts).
+      signals: { signals: (world) => ({ views: viewCounts[world.url] }) },
     });
     applyWalkTheme();
     showWalkPrivate(lobby.alias);

@@ -34,6 +34,7 @@
     "typecheck": "npm run build:runtime && npm run typecheck --workspaces --if-present",
     "typecheck:workers": "npm run typecheck --prefix workers/auth && npm run typecheck --prefix workers/federation && npm run typecheck --prefix workers/ads",
     "test:workers": "npm test --prefix workers/auth && npm test --prefix workers/federation && npm test --prefix workers/ads",
+    "test:hub": "npm test --prefix apps/hub/test",
     "pack:runtime": "npm pack --workspace=packages/runtime --dry-run"
   },
   "devDependencies": {

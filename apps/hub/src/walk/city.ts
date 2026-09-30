@@ -1,30 +1,22 @@
 import {
   BackSide,
-  BoxGeometry,
   CanvasTexture,
   Color,
-  CylinderGeometry,
   DoubleSide,
-  Group,
-  Matrix4,
   Mesh,
   MeshBasicMaterial,
-  MeshStandardMaterial,
-  PlaneGeometry,
   SRGBColorSpace,
   ShaderMaterial,
   SphereGeometry,
-  Vector3,
   type BufferGeometry,
+  type Vector3,
 } from 'three';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { hash, planCity, random, ringDistance, type BlockShape, type RoundShape, type ScreenPlan, type TowerPlan } from './layout';
+import { hash, random, type ScreenPlan } from './layout';
 
 /**
- * The city around the citadel: white towers wearing big screens, the way a
- * plaza looks from the citadel's gate. Everything is procedural and seeded, so
- * every visitor sees the same skyline. The screens are advertising billboards
- * (see ../ads/billboards.ts); layout.ts decides where everything stands.
+ * What the citadel and the city around it share: the sky dome, the banner
+ * over the gate, the light trim, and the billboard slot type the ad system
+ * draws on. The city itself (the category towers) lives in ../towers.
  */
 
 const SKY_RADIUS = 250;
@@ -304,11 +296,13 @@ function drawSkyline(ctx: CanvasRenderingContext2D, area: Rect, horizon: number,
   ctx.fillRect(area.x + area.w * 0.32, horizon, area.w * 0.05, area.h * 0.18);
 }
 
-// ── Buildings ────────────────────────────────────────────────────────────────
+// ── Billboards and shared materials ──────────────────────────────────────────
 
 /**
- * One billboard: a screen on a tower, in world space. The city only builds
- * the geometry; ../ads/billboards.ts decides what it shows.
+ * One billboard: a screen in world space. The city only builds the geometry;
+ * ../ads/billboards.ts decides what it shows. The tower city has no
+ * billboard slots yet, so none are built; the ad system stays wired for when
+ * it does.
  */
 export interface BillboardSlot {
   readonly plan: ScreenPlan;
@@ -321,43 +315,21 @@ export interface BillboardSlot {
   readonly normal: Vector3;
 }
 
-/** How far the empty-slot outline floats in front of the screen. */
-const OVERLAY_OFFSET = 0.08;
-
-export interface City {
-  readonly group: Group;
-  /** Invisible boxes around the reachable towers, plus the plaza's edge. */
-  readonly colliders: Mesh[];
-  /** Solid tower geometry, for checking whether something blocks the view of a billboard. */
-  readonly occluders: Mesh[];
-  /** Every screen on every tower. */
-  readonly billboards: BillboardSlot[];
-  /** Where the plaza ends: the ground only needs to reach this far. */
-  readonly radius: number;
-  /** Ground spot of the doorway built into the tower next to the gate, facing the citadel. */
-  readonly entrance: { x: number; z: number };
-  setTheme(light: boolean): void;
-  dispose(): void;
-}
-
 export interface CityMaterials {
-  building: MeshStandardMaterial;
   glow: MeshBasicMaterial;
   citadelPoster: Poster;
   redraw(): void;
   dispose(): void;
 }
 
-/** Materials and the banner art shared by every rebuild of the city. */
+/** The citadel's light trim and banner art, shared by every rebuild. */
 export function createCityMaterials(anisotropy: number): CityMaterials {
   const citadelPoster = createPoster(CITADEL_POSTER, anisotropy);
   return {
-    building: new MeshStandardMaterial({ roughness: 0.55, metalness: 0 }),
     glow: new MeshBasicMaterial({ toneMapped: false, side: DoubleSide }),
     citadelPoster,
     redraw: () => citadelPoster.redraw(),
     dispose() {
-      this.building.dispose();
       this.glow.dispose();
       citadelPoster.texture.dispose();
       citadelPoster.material.dispose();
@@ -366,213 +338,7 @@ export function createCityMaterials(anisotropy: number): CityMaterials {
 }
 
 export function applyCityTheme(materials: CityMaterials, light: boolean): void {
-  // Bright white towers by day; dark monoliths with lit screens by night.
-  materials.building.color.set(light ? 0xf5f6fa : 0x17171c);
-  materials.building.emissive.set(light ? CITY_GLOW_WHITE : 0x000000);
   materials.glow.color.set(light ? 0x3a3d44 : 0xffffff);
-}
-
-/** Collects boxes and screens, then merges them into a handful of draw calls. */
-class Builder {
-  blocks: BufferGeometry[] = [];
-  glow: BufferGeometry[] = [];
-  billboards: BillboardSlot[] = [];
-  colliders: Mesh[] = [];
-  private matrix = new Matrix4();
-  private frame: Matrix4;
-
-  /** `frame` places the building being built; move it between buildings. */
-  constructor(frame: Matrix4) {
-    this.frame = frame;
-  }
-
-  /** A box in the building's local frame; (x, y, z) is its bottom centre. */
-  box(w: number, h: number, d: number, x: number, y: number, z: number, target: BufferGeometry[] = this.blocks): void {
-    const geometry = new BoxGeometry(w, h, d).toNonIndexed();
-    geometry.applyMatrix4(this.matrix.makeTranslation(x, y + h / 2, z).premultiply(this.frame));
-    target.push(geometry);
-  }
-
-  cylinder(r: number, h: number, x: number, y: number, z: number): void {
-    const geometry = new CylinderGeometry(r, r, h, 40).toNonIndexed();
-    geometry.applyMatrix4(this.matrix.makeTranslation(x, y + h / 2, z).premultiply(this.frame));
-    this.blocks.push(geometry);
-  }
-
-  /** A thin emissive ring, e.g. a light band around a round tower. */
-  ring(r: number, y: number, x: number, z: number): void {
-    const geometry = new CylinderGeometry(r, r, 0.07, 48, 1, true).toNonIndexed();
-    geometry.applyMatrix4(this.matrix.makeTranslation(x, y, z).premultiply(this.frame));
-    this.glow.push(geometry);
-  }
-
-  /** A billboard: flat and facing local +z, or wrapped around a round tower. */
-  screen(plan: ScreenPlan): void {
-    const shape = (lift: number) => {
-      if (!plan.curved) {
-        const geometry = new PlaneGeometry(plan.width, plan.height);
-        return geometry.applyMatrix4(this.matrix.makeTranslation(plan.x, plan.y, plan.z + lift).premultiply(this.frame));
-      }
-      const r = plan.radius + lift;
-      const theta = plan.width / plan.radius;
-      const geometry = new CylinderGeometry(r, r, plan.height, 24, 1, true, -theta / 2, theta);
-      return geometry.applyMatrix4(this.matrix.makeTranslation(plan.x, plan.y, plan.z).premultiply(this.frame));
-    };
-    const surfaceZ = plan.curved ? plan.z + plan.radius : plan.z;
-    const center = new Vector3(plan.x, plan.y, surfaceZ).applyMatrix4(this.frame);
-    const normal = new Vector3(0, 0, 1).transformDirection(this.frame);
-    this.billboards.push({ plan, geometry: shape(0), overlay: shape(OVERLAY_OFFSET), center, normal });
-  }
-
-  /** An invisible box that stops the player, in the building's frame. */
-  collider(w: number, h: number, d: number, x: number, z: number): void {
-    const mesh = new Mesh(UNIT_BOX);
-    mesh.visible = false;
-    mesh.scale.set(w, h, d);
-    mesh.position.set(x, h / 2, z);
-    mesh.applyMatrix4(this.frame);
-    this.colliders.push(mesh);
-  }
-}
-
-const UNIT_BOX = new BoxGeometry(1, 1, 1);
-
-/**
- * Lay out two rings of towers around a citadel whose outer wall is
- * `citadelRadius` wide. The gate faces +Z, so the first ring leaves the
- * avenue in front of it open and flanks it with the tallest screens.
- */
-export function createCity(citadelRadius: number, materials: Pick<CityMaterials, 'building' | 'glow'>): City {
-  const group = new Group();
-  group.name = 'city';
-
-  const frame = new Matrix4();
-  const builder = new Builder(frame);
-  const entrance = { x: 0, z: 0 };
-  for (const tower of planCity(citadelRadius)) {
-    const d = ringDistance(tower.ring, citadelRadius) + tower.offset;
-    // Local +Z faces the citadel.
-    frame.makeRotationY(tower.angle + Math.PI).setPosition(Math.sin(tower.angle) * d, 0, Math.cos(tower.angle) * d);
-    if (tower.shape.kind === 'round') {
-      roundTower(builder, tower, tower.shape);
-    } else {
-      const doorZ = blockTower(builder, tower, tower.shape);
-      if (tower.shape.doorway) {
-        const spot = new Vector3(0, 0, doorZ).applyMatrix4(frame);
-        entrance.x = spot.x;
-        entrance.z = spot.z;
-      }
-    }
-    for (const screen of tower.screens) builder.screen(screen);
-  }
-
-  const blocks = new Mesh(mergeGeometries(builder.blocks), materials.building);
-  const glow = new Mesh(mergeGeometries(builder.glow), materials.glow);
-  group.add(blocks, glow);
-  for (const geometry of [...builder.blocks, ...builder.glow]) geometry.dispose();
-
-  // An invisible fence just past the front of the first ring, so the plaza
-  // has an edge between towers too.
-  const radius = ringDistance('front', citadelRadius) + 4;
-  const fence = new Mesh(new CylinderGeometry(radius, radius, 12, 64, 1, true));
-  flipInside(fence.geometry);
-  fence.visible = false;
-  fence.position.y = 6;
-  const colliders = [...builder.colliders, fence];
-  group.add(...colliders);
-  group.updateMatrixWorld(true);
-
-  const billboards = builder.billboards;
-  return {
-    group,
-    colliders,
-    occluders: [blocks],
-    billboards,
-    radius,
-    entrance,
-    setTheme: (light) => applyCityTheme(materials as CityMaterials, light),
-    dispose() {
-      for (const child of group.children) {
-        if (child instanceof Mesh && child.geometry !== UNIT_BOX) child.geometry.dispose();
-      }
-      for (const slot of billboards) {
-        slot.geometry.dispose();
-        slot.overlay.dispose();
-      }
-      group.removeFromParent();
-    },
-  };
-}
-
-/**
- * White stacked blocks: a main tower, a setback crown, a side wing and a low
- * plinth, lined with light strips and wearing one or two screens. Returns how
- * far out the doorway's door stands, for the tower that has one.
- */
-function blockTower(b: Builder, tower: TowerPlan, shape: BlockShape): number {
-  const { w, h, d, crownH, fin, side, wingW, wingH, doorway } = shape;
-  const strip = 0.07;
-
-  // Plinth.
-  b.box(w + 3, 0.7, d + 2, 0, 0, 0.4);
-  // Main tower and crown.
-  b.box(w, h, d, 0, 0, 0);
-  b.box(w - 1.6, crownH, d - 1.6, 0, h, -0.3);
-  b.box(w - 0.8, 0.5, d - 0.8, 0, h + crownH, -0.3);
-  // Light strips up the front corners and along the top.
-  for (const corner of [-1, 1]) b.box(strip, h, strip, corner * (w / 2 + 0.02), 0, d / 2 + 0.02, b.glow);
-  b.box(w, strip, strip, 0, h - 0.4, d / 2 + 0.03, b.glow);
-  // A vertical fin splitting the facade, like the reference towers.
-  b.box(0.5, h * 0.9, 0.5, fin * (w / 2 - 0.25), h * 0.05, d / 2 + 0.25);
-
-  // The main screen's white bezel.
-  const main = tower.screens.find((screen) => screen.slot === 'main')!;
-  b.box(main.width + 0.5, main.height + 0.5, 0.3, 0, main.y - main.height / 2 - 0.25, d / 2 + 0.1);
-
-  // Side wing.
-  const wingX = side * (w / 2 + wingW / 2 - 0.4);
-  b.box(wingW, wingH, d - 1, wingX, 0, 1);
-  b.box(strip, wingH, strip, wingX + side * (wingW / 2 + 0.02), 0, d / 2 + 0.52, b.glow);
-
-  // A porch on the plinth: two cheeks and a canopy, open at the front where
-  // the door stands.
-  const porchDepth = 2.6;
-  const porchZ = d / 2 + porchDepth / 2;
-  const doorZ = d / 2 + porchDepth - 0.2;
-  if (doorway) {
-    for (const cheek of [-1, 1]) {
-      b.box(0.4, 3.3, porchDepth, cheek * 1.1, 0, porchZ);
-      b.box(strip, 3.3, strip, cheek * 1.32, 0, d / 2 + porchDepth + 0.02, b.glow);
-      if (tower.reachable) b.collider(0.4, 3.3, porchDepth, cheek * 1.1, porchZ);
-    }
-    b.box(2.8, 0.45, porchDepth + 0.2, 0, 3.2, porchZ + 0.1);
-    b.box(2.8, strip, strip, 0, 3.2, d / 2 + porchDepth + 0.22, b.glow);
-  }
-
-  // Low wide screen in front of the base on some towers: its stand and trim.
-  const low = tower.screens.find((screen) => screen.slot === 'low');
-  if (low) {
-    b.box(low.width + 0.8, low.height + 1.4, 1.2, low.x, 0, d / 2 + 1.2);
-    b.box(low.width + 0.8, strip, strip, low.x, low.height + 1.4, d / 2 + 1.82, b.glow);
-    if (tower.reachable) b.collider(low.width + 0.8, low.height + 2, 1.4, low.x, d / 2 + 1.2);
-  }
-
-  if (tower.reachable) {
-    b.collider(w + 3, h, d + 2, 0, 0.4);
-    b.collider(wingW, wingH, d - 1, wingX, 1);
-  }
-  return doorZ;
-}
-
-/** A white drum with screens wrapped around its face and light rings. */
-function roundTower(b: Builder, tower: TowerPlan, shape: RoundShape): void {
-  const { r, h } = shape;
-  b.box(r * 2 + 2.5, 0.7, r * 2 + 2.5, 0, 0, 0);
-  b.cylinder(r, h, 0, 0, 0);
-  b.cylinder(r + 0.3, 0.6, 0, h, 0);
-  b.ring(r + 0.03, h - 0.5, 0, 0);
-  b.ring(r + 0.03, 1.2, 0, 0);
-  if (tower.reachable) b.collider(r * 2 + 2.5, h, r * 2 + 2.5, 0, 0);
 }
 
 /**

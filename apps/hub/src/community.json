@@ -6,7 +6,8 @@
     "cover": "/covers/skydex-3x4.webp",
     "creator": "Yevgen",
     "portfolio": "https://esso.dev",
-    "addedAt": "2026-09-27T23:46:14Z"
+    "addedAt": "2026-09-27T23:46:14Z",
+    "categories": ["explore"]
   },
   {
     "id": "sky-reach-0l39gz",
@@ -15,7 +16,8 @@
     "cover": "https://pub-b622cf770b414a1c9869157e73dab3c1.r2.dev/tesana-com-1790624127336.webp",
     "creator": "@Rubzem",
     "portfolio": "https://x.com/Rubzem",
-    "addedAt": "2026-09-28T19:35:27Z"
+    "addedAt": "2026-09-28T19:35:27Z",
+    "categories": ["games"]
   },
   {
     "id": "sumbasurf-208eyx",
@@ -25,6 +27,7 @@
     "cover": "/covers/sumbasurf.webp",
     "creator": "@SumbaSurf",
     "portfolio": "https://x.com/SumbaSurf",
-    "addedAt": "2026-09-29T16:46:08Z"
+    "addedAt": "2026-09-29T16:46:08Z",
+    "categories": ["games"]
   }
 ]

@@ -1023,6 +1023,209 @@
         background: rgba(255, 255, 255, 0.75);
         border-color: rgba(0, 0, 0, 0.14);
       }
+      /* ── Tower city ────────────────────────────────────────────── */
+      /* Flat and solid: no blur, no gradients. The prompt reuses .walk-add-prompt. */
+      .city-prompt { max-width: calc(100vw - 32px); overflow: hidden; text-overflow: ellipsis; }
+      .city-chip {
+        position: fixed;
+        top: max(16px, env(safe-area-inset-top));
+        left: max(16px, env(safe-area-inset-left));
+        z-index: 2147483001;
+        max-width: calc(100vw - 180px);
+        padding: 9px 14px;
+        border-radius: 999px;
+        font: 600 13px/1.2 "Urbanist", ui-sans-serif, system-ui, sans-serif;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        color: #f4f1ea;
+        background: #16171b;
+        border: 1px solid #2c2e34;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity .2s ease;
+      }
+      .city-chip.visible { opacity: 1; }
+      .city-ride {
+        position: fixed;
+        right: max(16px, env(safe-area-inset-right));
+        top: 50%;
+        z-index: 2147483001;
+        transform: translateY(-50%);
+        display: none;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 8px;
+      }
+      .city-ride.visible { display: flex; }
+      .city-ride-button {
+        width: 52px;
+        height: 52px;
+        border-radius: 14px;
+        font: 700 18px/1 "Urbanist", ui-sans-serif, system-ui, sans-serif;
+        color: #f4f1ea;
+        background: #16171b;
+        border: 1px solid #2c2e34;
+        cursor: pointer;
+      }
+      .city-ride-button:active { background: #24262c; }
+      .city-ride-label {
+        padding: 6px 10px;
+        border-radius: 8px;
+        font: 600 12px/1.2 "Urbanist", ui-sans-serif, system-ui, sans-serif;
+        white-space: nowrap;
+        color: #f4f1ea;
+        background: #16171b;
+      }
+      .city-travel {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #0e0f12;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity .25s ease;
+      }
+      .city-travel.active { opacity: 1; pointer-events: auto; }
+      .city-travel-label {
+        font: 700 22px/1 "Urbanist", ui-sans-serif, system-ui, sans-serif;
+        letter-spacing: 0.18em;
+        color: #f4f1ea;
+      }
+      html.walking:has(.wm-overlay[data-locked="false"]) .city-ride { display: none; }
+      .city-dialog {
+        margin: auto;
+        width: min(440px, calc(100vw - 24px));
+        max-height: calc(100dvh - 24px);
+        padding: 0;
+        border-radius: 18px;
+        border: 1px solid #2c2e34;
+        background: #16171b;
+        color: #f4f1ea;
+        font-family: "Urbanist", ui-sans-serif, system-ui, sans-serif;
+        overflow: auto;
+        overscroll-behavior: contain;
+      }
+      .city-dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
+      .city-dialog-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 18px 20px 8px;
+      }
+      .city-dialog-header h2 { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: normal; text-transform: none; }
+      .city-dialog-header p { margin: 4px 0 0; font-size: 13px; color: #a3a39c; }
+      .city-dialog-close {
+        width: 34px;
+        height: 34px;
+        flex: none;
+        display: grid;
+        place-items: center;
+        padding: 0;
+        border-radius: 50%;
+        border: 1px solid #2c2e34;
+        background: transparent;
+        color: inherit;
+        font-size: 20px;
+        line-height: 1;
+        cursor: pointer;
+      }
+      .city-dialog-body { display: flex; flex-direction: column; gap: 10px; padding: 8px 20px 20px; }
+      .city-destinations { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+      .city-destination, .city-result {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 3px;
+        padding: 11px 12px;
+        border-radius: 12px;
+        border: 1px solid #2c2e34;
+        background: #1d1e23;
+        color: inherit;
+        font: 600 14px/1.2 inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .city-destination:hover, .city-result:hover { border-color: #6a6c73; }
+      .city-destination:disabled { cursor: default; opacity: 0.55; }
+      .city-destination small, .city-result small { font-size: 12px; font-weight: 500; color: #a3a39c; }
+      .city-result { width: 100%; }
+      .city-result em { font-style: normal; font-size: 12px; color: #8fd3c7; }
+      .city-row { display: flex; gap: 8px; }
+      .city-row input, .city-search {
+        flex: 1;
+        min-width: 0;
+        padding: 11px 12px;
+        border-radius: 12px;
+        border: 1px solid #2c2e34;
+        background: #0e0f12;
+        color: inherit;
+        font: 500 15px/1.2 inherit;
+      }
+      .city-row button {
+        padding: 0 18px;
+        border-radius: 12px;
+        border: 1px solid #2c2e34;
+        background: #f4f1ea;
+        color: #111;
+        font: 700 14px/1 inherit;
+        cursor: pointer;
+      }
+      .city-results { display: flex; flex-direction: column; gap: 6px; }
+      .city-empty { margin: 0; font-size: 13px; color: #a3a39c; }
+      html.walking[data-walk-theme="light"] .city-chip,
+      html.walking[data-walk-theme="light"] .city-ride-button,
+      html.walking[data-walk-theme="light"] .city-ride-label,
+      html.walking[data-walk-theme="light"] .city-dialog {
+        color: #16171b;
+        background: #f7f5f0;
+        border-color: #d6d3cb;
+      }
+      html.walking[data-walk-theme="light"] .city-ride-button:active { background: #e9e6df; }
+      html.walking[data-walk-theme="light"] .city-travel { background: #eceae4; }
+      html.walking[data-walk-theme="light"] .city-travel-label { color: #16171b; }
+      html.walking[data-walk-theme="light"] .city-destination,
+      html.walking[data-walk-theme="light"] .city-result { background: #ffffff; border-color: #d6d3cb; }
+      html.walking[data-walk-theme="light"] .city-row input,
+      html.walking[data-walk-theme="light"] .city-search { background: #ffffff; border-color: #d6d3cb; }
+      html.walking[data-walk-theme="light"] .city-row button { background: #16171b; color: #f7f5f0; }
+      html.walking[data-walk-theme="light"] .city-dialog-header p,
+      html.walking[data-walk-theme="light"] .city-destination small,
+      html.walking[data-walk-theme="light"] .city-result small,
+      html.walking[data-walk-theme="light"] .city-empty { color: #6b6962; }
+      html.walking[data-walk-theme="light"] .city-result em { color: #2f7d70; }
+      html.walking[data-walk-theme="light"] .city-dialog-close { border-color: #d6d3cb; }
+      /* Development only (towers/debug.ts). */
+      .city-debug {
+        position: fixed;
+        left: max(16px, env(safe-area-inset-left));
+        top: calc(max(16px, env(safe-area-inset-top)) + 44px);
+        z-index: 2147483001;
+        max-width: min(420px, calc(100vw - 32px));
+        padding: 8px 10px;
+        border-radius: 10px;
+        background: rgba(10, 11, 13, 0.85);
+        color: #d9f2ea;
+        font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      .city-debug pre { margin: 6px 0 0; white-space: pre-wrap; }
+      .city-debug button {
+        margin: 0 4px 0 0;
+        padding: 3px 8px;
+        border-radius: 6px;
+        border: 1px solid #3a3d44;
+        background: #1d1e23;
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+      }
+      .city-debug.collapsed pre, .city-debug.collapsed button:not(:last-child) { display: none; }
+
       /* ── Billboard ads ─────────────────────────────────────────── */
       /* The walk-mode prompt reuses .walk-add-prompt; ads get a little more room. */
       .walk-ad-prompt { max-width: calc(100vw - 32px); overflow: hidden; text-overflow: ellipsis; }

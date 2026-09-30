@@ -35,10 +35,13 @@ as a place. Every listed world is a doorway set into a round wall around a
 mirrored grid, showing its cover, and walking into one travels there. The lobby is black or white depending on each visitor's own
 light/dark setting. Everyone in
 walk mode sees everyone else, through a tiny presence relay in
-`workers/presence`. The screens on the towers around the lobby are billboards
-anyone can book for €2, reviewed by hand before they go live (`workers/ads`,
-see [docs/advertising.md](docs/advertising.md)) — the hub ads UI stays off
-until deliberately enabled (`AD_CONFIG.enabled` / `VITE_ADS_ENABLED`).
+`workers/presence`. Outside the citadel stands the tower city: a tower per
+category, floors of doors showing each world's poster or preview loop, a slow
+elevator up the middle and bridges between towers (see
+[docs/tower-city.md](docs/tower-city.md)). The billboard ad system
+(`workers/ads`, see [docs/advertising.md](docs/advertising.md)) is kept, but
+the towers have no screens for it yet, and the hub ads UI stays off until
+deliberately enabled (`AD_CONFIG.enabled` / `VITE_ADS_ENABLED`).
 
 ## Repo layout
 
@@ -123,6 +126,7 @@ reference and [docs/controls.md](docs/controls.md) for the control convention.
 - [Compatibility](docs/compatibility.md) — the world-facing contract
 - [Controls](docs/controls.md) — the navigation convention
 - [Accounts and federation](docs/accounts-and-federation.md) — login, D1, ActivityPub
+- [Tower city](docs/tower-city.md) — walk mode's towers, doors, rotation and ranking
 - [Billboard advertising](docs/advertising.md) — paid, reviewed ads on walk mode's screens
 - [Publishing](docs/publishing.md) — how the runtime is built and versioned
 - [Roadmap](docs/roadmap.md) — what is deliberately not built yet
