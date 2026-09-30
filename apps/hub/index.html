@@ -1053,6 +1053,46 @@
         box-shadow: 0 0 8px #fff;
       }
       html.walking .walk-online[data-count] { display: flex; }
+      /* Private mode: under the walk toggle. Shows the made-up name while on. */
+      .walk-private {
+        position: fixed;
+        top: calc(max(16px, env(safe-area-inset-top)) + 54px);
+        right: max(16px, env(safe-area-inset-right));
+        z-index: 2147483001;
+        height: 44px;
+        padding: 0 16px 0 12px;
+        border-radius: 22px;
+        display: none;
+        align-items: center;
+        gap: 8px;
+        font: 600 13px/1 "Urbanist", ui-sans-serif, system-ui, sans-serif;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+        color: #fff;
+        background: rgba(0, 0, 0, 0.45);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        -webkit-backdrop-filter: blur(10px);
+        backdrop-filter: blur(10px);
+        cursor: pointer;
+      }
+      .walk-private svg { width: 20px; height: 20px; flex: none; }
+      .walk-private:hover { border-color: #fff; }
+      html.walking .walk-private { display: flex; }
+      .walk-private[aria-pressed="true"] {
+        color: #bfe9ff;
+        border-color: rgba(92, 200, 255, 0.7);
+        box-shadow: 0 0 14px rgba(92, 200, 255, 0.35);
+      }
+      html.walking[data-walk-theme="light"] .walk-private {
+        color: #111;
+        background: rgba(255, 255, 255, 0.6);
+        border-color: rgba(0, 0, 0, 0.14);
+      }
+      html.walking[data-walk-theme="light"] .walk-private:hover { border-color: #111; }
+      html.walking[data-walk-theme="light"] .walk-private[aria-pressed="true"] {
+        color: #0b6a99;
+        border-color: rgba(11, 106, 153, 0.6);
+      }
       .empty { color: var(--muted); font-size: 13px; }
       footer { margin-top: 50px; font-size: 12px; color: var(--muted); line-height: 1.7; }
       footer a { color: var(--subtle); text-decoration: none; transition: color .15s ease; }
@@ -1091,6 +1131,14 @@
       </div>
     </div>
     <div class="walk-online" id="walk-online" aria-live="polite"></div>
+    <button type="button" class="walk-private" id="walk-private" aria-pressed="false" title="Private mode (P)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true">
+        <path d="M5 21V10a7 7 0 0 1 14 0v11l-2.33-1.75L14.33 21 12 19.25 9.67 21l-2.34-1.75z"/>
+        <circle cx="9.5" cy="10.5" r="1.1" fill="currentColor" stroke="none"/>
+        <circle cx="14.5" cy="10.5" r="1.1" fill="currentColor" stroke="none"/>
+      </svg>
+      <span class="walk-private-label" id="walk-private-label">Go private</span>
+    </button>
     <main>
       <header class="site-header" id="site-header">
         <button type="button" class="account-button" id="account-button">Log in</button>

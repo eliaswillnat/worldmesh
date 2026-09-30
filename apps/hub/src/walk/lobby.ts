@@ -1,4 +1,4 @@
-import { buildTravelUrl, createWorldMesh } from '@worldmesh/runtime';
+import { AVATAR_TICKET_PARAM, buildTravelUrl, createWorldMesh, type Vec3Tuple } from '@worldmesh/runtime';
 import {
   BoxGeometry,
   CircleGeometry,
@@ -7,7 +7,9 @@ import {
   DirectionalLight,
   DoubleSide,
   Matrix4,
+  Material,
   Mesh,
+  MeshBasicMaterial,
   MeshStandardMaterial,
   Fog,
   HemisphereLight,
@@ -20,6 +22,7 @@ import {
   Vector2,
   WebGLRenderer,
   type BufferGeometry,
+  type Object3D,
 } from 'three';
 import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
@@ -35,6 +38,8 @@ export interface LobbyOptions {
   presenceEndpoint?: string;
   /** Name shown above this visitor for everyone else; null shows them as a guest. */
   playerName?: () => string | null;
+  /** Start in private mode (see `Lobby.setPrivate`). */
+  private?: boolean;
   /** Called with how many people are in the lobby, or null while offline. */
   onPresenceCount?: (count: number | null) => void;
   /** Called right before the page navigates into a world. */
@@ -51,6 +56,17 @@ export interface Lobby {
    * keep whatever their own device prefers.
    */
   setTheme(light: boolean): void;
+  /**
+   * Private mode: this visitor becomes a see-through ghost (to themselves;
+   * everyone else just sees the plain default figure), goes by a made-up
+   * name instead of their username, and carries no avatar into worlds.
+   * Switching either way sends them back to the spawn point as a new
+   * arrival, so nobody can follow them from one identity to the other.
+   * Returns the made-up name while private, or null.
+   */
+  setPrivate(on: boolean): string | null;
+  /** The made-up name while private, or null while public. */
+  readonly alias: string | null;
   dispose(): void;
 }
 
@@ -76,6 +92,14 @@ const EMPTY_DOOR_REACH = 2.4;
 /** A tap on an empty door this far away still counts. */
 const TAP_RANGE = 40;
 const WARP_MS = 450;
+/** Where every visitor arrives: the middle of the hall, facing the doors. */
+const SPAWN: Vec3Tuple = [0, 0, 0];
+/** How long the screen stays white while switching in or out of private mode. */
+const PRIVATE_FADE_MS = 260;
+/** The ghost's opacity, and how far its shimmer swings either side of it. */
+const GHOST_OPACITY = 0.38;
+const GHOST_SHIMMER = 0.08;
+const GHOST_GLOW = 0x5cc8ff;
 
 /**
  * The floor is one mirror plane whose shader also draws the grid. Drawing the
@@ -204,13 +228,22 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const floorUniforms = (mirror.material as ShaderMaterial).uniforms;
   applyTheme();
 
+  // The name presence sends right now. It only changes together with a
+  // rejoin, so the old connection never carries the new name.
+  let alias: string | null = options.private ? randomAlias() : null;
+  // Where a switch in progress is heading; equal to alias otherwise.
+  let pendingAlias = alias;
+  let ghost: Ghost | null = null;
+  let privateTimer = 0;
+
   const presence = options.presenceEndpoint
     ? new Presence(
         options.presenceEndpoint,
         'lobby',
         scene,
         (count) => options.onPresenceCount?.(count),
-        options.playerName,
+        () => (alias ? null : options.playerName?.() ?? null),
+        () => alias,
       )
     : undefined;
 
@@ -257,7 +290,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     scene,
     camera,
     renderer,
-    spawn: [0, 0, 0],
+    spawn: SPAWN,
     // Held upright, look further down so the floor fills the tall screen instead of the sky.
     view: { mode: 'third', distance: 5.5, pitch: window.innerWidth < window.innerHeight ? -0.32 : -0.15 },
     ui: { title: 'WorldMesh', badge: false, crosshair: false },
@@ -293,8 +326,10 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       // space, so moving the plane does not move the lines.
       mirror.position.set(Math.round(x / 10) * 10, 0, Math.round(z / 10) * 10);
       presence?.update(dt);
+      ghost?.shimmer(time);
     },
   });
+  if (alias) ghost = makeGhost(world.avatar);
 
   /** Walking through a door: flash, then travel to the world's own URL. */
   function enter(door: Door): void {
@@ -305,10 +340,23 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     options.onEnterWorld?.(target);
     document.exitPointerLock?.();
     flash.classList.add('active');
-    const url = buildTravelUrl(target.url);
+    const url = travelUrl(target.url);
     warpTimer = window.setTimeout(() => {
       window.location.href = url;
     }, WARP_MS);
+  }
+
+  /** A world's URL with `from` added, and the avatar ticket unless private. */
+  function travelUrl(target: string): string {
+    const url = buildTravelUrl(target);
+    if (!alias) return url;
+    try {
+      const parsed = new URL(url);
+      if (parsed.hash.startsWith(`#${AVATAR_TICKET_PARAM}=`)) parsed.hash = '';
+      return parsed.toString();
+    } catch {
+      return url;
+    }
   }
 
   function pickRandomWorld(): DoorWorld | null {
@@ -392,7 +440,34 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
   if (import.meta.env.DEV) Object.assign(window, { lobby: world });
 
-  return { setWorlds, setTheme, dispose };
+  return {
+    setWorlds,
+    setTheme,
+    setPrivate,
+    get alias() {
+      return pendingAlias;
+    },
+    dispose,
+  };
+
+  function setPrivate(on: boolean): string | null {
+    if (on === !!pendingAlias || warping) return pendingAlias;
+    const next = on ? randomAlias() : null;
+    pendingAlias = next;
+    // A quick white-out hides the jump back to the start.
+    window.clearTimeout(privateTimer);
+    flash.classList.add('active');
+    privateTimer = window.setTimeout(() => {
+      alias = next;
+      world.clearAvatar();
+      ghost?.restore();
+      ghost = alias ? makeGhost(world.avatar) : null;
+      world.teleport(SPAWN, 0);
+      presence?.rejoin();
+      flash.classList.remove('active');
+    }, PRIVATE_FADE_MS);
+    return next;
+  }
 
   function setTheme(isLight: boolean): void {
     if (isLight === light) return;
@@ -612,6 +687,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   function dispose(): void {
     disposed = true;
     window.clearTimeout(warpTimer);
+    window.clearTimeout(privateTimer);
     window.removeEventListener('pageshow', handlePageShow);
     window.removeEventListener('resize', handleResize);
     renderer.domElement.removeEventListener('pointerdown', handlePointerDown);
@@ -646,4 +722,71 @@ function mirrorResolution(): { textureWidth: number; textureHeight: number } {
     textureWidth: Math.max(256, Math.round(window.innerWidth * scale)),
     textureHeight: Math.max(256, Math.round(window.innerHeight * scale)),
   };
+}
+
+interface Ghost {
+  /** A slow hologram flicker. Call once per frame. */
+  shimmer(time: number): void;
+  /** Put every material back exactly as it was. */
+  restore(): void;
+}
+
+/**
+ * Turns this visitor's own figure into a see-through, faintly glowing ghost.
+ * Only this browser draws it that way: the presence server never hears about
+ * it, so everyone else sees an ordinary figure.
+ */
+function makeGhost(root: Object3D | null): Ghost | null {
+  if (!root) return null;
+  const saved = new Map<Material, { opacity: number; transparent: boolean; depthWrite: boolean; emissive?: number }>();
+  root.traverse((child) => {
+    if (!(child instanceof Mesh)) return;
+    for (const material of Array.isArray(child.material) ? child.material : [child.material]) {
+      if (saved.has(material)) continue;
+      const standard = material instanceof MeshStandardMaterial ? material : null;
+      saved.set(material, {
+        opacity: material.opacity,
+        transparent: material.transparent,
+        depthWrite: material.depthWrite,
+        emissive: standard?.emissive.getHex(),
+      });
+      material.transparent = true;
+      // Let the far side of the body show through, like a hologram.
+      material.depthWrite = false;
+      standard?.emissive.set(GHOST_GLOW);
+      material.needsUpdate = true;
+    }
+  });
+  const shimmer = (time: number) => {
+    const opacity = GHOST_OPACITY + Math.sin(time * 3.1) * Math.sin(time * 7.3) * GHOST_SHIMMER;
+    for (const material of saved.keys()) {
+      // The drawn-on face stays a little clearer than the body.
+      material.opacity = material instanceof MeshBasicMaterial ? Math.min(1, opacity * 1.8) : opacity;
+    }
+  };
+  shimmer(0);
+  return {
+    shimmer,
+    restore: () => {
+      for (const [material, was] of saved) {
+        material.opacity = was.opacity;
+        material.transparent = was.transparent;
+        material.depthWrite = was.depthWrite;
+        if (was.emissive !== undefined && material instanceof MeshStandardMaterial) material.emissive.setHex(was.emissive);
+        material.needsUpdate = true;
+      }
+      saved.clear();
+    },
+  };
+}
+
+const ALIAS_WORDS = [
+  ['Quiet', 'Swift', 'Silver', 'Hidden', 'Misty', 'Gentle', 'Lucky', 'Sleepy', 'Brave', 'Distant', 'Wandering', 'Pale', 'Amber', 'Velvet', 'Cosmic', 'Lunar'],
+  ['Fox', 'Owl', 'Comet', 'Otter', 'Moth', 'Heron', 'Lynx', 'Raven', 'Koala', 'Falcon', 'Badger', 'Nomad', 'Shadow', 'Echo', 'Pebble', 'Drifter'],
+];
+
+/** A made-up name such as 'Quiet Fox'. Matches the presence server's alias rule. */
+function randomAlias(): string {
+  const pick = (words: string[]) => words[crypto.getRandomValues(new Uint32Array(1))[0] % words.length];
+  return `${pick(ALIAS_WORDS[0])} ${pick(ALIAS_WORDS[1])}`;
 }
