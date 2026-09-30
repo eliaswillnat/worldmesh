@@ -347,7 +347,10 @@ menuAccount.addEventListener('click', () => {
 // Appearance: System follows the device; Light/Dark are remembered per browser.
 const THEME_KEY = 'worldmesh.theme';
 type ThemeChoice = 'system' | 'light' | 'dark';
-const themeButtons = document.querySelectorAll<HTMLButtonElement>('[data-theme-choice]');
+
+function themeButtons(): NodeListOf<HTMLButtonElement> {
+  return document.querySelectorAll<HTMLButtonElement>('[data-theme-choice]');
+}
 
 function applyThemeChoice(choice: ThemeChoice): void {
   const root = document.documentElement;
@@ -359,20 +362,20 @@ function applyThemeChoice(choice: ThemeChoice): void {
     meta.dataset.original = color;
     if (!walkRoot) meta.content = color;
   }
-  for (const b of themeButtons) b.setAttribute('aria-pressed', String(b.dataset.themeChoice === choice));
+  for (const b of themeButtons()) b.setAttribute('aria-pressed', String(b.dataset.themeChoice === choice));
   applyWalkTheme();
 }
 
-for (const b of themeButtons) {
-  b.addEventListener('click', () => {
-    const choice = b.dataset.themeChoice as ThemeChoice;
-    try {
-      if (choice === 'system') localStorage.removeItem(THEME_KEY);
-      else localStorage.setItem(THEME_KEY, choice);
-    } catch { /* Storage blocked: the choice lasts this visit. */ }
-    applyThemeChoice(choice);
-  });
-}
+document.addEventListener('click', (event) => {
+  const b = event.target instanceof Element ? event.target.closest<HTMLButtonElement>('[data-theme-choice]') : null;
+  if (!b?.dataset.themeChoice) return;
+  const choice = b.dataset.themeChoice as ThemeChoice;
+  try {
+    if (choice === 'system') localStorage.removeItem(THEME_KEY);
+    else localStorage.setItem(THEME_KEY, choice);
+  } catch { /* Storage blocked: the choice lasts this visit. */ }
+  applyThemeChoice(choice);
+});
 
 function setMobileAdding(open: boolean): void {
   userScrolled = true;
@@ -413,7 +416,6 @@ const walkToggle = document.querySelector<HTMLButtonElement>('#walk-toggle')!;
 const walkOnline = document.querySelector<HTMLDivElement>('#walk-online')!;
 const walkPrivate = document.querySelector<HTMLButtonElement>('#walk-private')!;
 const walkColors = document.querySelector<HTMLDivElement>('#walk-colors')!;
-const walkPrivateLabel = document.querySelector<HTMLSpanElement>('#walk-private-label')!;
 /** Remembered per browser, so a reload never quietly makes someone public again. */
 const PRIVATE_KEY = 'worldmesh.walkPrivate';
 /** Where someone left the lobby into a world, so coming back puts them there. This tab only. */
@@ -452,8 +454,12 @@ walkToggle.addEventListener('pointerenter', () => {
 }, { once: true });
 
 walkToggle.addEventListener('click', () => {
-  if (walkRoot) exitWalkMode();
+  if (walkRoot) void confirmLeaveWalk();
   else enterWalkMode();
+});
+document.addEventListener('click', (event) => {
+  const target = event.target instanceof Element ? event.target : null;
+  if (target?.closest('.walk-gallery')) void confirmLeaveWalk();
 });
 
 // Walk mode is the front door. The gallery is there when someone asks for
@@ -520,11 +526,12 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
       signals: { signals: (world) => ({ views: viewCounts[world.url] }) },
     });
     applyWalkTheme();
+    mountPauseActions();
     showWalkPrivate(lobby.alias);
     walkColor = color && WALK_COLORS.includes(color) ? color : WALK_COLORS[0];
     showWalkColor(walkColor);
     history.replaceState(null, '', '#walk');
-    setWalkToggleLabel('Back to the list');
+    setWalkToggleLabel('Back to the gallery');
   } catch (error) {
     console.error('Walk mode failed to start', error);
     // Walk mode is unlisted for now: fail quietly back to the list.
@@ -548,14 +555,17 @@ function exitWalkMode(): void {
   setWalkToggleLabel('Walk between worlds');
 }
 
-// Private mode: a ghost with a made-up name, back at the start. P toggles it
-// too, including while the mouse is captured and there is no cursor.
-walkPrivate.addEventListener('click', toggleWalkPrivate);
+// Private mode: a ghost with a made-up name, back at the start. P asks the
+// same way the button does, including while the mouse is captured.
+document.addEventListener('click', (event) => {
+  const target = event.target instanceof Element ? event.target : null;
+  if (target?.closest('.walk-private')) void confirmPrivate();
+});
 window.addEventListener('keydown', (event) => {
   if (!lobby || event.code !== 'KeyP' || event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
   const target = event.target as HTMLElement | null;
   if (target?.closest('input, textarea, select, [contenteditable="true"]')) return;
-  toggleWalkPrivate();
+  void confirmPrivate();
 });
 
 function toggleWalkPrivate(): void {
@@ -607,13 +617,13 @@ function loadWalkPrivate(): boolean {
 
 /** alias: the made-up name while private, or null while public. */
 function showWalkColor(color: string): void {
-  for (const swatch of walkColors.querySelectorAll<HTMLButtonElement>('button')) {
+  for (const swatch of document.querySelectorAll<HTMLButtonElement>('.walk-colors button')) {
     swatch.setAttribute('aria-pressed', String(swatch.dataset.color === color));
   }
 }
 
-walkColors.addEventListener('click', (event) => {
-  const swatch = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-color]');
+document.addEventListener('click', (event) => {
+  const swatch = event.target instanceof Element ? event.target.closest<HTMLButtonElement>('button[data-color]') : null;
   if (!swatch || !lobby) return;
   const color = swatch.dataset.color;
   if (!color || !WALK_COLORS.includes(color)) return;
@@ -623,9 +633,114 @@ walkColors.addEventListener('click', (event) => {
 });
 
 function showWalkPrivate(alias: string | null): void {
-  walkPrivate.setAttribute('aria-pressed', String(alias !== null));
-  walkPrivateLabel.textContent = alias === null ? 'Go private' : `Private · ${alias}`;
-  walkPrivate.title = alias === null ? 'Private mode (P)' : 'Go public again (P)';
+  const label = alias === null ? 'Go private' : `Private · ${alias}`;
+  const title = alias === null ? 'Private mode (P)' : 'Go public again (P)';
+  for (const button of document.querySelectorAll<HTMLButtonElement>('.walk-private')) {
+    button.setAttribute('aria-pressed', String(alias !== null));
+    button.title = title;
+    const text = button.querySelector('.walk-private-label');
+    if (text) text.textContent = label;
+  }
+}
+
+const walkConfirm = document.querySelector<HTMLDialogElement>('#walk-confirm')!;
+const walkConfirmTitle = document.querySelector<HTMLHeadingElement>('#walk-confirm-title')!;
+const walkConfirmBody = document.querySelector<HTMLParagraphElement>('#walk-confirm-body')!;
+const walkConfirmOk = document.querySelector<HTMLButtonElement>('#walk-confirm-ok')!;
+let walkAsking = false;
+
+/** A yes/no over the lobby. Releases the cursor so the buttons can be used. */
+function askWalk(title: string, body: string, okLabel: string): Promise<boolean> {
+  if (walkAsking || walkConfirm.open) return Promise.resolve(false);
+  walkAsking = true;
+  walkConfirmTitle.textContent = title;
+  walkConfirmBody.textContent = body;
+  walkConfirmOk.textContent = okLabel;
+  document.exitPointerLock?.();
+  return new Promise((resolve) => {
+    const finish = () => {
+      walkConfirm.removeEventListener('close', onClose);
+      walkAsking = false;
+      resolve(walkConfirm.returnValue === 'ok');
+    };
+    const onClose = () => finish();
+    walkConfirm.addEventListener('close', onClose);
+    walkConfirm.showModal();
+  });
+}
+
+async function confirmLeaveWalk(): Promise<void> {
+  if (!walkRoot) return;
+  const yes = await askWalk(
+    'Back to the gallery?',
+    'You will leave the lobby and return to the list of worlds.',
+    'Go to the gallery',
+  );
+  if (yes) exitWalkMode();
+}
+
+async function confirmPrivate(): Promise<void> {
+  if (!lobby) return;
+  const turningOn = walkPrivate.getAttribute('aria-pressed') !== 'true';
+  const yes = await askWalk(
+    turningOn ? 'Go private?' : 'Go public again?',
+    turningOn
+      ? 'You show up as a plain figure under a made-up name. Your username stays hidden, and your own avatar does not come with you into worlds. You are sent back to the start, so the two visits cannot be followed from one to the other.'
+      : 'Your username shows again, and you are sent back to the start as a new arrival.',
+    turningOn ? 'Go private' : 'Go public',
+  );
+  if (yes) toggleWalkPrivate();
+}
+
+/** Copies of the corner controls, so the pause screen can use them too. */
+function mountPauseActions(): void {
+  const content = document.querySelector('.wm-lock-content');
+  if (!content || content.querySelector('.walk-pause-actions')) return;
+  const bar = document.createElement('div');
+  bar.className = 'walk-pause-actions';
+
+  const gallery = document.createElement('button');
+  gallery.type = 'button';
+  gallery.className = 'walk-gallery';
+  gallery.textContent = 'Back to the gallery';
+
+  const priv = document.createElement('button');
+  priv.type = 'button';
+  priv.className = 'walk-private';
+  priv.setAttribute('aria-pressed', 'false');
+  const icon = walkPrivate.querySelector('svg');
+  if (icon) priv.appendChild(icon.cloneNode(true));
+  const privLabel = document.createElement('span');
+  privLabel.className = 'walk-private-label';
+  privLabel.textContent = 'Go private';
+  priv.appendChild(privLabel);
+
+  const theme = document.createElement('div');
+  theme.className = 'walk-theme';
+  theme.setAttribute('role', 'group');
+  theme.setAttribute('aria-label', 'Light, dark, or this device');
+  for (const [choice, label, title] of [
+    ['light', 'Light', ''],
+    ['dark', 'Dark', ''],
+    ['system', 'Device', 'Follow this device'],
+  ] as const) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.themeChoice = choice;
+    button.textContent = label;
+    if (title) button.title = title;
+    theme.appendChild(button);
+  }
+
+  const colors = walkColors.cloneNode(true) as HTMLDivElement;
+  colors.removeAttribute('id');
+  bar.append(gallery, priv, theme, colors);
+  const keys = content.querySelector('.wm-keys');
+  if (keys) content.insertBefore(bar, keys);
+  else content.appendChild(bar);
+  const choice = (document.documentElement.dataset.theme as ThemeChoice | undefined) ?? 'system';
+  applyThemeChoice(choice);
+  showWalkColor(walkColor);
 }
 
 /** An empty door in the lobby was picked: back to the list, straight into the add form. */

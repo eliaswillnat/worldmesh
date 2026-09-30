@@ -280,7 +280,6 @@ export class Overlay {
   private lock: HTMLDivElement;
   private onEnter: (touch?: boolean) => void;
   private deferLockPanel: boolean;
-  private everLocked = false;
 
   constructor(
     options: UiOptions & {
@@ -338,7 +337,10 @@ export class Overlay {
     });
     cta.addEventListener('click', handleEnter);
     lock.addEventListener('click', (event) => {
-      if (event.target === cta) return;
+      const target = event.target;
+      if (target instanceof Element && target.closest('button, a, input, textarea, select, label, .walk-pause-actions')) {
+        return;
+      }
       handleEnter(event);
     });
 
@@ -389,18 +391,20 @@ export class Overlay {
 
     const hint = document.createElement('div');
     hint.className = 'wm-hint';
-    hint.textContent = isTouch ? 'Tap ⏸ to pause' : 'ESC to release cursor';
+    hint.textContent = isTouch ? 'Tap ⏸ to open the menu' : 'Esc to open the menu';
     this.root.appendChild(hint);
 
     document.body.appendChild(this.root);
   }
 
+  /** The pause screen, with the control list, is on screen. */
+  isPaused(): boolean {
+    return this.root.dataset.lockReady === 'true' && this.root.dataset.locked !== 'true';
+  }
+
   setLocked(locked: boolean): void {
     this.root.dataset.locked = String(locked);
-    if (locked) {
-      this.everLocked = true;
-    } else if (this.deferLockPanel && this.everLocked) {
-      // Only after the first Esc (or pause) do we reveal click-to-enter.
+    if (!locked && this.deferLockPanel) {
       this.root.dataset.lockReady = 'true';
       this.showLockChrome();
     }

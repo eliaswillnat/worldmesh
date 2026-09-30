@@ -10,6 +10,11 @@
         const t = localStorage.getItem('worldmesh.theme');
         if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
       } catch {}
+      try {
+        // Before the gallery can paint. The module does the same check once it loads.
+        const back = sessionStorage.getItem('worldmesh.walkReturn');
+        if (location.hash !== '#list' || back) document.documentElement.classList.add('walking');
+      } catch {}
     </script>
     <title>WorldMesh</title>
     <meta name="description" content="Open network for independently hosted 3D worlds, connected across the web." />
@@ -921,20 +926,42 @@
       }
       .walk-toggle svg { width: 22px; height: 22px; display: block; }
       .walk-toggle .icon-list { display: none; }
+      .walk-toggle-label { display: none; }
       html.walking .walk-toggle {
+        width: auto;
+        height: 44px;
+        padding: 0 14px 0 12px;
+        gap: 8px;
+        border-radius: 22px;
         color: #fff;
         background: rgba(0, 0, 0, 0.45);
         border-color: rgba(255, 255, 255, 0.18);
       }
+      html.walking .walk-toggle-label {
+        display: inline;
+        font: 600 13px/1 "Urbanist", ui-sans-serif, system-ui, sans-serif;
+        letter-spacing: 0.02em;
+      }
       html.walking .walk-toggle:hover { border-color: #fff; }
       html.walking .walk-toggle .icon-walk { display: none; }
       html.walking .walk-toggle .icon-list { display: block; }
+      /* Gallery, private, theme, and colors live on the pause screen. */
+      html.walking body > .walk-toggle,
+      html.walking body > .walk-private,
+      html.walking body > .walk-theme,
+      html.walking body > .walk-colors { display: none; }
       html.walking, html.walking body {
         overflow: hidden;
         overscroll-behavior: none;
         background: #000;
         color-scheme: dark;
       }
+      /* No pointer until Esc opens the pause screen. A dialog needs one too. */
+      html.walking:not(:has(.wm-overlay[data-lock-ready="true"]:not([data-locked="true"]))):not(:has(dialog[open])),
+      html.walking:not(:has(.wm-overlay[data-lock-ready="true"]:not([data-locked="true"]))):not(:has(dialog[open])) * {
+        cursor: none !important;
+      }
+      html.walking main { display: none; }
       .walk-root {
         position: fixed;
         inset: 0;
@@ -947,18 +974,27 @@
       /* The runtime's paused panel, in the lobby's pure black instead of blue-grey. */
       html.walking .wm-lock { background: rgba(0, 0, 0, 0.82); }
       /* The gallery's h1 rules (flex, side padding) must not shove this title left on a phone. */
-      html.walking h1.wm-lock-title {
-        display: block;
-        width: 100%;
+      html.walking h1.wm-lock-title { display: none; }
+      .walk-mark {
+        display: none;
+        position: fixed;
+        top: max(18px, env(safe-area-inset-top));
+        left: max(16px, env(safe-area-inset-left));
+        z-index: 2147483002;
         margin: 0;
-        padding: 0;
-        text-align: center;
-        letter-spacing: 0.01em;
+        font: 600 10px/1 "Urbanist", ui-sans-serif, system-ui, sans-serif;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.72);
+        pointer-events: none;
       }
+      html.walking .walk-mark { display: block; }
+      html.walking .city-chip { top: calc(max(16px, env(safe-area-inset-top)) + 22px); }
+      html.walking[data-walk-theme="light"] .walk-mark { color: rgba(0, 0, 0, 0.55); }
       /* The walk toggle owns the top-right corner; it replaces the runtime's pause button. */
       html.walking .wm-touch-menu-btn { display: none; }
       @media (pointer: coarse) {
-        /* "Tap ⏸ to pause" points at the button hidden above. */
+        /* "Tap ⏸ to open the menu" points at the button hidden above. */
         html.walking .wm-hint { display: none; }
       }
 
@@ -966,14 +1002,14 @@
       html.walking[data-walk-theme="light"],
       html.walking[data-walk-theme="light"] body,
       html.walking[data-walk-theme="light"] .walk-root { background: #f2f2f2; color-scheme: light; }
-      html.walking[data-walk-theme="light"] .walk-toggle,
-      html.walking[data-walk-theme="light"] .walk-online {
+      html.walking[data-walk-theme="light"] .walk-toggle {
         color: #111;
         background: rgba(255, 255, 255, 0.6);
         border-color: rgba(0, 0, 0, 0.14);
       }
+      html.walking[data-walk-theme="light"] .walk-online { color: rgba(0, 0, 0, 0.55); }
       html.walking[data-walk-theme="light"] .walk-toggle:hover { border-color: #111; }
-      html.walking[data-walk-theme="light"] .walk-online::before { background: #111; box-shadow: none; }
+      html.walking[data-walk-theme="light"] .walk-online::before { background: currentColor; }
       html.walking[data-walk-theme="light"] .walk-flash { background: #000; }
       html.walking[data-walk-theme="light"] .wm-overlay { color: #111; }
       html.walking[data-walk-theme="light"] .wm-lock { background: rgba(242, 242, 242, 0.82); }
@@ -1507,32 +1543,28 @@
       .ad-done { margin: 0; text-align: center; font-size: 15px; line-height: 1.6; }
       .walk-online {
         position: fixed;
-        top: max(16px, env(safe-area-inset-top));
-        right: calc(max(16px, env(safe-area-inset-right)) + 54px);
-        z-index: 2147483001;
-        height: 44px;
-        padding: 0 16px;
-        border-radius: 22px;
+        top: max(18px, env(safe-area-inset-top));
+        right: max(16px, env(safe-area-inset-right));
+        z-index: 2147483002;
         display: none;
         align-items: center;
-        gap: 8px;
-        font-size: 13px;
-        font-weight: 600;
-        letter-spacing: 0.04em;
-        color: #fff;
-        background: rgba(0, 0, 0, 0.45);
-        border: 1px solid rgba(255, 255, 255, 0.18);
-        -webkit-backdrop-filter: blur(10px);
-        backdrop-filter: blur(10px);
+        gap: 6px;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        background: none;
+        font: 600 10px/1 "Urbanist", ui-sans-serif, system-ui, sans-serif;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.72);
         pointer-events: none;
       }
       .walk-online::before {
         content: "";
-        width: 7px;
-        height: 7px;
+        width: 5px;
+        height: 5px;
         border-radius: 50%;
-        background: #fff;
-        box-shadow: 0 0 8px #fff;
+        background: currentColor;
       }
       html.walking .walk-online[data-count] { display: flex; }
       /* Private mode: under the walk toggle. Shows the made-up name while on. */
@@ -1571,9 +1603,38 @@
         border-color: rgba(0, 0, 0, 0.14);
       }
       html.walking[data-walk-theme="light"] .walk-private:hover { border-color: #111; }
-      .walk-colors {
+      .walk-theme {
         position: fixed;
         top: calc(max(16px, env(safe-area-inset-top)) + 108px);
+        right: max(16px, env(safe-area-inset-right));
+        z-index: 2147483001;
+        display: none;
+        gap: 6px;
+      }
+      html.walking .walk-theme { display: flex; }
+      .walk-theme button {
+        height: 32px;
+        padding: 0 12px;
+        border-radius: 16px;
+        font: 600 12px/1 "Urbanist", ui-sans-serif, system-ui, sans-serif;
+        color: #fff;
+        background: rgba(0, 0, 0, 0.45);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        -webkit-backdrop-filter: blur(10px);
+        backdrop-filter: blur(10px);
+      }
+      .walk-theme button[aria-pressed="true"] { border-color: #fff; }
+      .walk-theme button:hover { border-color: #fff; color: #fff; }
+      html.walking[data-walk-theme="light"] .walk-theme button {
+        color: #111;
+        background: rgba(255, 255, 255, 0.72);
+        border-color: rgba(0, 0, 0, 0.14);
+      }
+      html.walking[data-walk-theme="light"] .walk-theme button[aria-pressed="true"],
+      html.walking[data-walk-theme="light"] .walk-theme button:hover { border-color: #111; color: #111; }
+      .walk-colors {
+        position: fixed;
+        top: calc(max(16px, env(safe-area-inset-top)) + 150px);
         right: max(16px, env(safe-area-inset-right));
         z-index: 2147483001;
         display: none;
@@ -1585,7 +1646,7 @@
         -webkit-backdrop-filter: blur(10px);
         backdrop-filter: blur(10px);
       }
-      html.walking .walk-colors { display: flex; }
+      html.walking .wm-lock .walk-colors { display: flex; position: static; }
       .walk-colors button {
         width: 18px;
         height: 18px;
@@ -1605,6 +1666,77 @@
         color: #0b6a99;
         border-color: rgba(11, 106, 153, 0.6);
       }
+      /* The same controls, inside the pause screen. */
+      .walk-pause-actions {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        margin-top: 4px;
+      }
+      .walk-pause-actions .walk-private,
+      .walk-pause-actions .walk-theme,
+      .walk-pause-actions .walk-gallery {
+        position: static;
+      }
+      .walk-pause-actions .walk-gallery {
+        height: 44px;
+        padding: 0 16px;
+        border-radius: 22px;
+        display: inline-flex;
+        align-items: center;
+        font: 600 13px/1 "Urbanist", ui-sans-serif, system-ui, sans-serif;
+        color: #fff;
+        background: rgba(255, 255, 255, 0.1);
+        border: 1px solid rgba(255, 255, 255, 0.35);
+      }
+      html.walking[data-walk-theme="light"] .walk-pause-actions .walk-gallery {
+        color: #111;
+        background: rgba(0, 0, 0, 0.06);
+        border-color: rgba(0, 0, 0, 0.3);
+      }
+      .walk-confirm {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        translate: -50% -50%;
+        margin: 0;
+        width: min(440px, calc(100vw - 32px));
+        max-height: min(88vh, 760px);
+        overflow: auto;
+        padding: 28px 24px 22px;
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        color: var(--text);
+        background: var(--bg);
+        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+      }
+      .walk-confirm::backdrop { background: rgba(0, 0, 0, 0.55); }
+      .walk-confirm h2 {
+        margin: 0 0 8px;
+        font-size: 22px;
+        font-weight: 600;
+        letter-spacing: 0;
+        text-transform: none;
+        color: var(--text);
+      }
+      .walk-confirm p {
+        margin: 0 0 18px;
+        font-size: 15px;
+        font-weight: 400;
+        line-height: 1.5;
+        letter-spacing: 0;
+        text-transform: none;
+        color: var(--muted);
+      }
+      .walk-confirm-actions { display: flex; gap: 10px; justify-content: flex-end; }
+      .walk-confirm-ok {
+        background: var(--text);
+        color: var(--bg);
+        border-color: var(--text);
+      }
+      .walk-confirm-ok:hover { color: var(--bg); border-color: var(--text); }
       .empty { color: var(--muted); font-size: 13px; }
       footer { margin-top: 50px; font-size: 12px; color: var(--muted); line-height: 1.7; }
       footer a { color: var(--subtle); text-decoration: none; transition: color .15s ease; }
@@ -1627,7 +1759,18 @@
         <rect x="3" y="14" width="7" height="7" rx="1.5"/>
         <rect x="14" y="14" width="7" height="7" rx="1.5"/>
       </svg>
+      <span class="walk-toggle-label">Back to the gallery</span>
     </button>
+    <dialog class="walk-confirm" id="walk-confirm" aria-labelledby="walk-confirm-title">
+      <form method="dialog">
+        <h2 id="walk-confirm-title"></h2>
+        <p id="walk-confirm-body"></p>
+        <div class="walk-confirm-actions">
+          <button type="submit" value="cancel">Cancel</button>
+          <button type="submit" class="walk-confirm-ok" id="walk-confirm-ok" value="ok"></button>
+        </div>
+      </form>
+    </dialog>
     <button type="button" class="mobile-menu-toggle" id="mobile-menu-toggle" aria-label="Account and menu" aria-expanded="false" aria-controls="mobile-menu">
       <span class="icon-menu mobile-profile" id="mobile-profile"></span>
       <svg class="icon-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
@@ -1642,6 +1785,7 @@
         <button type="button" data-theme-choice="dark">Dark</button>
       </div>
     </div>
+    <p class="walk-mark">WorldMesh</p>
     <div class="walk-online" id="walk-online" aria-live="polite"></div>
     <button type="button" class="walk-private" id="walk-private" aria-pressed="false" title="Private mode (P)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true">
@@ -1651,6 +1795,11 @@
       </svg>
       <span class="walk-private-label" id="walk-private-label">Go private</span>
     </button>
+    <div class="walk-theme" role="group" aria-label="Light, dark, or this device">
+      <button type="button" data-theme-choice="light">Light</button>
+      <button type="button" data-theme-choice="dark">Dark</button>
+      <button type="button" data-theme-choice="system" title="Follow this device">Device</button>
+    </div>
     <div class="walk-colors" id="walk-colors" role="group" aria-label="Character color">
       <button type="button" data-color="#f4f4f4" style="--swatch:#f4f4f4" aria-pressed="true" title="White"></button>
       <button type="button" data-color="#8ec8ff" style="--swatch:#8ec8ff" aria-pressed="false" title="Blue"></button>
