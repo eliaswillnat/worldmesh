@@ -342,8 +342,7 @@ walkToggle.addEventListener('click', () => {
   else enterWalkMode();
 });
 
-// Walk mode is locked for now: #walk no longer auto-enters. Strip it so the list shows.
-if (window.location.hash === '#walk') history.replaceState(null, '', window.location.pathname + window.location.search);
+if (window.location.hash === '#walk') enterWalkMode();
 
 async function enterWalkMode(): Promise<void> {
   if (walkRoot || walkLoading) return;
