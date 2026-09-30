@@ -1,4 +1,4 @@
-import { AVATAR_TICKET_PARAM, buildTravelUrl, createWorldMesh, type Vec3Tuple } from '@worldmesh/runtime';
+import { AVATAR_TICKET_PARAM, buildTravelUrl, createWorldMesh, setAvatarAppear, setAvatarColor, type Vec3Tuple } from '@worldmesh/runtime';
 import {
   BoxGeometry,
   CircleGeometry,
@@ -59,6 +59,8 @@ export interface LobbyOptions {
   playerName?: () => string | null;
   /** Start in private mode (see `Lobby.setPrivate`). */
   private?: boolean;
+  /** Default-character tint. Forgotten on refresh; only a return from a world restores it. */
+  color?: string | null;
   /** Called with how many people are in the lobby, or null while offline. */
   onPresenceCount?: (count: number | null) => void;
   /**
@@ -100,6 +102,8 @@ export interface Lobby {
    * Returns the made-up name while private, or null.
    */
   setPrivate(on: boolean): string | null;
+  /** Tint the default character. Has no effect once a custom avatar is on. */
+  setColor(color: string): void;
   /** The made-up name while private, or null while public. */
   readonly alias: string | null;
   dispose(): void;
@@ -114,11 +118,72 @@ const DOOR_SPACING = 4.2;
 /** A tall drum open to the sky, with the doors around the inside of its base. */
 const CITADEL_HEIGHT = 30;
 const WALL_THICKNESS = 1.2;
-/** The way out to the city faces +Z: straight behind you when you arrive. */
+/** Ways out to the city, evenly around the drum. Angle 0 faces +Z, behind you on arrival. */
+const GATE_COUNT = 4;
 const GATE_WIDTH = 4.4;
 const GATE_HEIGHT = 6.2;
-/** Wall kept clear on each side of the gate before the first door. */
+/** Wall kept clear on each side of a gate before the first door. */
 const GATE_MARGIN = DOOR_SPACING;
+
+/** Gate angles around the hall, starting at +Z. */
+function gateAngles(): number[] {
+  return Array.from({ length: GATE_COUNT }, (_, i) => (i / GATE_COUNT) * Math.PI * 2);
+}
+
+/** Wall between a gate opening and the door set against it. */
+const GATE_DOOR_GAP = 0.45;
+
+/**
+ * Door angles around the drum. Each gate gets a door on both sides; any
+ * doors left over share the wall between those pairs.
+ */
+function doorAngles(total: number, radius: number): number[] {
+  const flank = (GATE_WIDTH / 2 + GATE_DOOR_GAP + DOOR_HALF_SPAN) / radius;
+  const gates = gateAngles();
+  const beside = gates.flatMap((gate) => [gate - flank, gate + flank]).map((angle) => (angle + Math.PI * 2) % (Math.PI * 2));
+  beside.sort((a, b) => a - b);
+  const pinned = beside.slice(0, Math.min(total, beside.length));
+  const rest = total - pinned.length;
+  if (rest <= 0) return pinned;
+
+  const arcs: { start: number; end: number }[] = [];
+  for (let i = 0; i < gates.length; i++) {
+    const start = (gates[i] + flank + DOOR_SPACING / radius) % (Math.PI * 2);
+    const end = (gates[(i + 1) % gates.length] - flank - DOOR_SPACING / radius + Math.PI * 2) % (Math.PI * 2);
+    const length = (end - start + Math.PI * 2) % (Math.PI * 2);
+    if (length > 0.05) arcs.push({ start, end: start + length });
+  }
+  const span = arcs.reduce((sum, arc) => sum + (arc.end - arc.start), 0);
+  const filled: number[] = [];
+  for (let i = 0; i < rest; i++) {
+    let along = ((i + 0.5) / rest) * span;
+    for (const arc of arcs) {
+      const length = arc.end - arc.start;
+      if (along <= length || arc === arcs[arcs.length - 1]) {
+        filled.push(arc.start + along);
+        break;
+      }
+      along -= length;
+    }
+  }
+  return [...pinned, ...filled].sort((a, b) => a - b);
+}
+/**
+ * Slot indexes for `count` worlds on a ring of `total` doors, spaced as evenly
+ * as integer slots allow. Worlds keep a stable order around the wall.
+ */
+function distribute(count: number, total: number): number[] {
+  const taken = new Set<number>();
+  const slots: number[] = [];
+  for (let i = 0; i < count; i++) {
+    let slot = Math.floor((i * total) / count) % total;
+    while (taken.has(slot)) slot = (slot + 1) % total;
+    taken.add(slot);
+    slots.push(slot);
+  }
+  return slots;
+}
+
 /** The hall always has at least this many doors, and always a few empty ones. */
 const MIN_DOORS = 24;
 const SPARE_DOORS = 6;
@@ -156,8 +221,8 @@ const PRIVATE_FADE_MS = 260;
 const GHOST_OPACITY = 0.38;
 const GHOST_SHIMMER = 0.08;
 const GHOST_GLOW = 0x5cc8ff;
-/** How long the local figure takes to go from transparent to opaque on spawn. */
-const SPAWN_APPEAR = 0.55;
+/** How long the local figure takes to fill in from points on spawn. */
+const SPAWN_APPEAR = 1.15;
 /** Billboards further than this are not picked by the crosshair or a tap. */
 const BILLBOARD_RANGE = 95;
 /** How often the billboard under the crosshair is looked up, in seconds. */
@@ -461,7 +526,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     spawn: SPAWN,
     // Held upright, look further down so the floor fills the tall screen instead of the sky.
     view: { mode: 'third', distance: 5.5, pitch: window.innerWidth < window.innerHeight ? -0.32 : -0.15 },
-    ui: { title: 'WorldMesh', badge: false, crosshair: false, deferLockPanel: true },
+    ui: { title: 'WorldMesh', badge: false, crosshair: false, deferLockPanel: true, moveBeforeLock: true },
     network: presence,
     // Empty doors are closed: their faces stop you like the wall does.
     colliders: () => [
@@ -764,6 +829,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     setWorlds,
     setTheme,
     setPrivate,
+    setColor,
     get alias() {
       return pendingAlias;
     },
@@ -840,6 +906,12 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     world.refreshColliders();
   }
 
+  function setColor(color: string): void {
+    setAvatarColor(world.avatar, color);
+  }
+
+  if (options.color) setColor(options.color);
+
   function setPrivate(on: boolean): string | null {
     if (on === !!pendingAlias || warping || emerging) return pendingAlias;
     const next = on ? randomAlias() : null;
@@ -902,16 +974,13 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     // each other also see the same doors around them.
     const urls = [...known.keys()].sort();
     const total = Math.max(MIN_DOORS, urls.length + SPARE_DOORS);
-    const radius = Math.max(WALL_MIN_RADIUS, (total * DOOR_SPACING + GATE_WIDTH + GATE_MARGIN * 2) / (Math.PI * 2));
-    // Doors share the wall evenly, leaving the gate at angle 0 clear.
-    const clear = (GATE_WIDTH / 2 + GATE_MARGIN) / radius;
-    const step = (Math.PI * 2 - clear * 2) / total;
-    const angles = Array.from({ length: total }, (_, i) => clear + (i + 0.5) * step);
-    // Worlds take the doors you face on arrival (angle π) and spread out from
-    // there toward the gate; the doors left over stay empty.
-    const slots = angles
-      .map((_, i) => i)
-      .sort((a, b) => Math.abs(angles[a] - Math.PI) - Math.abs(angles[b] - Math.PI) || a - b);
+    const gateArc = GATE_COUNT * (GATE_WIDTH + GATE_MARGIN * 2);
+    const radius = Math.max(WALL_MIN_RADIUS, (total * DOOR_SPACING + gateArc) / (Math.PI * 2));
+    // Doors share the wall between the gates.
+    const angles = doorAngles(total, radius);
+    // Worlds sit evenly around the drum so each has its own stretch of wall.
+    // The doors between them stay empty.
+    const slots = distribute(urls.length, total);
     const at = (door: Door, slot: number) =>
       // Set into the wall, facing the middle of the room.
       door.place(Math.sin(angles[slot]) * radius, Math.cos(angles[slot]) * radius, 0, 0);
@@ -930,7 +999,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     emptyDoors.length = 0;
     nearEmpty = null;
     addPrompt.classList.remove('visible');
-    for (const slot of slots.slice(urls.length)) {
+    const taken = new Set(slots);
+    for (const slot of angles.map((_, i) => i).filter((i) => !taken.has(i))) {
       const door = new Door(null, light);
       scene.add(door.group);
       at(door, slot);
@@ -964,11 +1034,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       wall.push(section);
     };
 
-    // Inner drum: faces the hall, open at the gate and at every doorway.
+    // Inner drum: faces the hall, open at each gate and at every doorway.
     const openings = [
-      { angle: 0, half: GATE_WIDTH / 2 / radius, top: GATE_HEIGHT },
+      ...gateAngles().map((angle) => ({ angle, half: GATE_WIDTH / 2 / radius, top: GATE_HEIGHT })),
       ...angles.map((angle) => ({ angle, half: DOOR_HALF_SPAN / radius, top: DOOR_TOP })),
-    ];
+    ].sort((a, b) => a.angle - b.angle);
     openings.forEach((opening, i) => {
       const next = openings[i + 1] ?? { ...openings[0], angle: openings[0].angle + Math.PI * 2 };
       const start = opening.angle + opening.half;
@@ -977,25 +1047,32 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       shell(radius, opening.angle - opening.half, opening.half * 2, opening.top, true);
     });
 
-    // Outer drum: faces the city, open only at the gate.
+    // Outer drum: faces the city, open at each gate.
     const gateOuter = GATE_WIDTH / 2 / outer;
-    shell(outer, gateOuter, Math.PI * 2 - gateOuter * 2, 0, false);
-    shell(outer, -gateOuter, gateOuter * 2, GATE_HEIGHT, false);
+    const gateStep = (Math.PI * 2) / GATE_COUNT;
+    for (const angle of gateAngles()) {
+      shell(outer, angle + gateOuter, gateStep - gateOuter * 2, 0, false);
+      shell(outer, angle - gateOuter, gateOuter * 2, GATE_HEIGHT, false);
+    }
 
-    // The gate passage: side walls and a ceiling between the two drums.
+    // Each gate's passage: side walls and a ceiling between the two drums.
     const halfGate = GATE_WIDTH / 2;
     const passageStart = Math.sqrt(radius * radius - halfGate * halfGate) - 0.05;
     const passageDepth = outer + 0.05 - passageStart;
     const passageZ = passageStart + passageDepth / 2;
-    const block = (w: number, h: number, d: number, x: number, y: number, z: number, solid: boolean) => {
+    const block = (w: number, h: number, d: number, x: number, y: number, z: number, angle: number, solid: boolean) => {
       const mesh = new Mesh(new BoxGeometry(w, h, d), wallMaterial);
-      mesh.position.set(x, y + h / 2, z);
+      const worldX = Math.sin(angle) * z + Math.cos(angle) * x;
+      const worldZ = Math.cos(angle) * z - Math.sin(angle) * x;
+      mesh.position.set(worldX, y + h / 2, worldZ);
+      mesh.rotation.y = angle;
       scene.add(mesh);
       (solid ? wall : trim).push(mesh);
-      return mesh;
     };
-    for (const side of [-1, 1]) block(0.4, GATE_HEIGHT, passageDepth, side * (halfGate + 0.1), 0, passageZ, true);
-    block(GATE_WIDTH + 0.4, 0.2, passageDepth, 0, GATE_HEIGHT, passageZ, false);
+    for (const angle of gateAngles()) {
+      for (const side of [-1, 1]) block(0.4, GATE_HEIGHT, passageDepth, side * (halfGate + 0.1), 0, passageZ, angle, true);
+      block(GATE_WIDTH + 0.4, 0.2, passageDepth, 0, GATE_HEIGHT, passageZ, angle, false);
+    }
 
     buildTrim(radius, outer);
     buildCity(outer);
@@ -1012,12 +1089,17 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       return geometry.index ? geometry.toNonIndexed() : geometry;
     };
 
-    // Vertical ribs all round the outside, leaving the gate and banner bare.
+    // Vertical ribs all round the outside, leaving each gate and the banner bare.
     const bare = 5 / outer;
     const ribCount = Math.round((Math.PI * 2 * outer) / 3.2);
     for (let i = 0; i < ribCount; i++) {
       const angle = (i / ribCount) * Math.PI * 2;
-      if (angle < bare || angle > Math.PI * 2 - bare) continue;
+      const byGate = gateAngles().some((gate) => {
+        let delta = Math.abs(angle - gate);
+        if (delta > Math.PI) delta = Math.PI * 2 - delta;
+        return delta < bare;
+      });
+      if (byGate) continue;
       const r = outer + 0.2;
       solid.push(place(new BoxGeometry(0.5, CITADEL_HEIGHT, 0.4), Math.sin(angle) * r, CITADEL_HEIGHT / 2, Math.cos(angle) * r, angle));
     }
@@ -1035,18 +1117,31 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     band(outer + 0.03, GATE_HEIGHT + 1.2);
     band(outer + 0.52, CITADEL_HEIGHT - 1.3);
     const gateInner = (GATE_WIDTH / 2 + 0.3) / radius;
-    band(radius - 0.03, DOOR_TOP + 1.7, gateInner, Math.PI * 2 - gateInner * 2);
+    const gateStep = (Math.PI * 2) / GATE_COUNT;
+    for (const angle of gateAngles()) {
+      band(radius - 0.03, DOOR_TOP + 1.7, angle + gateInner, gateStep - gateInner * 2);
+    }
     band(radius - 0.03, CITADEL_HEIGHT - 1);
 
-    // A white portal frame around the gate, outlined in light.
+    // A white portal frame around each gate, outlined in light.
     const halfGate = GATE_WIDTH / 2;
-    const frameZ = outer + 0.2;
-    for (const side of [-1, 1]) {
-      solid.push(place(new BoxGeometry(0.6, GATE_HEIGHT + 0.6, 0.5), side * (halfGate + 0.3), (GATE_HEIGHT + 0.6) / 2, frameZ));
-      glow.push(place(new BoxGeometry(0.05, GATE_HEIGHT, 0.05), side * (halfGate + 0.02), GATE_HEIGHT / 2, frameZ + 0.2));
+    const frameR = outer + 0.2;
+    const atGate = (localX: number, localZ: number, angle: number): [number, number] => [
+      Math.sin(angle) * localZ + Math.cos(angle) * localX,
+      Math.cos(angle) * localZ - Math.sin(angle) * localX,
+    ];
+    for (const angle of gateAngles()) {
+      for (const side of [-1, 1]) {
+        const [x, z] = atGate(side * (halfGate + 0.3), frameR, angle);
+        const [glowX, glowZ] = atGate(side * (halfGate + 0.02), frameR + 0.2, angle);
+        solid.push(place(new BoxGeometry(0.6, GATE_HEIGHT + 0.6, 0.5), x, (GATE_HEIGHT + 0.6) / 2, z, angle));
+        glow.push(place(new BoxGeometry(0.05, GATE_HEIGHT, 0.05), glowX, GATE_HEIGHT / 2, glowZ, angle));
+      }
+      const [x, z] = atGate(0, frameR, angle);
+      const [glowX, glowZ] = atGate(0, frameR + 0.2, angle);
+      solid.push(place(new BoxGeometry(GATE_WIDTH + 1.2, 0.6, 0.5), x, GATE_HEIGHT + 0.3, z, angle));
+      glow.push(place(new BoxGeometry(GATE_WIDTH, 0.05, 0.05), glowX, GATE_HEIGHT - 0.02, glowZ, angle));
     }
-    solid.push(place(new BoxGeometry(GATE_WIDTH + 1.2, 0.6, 0.5), 0, GATE_HEIGHT + 0.3, frameZ));
-    glow.push(place(new BoxGeometry(GATE_WIDTH, 0.05, 0.05), 0, GATE_HEIGHT - 0.02, frameZ + 0.2));
 
     // The banner over the gate: a tall screen in a deep white bezel, deep
     // enough to meet the curved wall behind it.
@@ -1217,9 +1312,9 @@ function makeGhost(root: Object3D | null): Ghost | null {
   };
 }
 
-/** Fade the local figure in on spawn. Leaves materials transparent until fully opaque. */
+/** Fill the local figure in from scattered points. Custom avatars fade instead. */
 function setLocalAppear(root: Object3D | null, amount: number): void {
-  if (!root) return;
+  if (!root || setAvatarAppear(root, amount)) return;
   const solid = amount >= 0.999;
   root.traverse((child) => {
     if (!(child instanceof Mesh)) return;

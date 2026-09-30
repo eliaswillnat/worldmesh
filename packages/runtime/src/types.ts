@@ -149,6 +149,11 @@ export interface UiOptions {
    * pressed Esc. The first screen stays clear; a click/tap still starts them.
    */
   deferLockPanel?: boolean;
+  /**
+   * Keyboard movement works before the first click. Mouse look still waits
+   * for pointer lock.
+   */
+  moveBeforeLock?: boolean;
 }
 
 /** Everything another peer would need to draw this player. Serializable on purpose. */

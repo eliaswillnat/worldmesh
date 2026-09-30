@@ -412,11 +412,15 @@ fetchCommunityWorlds();
 const walkToggle = document.querySelector<HTMLButtonElement>('#walk-toggle')!;
 const walkOnline = document.querySelector<HTMLDivElement>('#walk-online')!;
 const walkPrivate = document.querySelector<HTMLButtonElement>('#walk-private')!;
+const walkColors = document.querySelector<HTMLDivElement>('#walk-colors')!;
 const walkPrivateLabel = document.querySelector<HTMLSpanElement>('#walk-private-label')!;
 /** Remembered per browser, so a reload never quietly makes someone public again. */
 const PRIVATE_KEY = 'worldmesh.walkPrivate';
 /** Where someone left the lobby into a world, so coming back puts them there. This tab only. */
 const WALK_RETURN_KEY = 'worldmesh.walkReturn';
+/** Default-character tints. White is the ordinary body; the rest are a short visit-only palette. */
+const WALK_COLORS = ['#f4f4f4', '#8ec8ff', '#9ee6b0', '#ffc48a', '#f0a8cc', '#c4b0ff'];
+let walkColor = WALK_COLORS[0];
 let walkRoot: HTMLDivElement | null = null;
 let lobby: import('./walk/lobby').Lobby | null = null;
 let walkLoading = false;
@@ -455,7 +459,7 @@ walkToggle.addEventListener('click', () => {
 // Back from a world entered through a door: into the lobby, outside that
 // door, however they came back (back button, the world's WorldMesh badge…).
 const walkReturn = takeWalkReturn();
-if (window.location.hash === '#walk' || walkReturn) enterWalkMode(walkReturn);
+if (window.location.hash === '#walk' || walkReturn) enterWalkMode(walkReturn?.spot ?? null, walkReturn?.color ?? null);
 
 // A back-button return can restore the page with the lobby still running; it
 // puts the visitor back itself, so the stored spot is no longer needed.
@@ -463,7 +467,7 @@ window.addEventListener('pageshow', (event) => {
   if (event.persisted) takeWalkReturn();
 });
 
-async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = null): Promise<void> {
+async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = null, color: string | null = null): Promise<void> {
   if (walkRoot || walkLoading) return;
   walkLoading = true;
   walkToggle.disabled = true;
@@ -482,6 +486,7 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
       presenceEndpoint: PRESENCE_ENDPOINT,
       playerName: getUsername,
       private: loadWalkPrivate(),
+      color,
       ads: adsEnabled(),
       onPresenceCount: (count) => {
         if (count === null) {
@@ -494,7 +499,7 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
       },
       onEnterWorld: (world, returnTo) => {
         trackClick(world.url);
-        saveWalkReturn(returnTo);
+        saveWalkReturn(returnTo, walkColor);
       },
       onAddWorld: openAddFormFromWalk,
       // Lifetime visits, for ranking in the towers (see discovery/ranking.ts).
@@ -502,6 +507,8 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
     });
     applyWalkTheme();
     showWalkPrivate(lobby.alias);
+    walkColor = color && WALK_COLORS.includes(color) ? color : WALK_COLORS[0];
+    showWalkColor(walkColor);
     history.replaceState(null, '', '#walk');
     setWalkToggleLabel('Back to the list');
   } catch (error) {
@@ -552,24 +559,27 @@ function toggleWalkPrivate(): void {
   showWalkPrivate(alias);
 }
 
-function saveWalkReturn(spot: import('./walk/lobby').WalkSpot): void {
+function saveWalkReturn(spot: import('./walk/lobby').WalkSpot, color: string): void {
   try {
-    sessionStorage.setItem(WALK_RETURN_KEY, JSON.stringify(spot));
+    sessionStorage.setItem(WALK_RETURN_KEY, JSON.stringify({ ...spot, color }));
   } catch {
     // Storage blocked: coming back starts in the middle of the hall.
   }
 }
 
 /** The spot saved by saveWalkReturn, if any, clearing it so it is used once. */
-function takeWalkReturn(): import('./walk/lobby').WalkSpot | null {
+function takeWalkReturn(): { spot: import('./walk/lobby').WalkSpot; color: string | null } | null {
   try {
     const raw = sessionStorage.getItem(WALK_RETURN_KEY);
     sessionStorage.removeItem(WALK_RETURN_KEY);
     if (!raw) return null;
-    const { position, yaw } = JSON.parse(raw);
+    const { position, yaw, color } = JSON.parse(raw);
     const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
     if (!Array.isArray(position) || position.length !== 3 || !position.every(finite) || !finite(yaw)) return null;
-    return { position: [position[0], position[1], position[2]], yaw };
+    return {
+      spot: { position: [position[0], position[1], position[2]], yaw },
+      color: typeof color === 'string' && WALK_COLORS.includes(color) ? color : null,
+    };
   } catch {
     return null;
   }
@@ -584,6 +594,22 @@ function loadWalkPrivate(): boolean {
 }
 
 /** alias: the made-up name while private, or null while public. */
+function showWalkColor(color: string): void {
+  for (const swatch of walkColors.querySelectorAll<HTMLButtonElement>('button')) {
+    swatch.setAttribute('aria-pressed', String(swatch.dataset.color === color));
+  }
+}
+
+walkColors.addEventListener('click', (event) => {
+  const swatch = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-color]');
+  if (!swatch || !lobby) return;
+  const color = swatch.dataset.color;
+  if (!color || !WALK_COLORS.includes(color)) return;
+  walkColor = color;
+  lobby.setColor(color);
+  showWalkColor(color);
+});
+
 function showWalkPrivate(alias: string | null): void {
   walkPrivate.setAttribute('aria-pressed', String(alias !== null));
   walkPrivateLabel.textContent = alias === null ? 'Go private' : `Private · ${alias}`;

@@ -241,7 +241,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     let remaining = dt;
     while (remaining > 0) {
       const step = Math.min(remaining, MAX_STEP);
-      controller.step(step, cameraRig.yaw, input.locked);
+      controller.step(step, cameraRig.yaw, input.locked || options.ui?.moveBeforeLock === true);
       remaining -= step;
     }
 

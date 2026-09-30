@@ -16,6 +16,8 @@ export {
   getAvatarExpression,
   isAvatarExpression,
   setAvatarExpression,
+  setAvatarAppear,
+  setAvatarColor,
 } from './player/avatar.js';
 export type { AvatarExpression, AvatarMotion } from './player/avatar.js';
 export { PortalManager, buildTravelUrl, getReferringWorld } from './portals/portals.js';

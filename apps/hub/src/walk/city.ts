@@ -300,15 +300,19 @@ export function createSpawnRay(height: number): {
   group.add(halo, beam);
 
   const deckMaterial = new MeshStandardMaterial({ color: 0x141418, roughness: 0.42, metalness: 0.08 });
-  const lipMaterial = new MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false });
+  const lipMaterial = new MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1, depthWrite: false });
   const base = new Mesh(new CylinderGeometry(1.85, 2.05, 0.06, 64), deckMaterial);
   const top = new Mesh(new CylinderGeometry(1.55, 1.7, 0.05, 64), deckMaterial);
-  const lip = new Mesh(new TorusGeometry(1.62, 0.018, 8, 80), lipMaterial);
+  const lip = new Mesh(new TorusGeometry(1.62, 0.008, 8, 80), lipMaterial);
+  // Wider ring on the lower rim of the dais, where it meets the floor.
+  const foot = new Mesh(new TorusGeometry(2.05, 0.008, 8, 96), lipMaterial);
   base.position.y = 0.03;
   top.position.y = 0.08;
   lip.position.y = 0.108;
   lip.rotation.x = Math.PI / 2;
-  group.add(base, top, lip);
+  foot.position.y = 0.012;
+  foot.rotation.x = Math.PI / 2;
+  group.add(base, top, lip, foot);
 
   const spot = new SpotLight(0xffffff, 180, 48, 0.07, 0.45, 0.7);
   spot.position.set(0, 34, 0);
@@ -500,7 +504,7 @@ export function createSpawnRay(height: number): {
         amount = 1 - dying;
       }
       presence.value = amount;
-      lipMaterial.opacity = amount;
+      lipMaterial.opacity = 1;
       const live = amount > 0.02;
       halo.visible = live;
       beam.visible = live;
@@ -623,6 +627,7 @@ export function createSpawnRay(height: number): {
       base.geometry.dispose();
       top.geometry.dispose();
       lip.geometry.dispose();
+      foot.geometry.dispose();
       deckMaterial.dispose();
       lipMaterial.dispose();
       rimGeometry.dispose();

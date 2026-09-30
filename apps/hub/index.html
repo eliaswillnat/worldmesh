@@ -1463,6 +1463,36 @@
         border-color: rgba(0, 0, 0, 0.14);
       }
       html.walking[data-walk-theme="light"] .walk-private:hover { border-color: #111; }
+      .walk-colors {
+        position: fixed;
+        top: calc(max(16px, env(safe-area-inset-top)) + 108px);
+        right: max(16px, env(safe-area-inset-right));
+        z-index: 2147483001;
+        display: none;
+        gap: 6px;
+        padding: 8px;
+        border-radius: 22px;
+        background: rgba(0, 0, 0, 0.45);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        -webkit-backdrop-filter: blur(10px);
+        backdrop-filter: blur(10px);
+      }
+      html.walking .walk-colors { display: flex; }
+      .walk-colors button {
+        width: 18px;
+        height: 18px;
+        padding: 0;
+        border-radius: 50%;
+        border: 2px solid transparent;
+        background: var(--swatch);
+        cursor: pointer;
+      }
+      .walk-colors button[aria-pressed="true"] { border-color: #fff; }
+      html.walking[data-walk-theme="light"] .walk-colors {
+        background: rgba(255, 255, 255, 0.72);
+        border-color: rgba(0, 0, 0, 0.12);
+      }
+      html.walking[data-walk-theme="light"] .walk-colors button[aria-pressed="true"] { border-color: #111; }
       html.walking[data-walk-theme="light"] .walk-private[aria-pressed="true"] {
         color: #0b6a99;
         border-color: rgba(11, 106, 153, 0.6);
@@ -1513,6 +1543,14 @@
       </svg>
       <span class="walk-private-label" id="walk-private-label">Go private</span>
     </button>
+    <div class="walk-colors" id="walk-colors" role="group" aria-label="Character color">
+      <button type="button" data-color="#f4f4f4" style="--swatch:#f4f4f4" aria-pressed="true" title="White"></button>
+      <button type="button" data-color="#8ec8ff" style="--swatch:#8ec8ff" aria-pressed="false" title="Blue"></button>
+      <button type="button" data-color="#9ee6b0" style="--swatch:#9ee6b0" aria-pressed="false" title="Green"></button>
+      <button type="button" data-color="#ffc48a" style="--swatch:#ffc48a" aria-pressed="false" title="Peach"></button>
+      <button type="button" data-color="#f0a8cc" style="--swatch:#f0a8cc" aria-pressed="false" title="Pink"></button>
+      <button type="button" data-color="#c4b0ff" style="--swatch:#c4b0ff" aria-pressed="false" title="Lilac"></button>
+    </div>
     <main>
       <header class="site-header" id="site-header">
         <button type="button" class="account-button" id="account-button">Log in</button>

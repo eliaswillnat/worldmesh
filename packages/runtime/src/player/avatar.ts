@@ -6,7 +6,9 @@ import {
   MathUtils,
   Mesh,
   MeshBasicMaterial,
-  MeshStandardMaterial,
+  MeshToonMaterial,
+  NearestFilter,
+  type Material,
   RingGeometry,
   SphereGeometry,
   SplineCurve,
@@ -79,6 +81,106 @@ export interface AvatarMotion {
   heading?: number;
 }
 
+/** A hard two-tone ramp. Only the darkest sliver is shadow, so the gray stays small. */
+function toonSteps(shadow: string, light: string): CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 8;
+  canvas.height = 1;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = light;
+  ctx.fillRect(0, 0, 8, 1);
+  ctx.fillStyle = shadow;
+  ctx.fillRect(0, 0, 2, 1);
+  const texture = new CanvasTexture(canvas);
+  texture.magFilter = NearestFilter;
+  texture.minFilter = NearestFilter;
+  texture.colorSpace = SRGBColorSpace;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+const APPEAR_KEY = 'worldmeshAppear';
+
+/**
+ * Scatter the surface into points that fill in as `uFill` goes from 0 to 1.
+ * Materials on one figure share a uniform so the body and face appear together.
+ */
+function attachAppear(material: Material, shared?: { value: number }): { value: number } {
+  const fill = shared ?? { value: 1 };
+  material.userData[APPEAR_KEY] = fill;
+  material.customProgramCacheKey = () => 'worldmesh-appear';
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uFill = fill;
+    const appearFns = `
+varying vec3 vAppearPos;
+uniform float uFill;
+float appearHash(vec3 p) {
+  p = fract(p * vec3(443.897, 441.423, 437.195));
+  p += dot(p, p.yzx + 19.19);
+  return fract((p.x + p.y) * p.z);
+}
+float appearNoise(vec3 p) {
+  return appearHash(p) * 0.65 + appearHash(p * 2.7 + 4.2) * 0.35;
+}`;
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>\n${appearFns}`)
+      .replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+float appearWarp = 1.0 - uFill;
+vec3 appearWorld = (modelMatrix * vec4(position, 1.0)).xyz;
+float appearShift = (appearNoise(appearWorld * 5.5) * 2.0 - 1.0) * 0.38 * appearWarp;
+transformed += (inverse(modelMatrix) * vec4(0.0, appearShift, 0.0, 0.0)).xyz;
+vAppearPos = appearWorld;`,
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+${appearFns}`,
+      )
+      .replace(
+        '#include <dithering_fragment>',
+        `if (uFill < 0.999 && appearHash(floor(vAppearPos * 70.0)) > uFill) discard;
+#include <dithering_fragment>`,
+      );
+  };
+  return fill;
+}
+
+/** Tint a default avatar. Custom bodies are left alone. */
+export function setAvatarColor(root: Object3D, color: string): boolean {
+  let found = false;
+  root.traverse((child) => {
+    const mesh = child as Mesh;
+    if (!mesh.isMesh) return;
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const material of materials) {
+      if (!(material instanceof MeshToonMaterial)) continue;
+      material.color.set(color);
+      found = true;
+    }
+  });
+  return found;
+}
+
+/** Drive the point-fill on a default avatar. Returns false for anything else. */
+export function setAvatarAppear(root: Object3D, amount: number): boolean {
+  let found = false;
+  root.traverse((child) => {
+    const mesh = child as Mesh;
+    if (!mesh.isMesh) return;
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const material of materials) {
+      const fill = material.userData[APPEAR_KEY] as { value: number } | undefined;
+      if (!fill) continue;
+      fill.value = amount;
+      found = true;
+    }
+  });
+  return found;
+}
+
 const HEAD_RADIUS = 0.47;
 const HEAD_Y = 1.33;
 /** How far the arms hang away from the body at rest, in radians. */
@@ -88,11 +190,13 @@ export function createDefaultAvatar(height = 1.8): Group {
   const root = new Group();
   root.name = 'worldmesh:avatar';
 
-  // Soft glossy white; a little self-light keeps the shaded side from going grey.
-  const skin = new MeshStandardMaterial({ color: 0xf7f7f7, emissive: 0x1e1e1e, roughness: 0.42, metalness: 0 });
+  // Two flat tones: white in the light, light gray in the shade.
+  const skin = new MeshToonMaterial({ color: 0xffffff, gradientMap: toonSteps('#d5d5d5', '#ffffff') });
+  const skinFill = attachAppear(skin);
   const shaded = (geometry: BufferGeometry) => {
     const mesh = new Mesh(geometry, skin);
-    mesh.castShadow = true;
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
     return mesh;
   };
 
@@ -131,6 +235,7 @@ export function createDefaultAvatar(height = 1.8): Group {
     polygonOffset: true,
     polygonOffsetFactor: -1,
   });
+  attachAppear(faceMaterial, skinFill);
   const face = new Mesh(faceGeometry(), faceMaterial);
   face.name = 'worldmesh:avatar-face';
   // Built facing +Z; turn it to the front of the figure.
