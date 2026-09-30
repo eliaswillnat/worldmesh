@@ -24,7 +24,7 @@ Create world with AI  →  deploy it yourself  →  paste the URL into WorldMesh
 
 MVP. It proves one thing: **five completely different, independently
 deployable 3D websites can share exactly the same movement, camera and
-navigation runtime.** Optional accounts (Google/GitHub) and a first
+navigation runtime.** Optional accounts (Google, Apple, GitHub, Discord) and a first
 ActivityPub foundation, so creators can be followed from Mastodon as
 `@name@worldmesh.net`, live in two small Workers beside the hub — see
 [docs/accounts-and-federation.md](docs/accounts-and-federation.md). No
@@ -45,7 +45,7 @@ worldmesh/
 │   └── runtime/        @worldmesh/runtime — controls, movement, camera,
 │                       player, abilities, portals, overlay
 ├── workers/
-│   ├── auth/           accounts: Better Auth + D1 (Google, GitHub)
+│   ├── auth/           accounts: Better Auth + D1 (Google, Apple, GitHub, Discord)
 │   ├── federation/     WebFinger + ActivityPub for creators
 │   └── …               presence, views, screenshot, notify
 ├── db/migrations/      the D1 schema both of them share

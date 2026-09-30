@@ -57,6 +57,63 @@ Endpoints: Better Auth's under `/api/auth/*` (the hub uses
 `POST /sign-in/social`, `GET /callback/:provider`, `POST /sign-out`), plus
 `GET /api/account/me` and `POST /api/account/username`.
 
+### OAuth provider setup (production)
+
+Callbacks live on the hub origin (`BETTER_AUTH_URL`). For
+`https://worldmesh.net` that is:
+
+```
+https://worldmesh.net/api/auth/callback/<provider>
+```
+
+Set each provider's secrets on the `worldmesh-auth` Worker
+(`npx wrangler secret put <NAME> --config workers/auth/wrangler.toml`). A
+provider only appears in `GET /api/account/providers` (and on the login
+dialog) once all of its secrets are set. Local development copies the same
+names into `workers/auth/.dev.vars` (see `.dev.vars.example`); callbacks
+then use `http://localhost:5170/api/auth/callback/<provider>`.
+
+| Provider | Redirect URL | Secrets |
+| --- | --- | --- |
+| Google | `…/callback/google` | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` |
+| Apple | `…/callback/apple` | `APPLE_CLIENT_ID`, `APPLE_TEAM_ID`, `APPLE_KEY_ID`, `APPLE_PRIVATE_KEY` |
+| GitHub | `…/callback/github` | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` |
+| Discord | `…/callback/discord` | `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET` |
+
+Also set `BETTER_AUTH_SECRET` (random, ≥32 bytes). Never commit secret
+values; `.dev.vars` is gitignored.
+
+**Google** — [Google Cloud Console](https://console.cloud.google.com/) → APIs
+& Services → Credentials → OAuth 2.0 Client ID (Web application). Add the
+production redirect above (and a separate localhost redirect for local
+dev if you use the same client).
+
+**GitHub** — [GitHub Developer Settings](https://github.com/settings/developers)
+→ OAuth Apps → New. Authorization callback URL is the production redirect.
+GitHub allows only one callback URL per app, so use a separate OAuth App
+for local development (`http://localhost:5170/api/auth/callback/github`).
+
+**Discord** — [Discord Developer Portal](https://discord.com/developers/applications)
+→ New Application → OAuth2. Under Redirects, add:
+
+```
+https://worldmesh.net/api/auth/callback/discord
+```
+
+Copy the Client ID and Client Secret into `DISCORD_CLIENT_ID` and
+`DISCORD_CLIENT_SECRET` on `worldmesh-auth`. For local development, either
+add `http://localhost:5170/api/auth/callback/discord` as a second redirect
+on the same app, or use a separate Discord application.
+
+**Apple** — Apple Developer → Identifiers → Services ID (this is
+`APPLE_CLIENT_ID`, e.g. `net.worldmesh.signin`) with Sign in with Apple
+enabled and the production return URL registered. Create a Sign in with
+Apple key (`.p8`); put its id in `APPLE_KEY_ID`, the team id in
+`APPLE_TEAM_ID`, and the `.p8` contents in `APPLE_PRIVATE_KEY`. The Worker
+mints Apple's short-lived client secret from that key (`src/apple.ts`).
+Apple refuses localhost return URLs — test Apple on the deployed site or
+an https tunnel.
+
 ## Data model (`db/migrations`)
 
 | Table | Owner | Holds |

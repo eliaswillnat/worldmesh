@@ -3,11 +3,15 @@
 # so OAuth callbacks go to http://localhost:5170/api/auth/callback/<provider>.
 BETTER_AUTH_URL=http://localhost:5170
 BETTER_AUTH_SECRET=dev-only-secret-change-me-dev-only-secret
+# Production redirects: https://worldmesh.net/api/auth/callback/<provider>
+# See docs/accounts-and-federation.md (OAuth provider setup).
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 # GitHub OAuth Apps allow one callback URL, so use a separate dev app.
 GITHUB_CLIENT_ID=
 GITHUB_CLIENT_SECRET=
+# Discord: add http://localhost:5170/api/auth/callback/discord under OAuth2 → Redirects
+# (or use a separate Discord application for local development).
 DISCORD_CLIENT_ID=
 DISCORD_CLIENT_SECRET=
 # Apple refuses localhost return URLs; test Apple on the deployed site (or an https tunnel).
