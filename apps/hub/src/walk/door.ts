@@ -278,6 +278,16 @@ export class Door {
     this.group.rotation.y = Math.atan2(towardX - x, towardZ - z);
   }
 
+  /** The point `distance` straight out in front of the doorway, and the yaw that looks away from it. */
+  inFront(distance: number): { x: number; z: number; yaw: number } {
+    const angle = this.group.rotation.y;
+    return {
+      x: this.group.position.x + Math.sin(angle) * distance,
+      z: this.group.position.z + Math.cos(angle) * distance,
+      yaw: angle + Math.PI,
+    };
+  }
+
   /** True once (x, z) has walked into the doorway. */
   contains(x: number, z: number): boolean {
     const { localX, localZ } = this.toLocal(x, z);
@@ -312,8 +322,8 @@ export class Door {
   }
 
   /** Flare the light while we travel through it. */
-  surge(): void {
-    this.portal.material.uniforms.uGlow.value = 1;
+  surge(amount = 1): void {
+    this.portal.material.uniforms.uGlow.value = amount;
   }
 
   settle(): void {
