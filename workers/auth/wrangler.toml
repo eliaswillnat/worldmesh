@@ -11,6 +11,9 @@ compatibility_flags = ["nodejs_compat"]
 routes = [
   { pattern = "worldmesh.net/api/auth/*", zone_name = "worldmesh.net" },
   { pattern = "worldmesh.net/api/account/*", zone_name = "worldmesh.net" },
+  # World directory and submissions (src/worlds.ts), on D1.
+  { pattern = "worldmesh.net/api/worlds", zone_name = "worldmesh.net" },
+  { pattern = "worldmesh.net/api/worlds/*", zone_name = "worldmesh.net" },
 ]
 workers_dev = false
 
@@ -48,6 +51,9 @@ simple = { limit = 20, period = 60 }
 #                          email + password accounts must confirm their email and
 #                          "Forgot password?" appears. Without them, email + password
 #                          still works, unverified and with no password reset.
+#   NOTIFICATION_EMAIL     who gets new world submissions (default elias.willnat@gmail.com)
+#   FROM_EMAIL             sender for world emails; falls back to AUTH_FROM_EMAIL.
+#                          World emails need RESEND_API_KEY and one of the two.
 #   AVATAR_SECRET          random, at least 32 bytes; turns on the Avatar Wallet
 #                          (seals VRoid tokens, OAuth flow cookies, handoff tickets)
 #   VROID_CLIENT_ID        VROID_CLIENT_SECRET   (VRoid Hub in the Avatar Wallet;

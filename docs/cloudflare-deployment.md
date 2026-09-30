@@ -73,7 +73,7 @@ Cloudflare Pages automatically reads the `_headers` and `_redirects` files in `a
 
 ## 4. Email Notifications via Resend
 
-The Hub automatically routes world submission alerts to `/api/notify`, which is handled by a Cloudflare Pages Function at `functions/api/notify.ts`.
+World submissions go to `POST /api/worlds` on the `worldmesh-auth` Worker, which stores them in D1 and emails an approval link (see [accounts-and-federation.md](accounts-and-federation.md#worlds-workersauth-srcworldsts)). Set `RESEND_API_KEY`, `NOTIFICATION_EMAIL` and `FROM_EMAIL` as secrets on that Worker for those emails. The Pages Function at `functions/api/notify.ts` is the older email-only path, used by the hub only when the Worker route is not deployed; the steps below configure it.
 
 ### Setup in 2 Minutes:
 

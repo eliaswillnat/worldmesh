@@ -70,6 +70,11 @@ export function openAccountDialog(): void {
   if (!user && !providers) void loadProviders();
 }
 
+/** Whether someone is signed in (a submitted world is then linked to their account). */
+export function isSignedIn(): boolean {
+  return user !== null;
+}
+
 /** The signed-in visitor's username, or null for guests. */
 export function getUsername(): string | null {
   return user?.username ?? null;
