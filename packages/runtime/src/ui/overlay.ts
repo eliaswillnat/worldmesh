@@ -47,6 +47,14 @@ const CSS = `
   -webkit-tap-highlight-color: transparent;
 }
 .wm-overlay[data-locked="true"] .wm-lock { display: none; }
+/* First visit with deferLockPanel: keep the click target, hide the chrome. */
+.wm-overlay[data-defer-lock="true"]:not([data-lock-ready="true"]) .wm-lock {
+  background: transparent;
+  backdrop-filter: none;
+}
+.wm-overlay[data-defer-lock="true"]:not([data-lock-ready="true"]) .wm-lock-content {
+  visibility: hidden;
+}
 .wm-lock-content {
   margin: auto 0;
   width: 100%;
@@ -265,7 +273,10 @@ const KEY_LEGEND: [string, string][] = [
 export class Overlay {
   readonly root: HTMLDivElement;
   private prompt: HTMLDivElement;
+  private lock: HTMLDivElement;
   private onEnter: (touch?: boolean) => void;
+  private deferLockPanel: boolean;
+  private everLocked = false;
 
   constructor(
     options: UiOptions & {
@@ -275,12 +286,14 @@ export class Overlay {
   ) {
     injectStyles();
     this.onEnter = options.onEnter;
+    this.deferLockPanel = options.deferLockPanel === true;
 
     const isTouch = isTouchDevice();
 
     this.root = document.createElement('div');
     this.root.className = 'wm-overlay';
     this.root.dataset.locked = 'false';
+    if (this.deferLockPanel) this.root.dataset.deferLock = 'true';
 
     if (options.crosshair !== false) {
       const crosshair = document.createElement('div');
@@ -290,6 +303,7 @@ export class Overlay {
 
     const lock = document.createElement('div');
     lock.className = 'wm-lock';
+    this.lock = lock;
 
     const content = document.createElement('div');
     content.className = 'wm-lock-content';
@@ -341,6 +355,7 @@ export class Overlay {
     }
     lock.appendChild(content);
     this.root.appendChild(lock);
+    if (this.deferLockPanel) this.hideLockChrome();
 
     this.prompt = document.createElement('div');
     this.prompt.className = 'wm-prompt';
@@ -373,6 +388,30 @@ export class Overlay {
 
   setLocked(locked: boolean): void {
     this.root.dataset.locked = String(locked);
+    if (locked) {
+      this.everLocked = true;
+    } else if (this.deferLockPanel && this.everLocked) {
+      // Only after the first Esc (or pause) do we reveal click-to-enter.
+      this.root.dataset.lockReady = 'true';
+      this.showLockChrome();
+    }
+  }
+
+  /** Keep the full-screen click target; strip the dimmer and copy. */
+  private hideLockChrome(): void {
+    this.lock.style.background = 'transparent';
+    this.lock.style.backdropFilter = 'none';
+    this.lock.style.setProperty('-webkit-backdrop-filter', 'none');
+    const content = this.lock.querySelector('.wm-lock-content');
+    if (content instanceof HTMLElement) content.style.visibility = 'hidden';
+  }
+
+  private showLockChrome(): void {
+    this.lock.style.background = '';
+    this.lock.style.backdropFilter = '';
+    this.lock.style.removeProperty('-webkit-backdrop-filter');
+    const content = this.lock.querySelector('.wm-lock-content');
+    if (content instanceof HTMLElement) content.style.visibility = '';
   }
 
   setPrompt(text: string | null): void {

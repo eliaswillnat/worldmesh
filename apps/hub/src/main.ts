@@ -443,6 +443,10 @@ lightScheme.addEventListener('change', applyWalkTheme);
 
 applyThemeChoice((document.documentElement.dataset.theme as ThemeChoice | undefined) ?? 'system');
 
+walkToggle.addEventListener('pointerenter', () => {
+  void import('./walk/lobby');
+}, { once: true });
+
 walkToggle.addEventListener('click', () => {
   if (walkRoot) exitWalkMode();
   else enterWalkMode();
@@ -463,6 +467,7 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
   if (walkRoot || walkLoading) return;
   walkLoading = true;
   walkToggle.disabled = true;
+  const enteredAt = performance.now();
   try {
     const { createLobby } = await import('./walk/lobby');
     walkRoot = document.createElement('div');
@@ -472,6 +477,7 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
     lobby = createLobby(walkRoot, {
       worlds: ALL_WORLDS,
       start,
+      enteredAt,
       light: walkIsLight(),
       presenceEndpoint: PRESENCE_ENDPOINT,
       playerName: getUsername,

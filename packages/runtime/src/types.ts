@@ -144,6 +144,11 @@ export interface UiOptions {
   controlsHint?: boolean;
   /** World name shown in the overlay. */
   title?: string;
+  /**
+   * Hide the click-to-enter panel until the visitor has entered once and then
+   * pressed Esc. The first screen stays clear; a click/tap still starts them.
+   */
+  deferLockPanel?: boolean;
 }
 
 /** Everything another peer would need to draw this player. Serializable on purpose. */

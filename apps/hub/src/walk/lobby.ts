@@ -26,7 +26,7 @@ import {
 } from 'three';
 import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { CITY_GLOW_WHITE, applyCityTheme, applySkyTheme, createCityMaterials, createSky, flipInside, skyHorizon } from './city';
+import { CITY_GLOW_WHITE, applyCityTheme, applySkyTheme, createBeamRefraction, createCityMaterials, createSky, createSpawnRay, flipInside, skyHorizon } from './city';
 import { Presence } from './presence';
 import { DOOR_HALF_SPAN, DOOR_TOP, Door, type DoorWorld } from './door';
 import { describeBillboard } from './layout';
@@ -76,6 +76,11 @@ export interface LobbyOptions {
   ads?: boolean;
   /** Visit counts and the like, for ranking worlds in the towers. */
   signals?: SignalSource;
+  /**
+   * `performance.now()` when the visitor hit Walk. The spawn beam starts from
+   * that moment so load time does not delay it.
+   */
+  enteredAt?: number;
 }
 
 export interface Lobby {
@@ -151,6 +156,8 @@ const PRIVATE_FADE_MS = 260;
 const GHOST_OPACITY = 0.38;
 const GHOST_SHIMMER = 0.08;
 const GHOST_GLOW = 0x5cc8ff;
+/** How long the local figure takes to go from transparent to opaque on spawn. */
+const SPAWN_APPEAR = 0.55;
 /** Billboards further than this are not picked by the crosshair or a tap. */
 const BILLBOARD_RANGE = 95;
 /** How often the billboard under the crosshair is looked up, in seconds. */
@@ -309,6 +316,9 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const sun = new DirectionalLight(0xffffff, 1.8);
   sun.position.set(4, 10, 6);
   scene.add(sun);
+  const spawnRay = createSpawnRay(CITADEL_HEIGHT + 170);
+  scene.add(spawnRay.object);
+  const beamRefraction = createBeamRefraction(renderer, camera);
 
   const wallMaterial = new MeshStandardMaterial({ side: DoubleSide, roughness: 0.7, metalness: 0 });
   const cityMaterials = createCityMaterials(renderer.capabilities.getMaxAnisotropy());
@@ -365,6 +375,10 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   let pendingAlias = alias;
   let ghost: Ghost | null = null;
   let privateTimer = 0;
+  /** Lobby clock when the local figure started fading in; negative = idle. */
+  let appearStarted = Number.NEGATIVE_INFINITY;
+  /** Face the camera once on the first plaza spawn (not on later respawns). */
+  let faceCameraOnSpawn = !options.start;
 
   const presence = options.presenceEndpoint
     ? new Presence(
@@ -401,6 +415,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   let adding = false;
   let time = 0;
   let warping = false;
+  let beamWobble = 0;
   // The lobby door being walked through, if it was one (not a tower door).
   let warpDoor: Door | null = null;
   let warpTimer = 0;
@@ -446,7 +461,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     spawn: SPAWN,
     // Held upright, look further down so the floor fills the tall screen instead of the sky.
     view: { mode: 'third', distance: 5.5, pitch: window.innerWidth < window.innerHeight ? -0.32 : -0.15 },
-    ui: { title: 'WorldMesh', badge: false, crosshair: false },
+    ui: { title: 'WorldMesh', badge: false, crosshair: false, deferLockPanel: true },
     network: presence,
     // Empty doors are closed: their faces stop you like the wall does.
     colliders: () => [
@@ -455,6 +470,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       ...emptyDoors.map((door) => door.face),
       ...(exitDoor ? [exitDoor.face] : []),
       ...towerCity.colliders(),
+      ...spawnRay.colliders,
     ],
     onUpdate: (dt, handle) => {
       time += dt;
@@ -491,6 +507,30 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       floorUniforms.uPlayer.value.set(x, z);
       // The sky is centred on the camera, so it stays around it however high the towers take them.
       sky.position.copy(camera.position);
+      const beamPresence = spawnRay.setTime(time);
+      if (appearStarted >= 0) {
+        const t = Math.min(1, (time - appearStarted) / SPAWN_APPEAR);
+        const amount = t * t * (3 - 2 * t);
+        if (ghost) ghost.shimmer(time, amount);
+        else setLocalAppear(world.avatar, amount);
+        if (t >= 1) appearStarted = Number.NEGATIVE_INFINITY;
+      } else if (ghost) {
+        ghost.shimmer(time);
+      }
+      // A small shake that grows as the camera nears the shaft. Strength eases
+      // in and out so walking into the beam does not snap. The rig rewrites the
+      // camera next frame, so this does not accumulate.
+      const rayDistance = Math.hypot(x, z);
+      const rayT = Math.min(1, Math.max(0, (rayDistance - 0.6) / 7));
+      const rayNear = 1 - rayT * rayT * (3 - 2 * rayT);
+      const wobbleTarget = rayNear * rayNear * 0.0065 * beamPresence * beamPresence;
+      const wobbleEase = 1 - Math.exp(-dt * 4.5);
+      beamWobble += (wobbleTarget - beamWobble) * wobbleEase;
+      const wobble = beamWobble;
+      camera.position.x += Math.sin(time * 46) * wobble + Math.sin(time * 71) * wobble * 0.35;
+      camera.position.y += Math.sin(time * 58 + 1.1) * wobble * 0.55;
+      camera.position.z += Math.sin(time * 39 + 0.6) * wobble * 0.4;
+      beamRefraction.update(dt, x, z, time, beamPresence);
       // Keep the finite floor under the player. The grid is drawn in world
       // space, so moving the plane does not move the lines.
       mirror.position.set(Math.round(x / 10) * 10, 0, Math.round(z / 10) * 10);
@@ -499,10 +539,12 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       plainFloor.position.x = mirror.position.x;
       plainFloor.position.z = mirror.position.z;
       presence?.update(dt);
-      ghost?.shimmer(time);
     },
   });
   if (alias) ghost = makeGhost(world.avatar);
+  // Fire as soon as the world is running — before doors/towers finish building —
+  // and backdate to the Walk click so the beam does not wait on load.
+  if (!options.start) triggerSpawnFx(options.enteredAt);
   towerCity.attach(world);
 
   /** Walking through a lobby door: flash, then travel to the world's own URL. */
@@ -691,7 +733,10 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     adding = false;
     flash.classList.remove('active');
     if (returnTo) emerge(returnTo);
-    else world.respawn();
+    else {
+      world.respawn();
+      triggerSpawnFx();
+    }
   };
   window.addEventListener('pageshow', handlePageShow);
 
@@ -703,6 +748,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     const aspect = window.innerWidth / window.innerHeight;
     camera.fov = aspect < 1 ? 70 + (1 - aspect) * 30 : 70;
     camera.updateProjectionMatrix();
+    beamRefraction.resize();
   };
   window.addEventListener('resize', handleResize);
   handleResize();
@@ -723,6 +769,20 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     },
     dispose,
   };
+
+  /** Beam + local figure fade-in when arriving at the spawn point. */
+  function triggerSpawnFx(fromWallClock?: number): void {
+    spawnRay.trigger(fromWallClock);
+    appearStarted = time;
+    if (ghost) ghost.shimmer(time, 0);
+    else setLocalAppear(world.avatar, 0);
+    // First plaza spawn: turn the body to face the camera. Leave look direction alone.
+    if (faceCameraOnSpawn) {
+      faceCameraOnSpawn = false;
+      const { yaw } = world.getState();
+      world.setState({ facing: yaw + Math.PI });
+    }
+  }
 
   /** Come back out of the door behind `spot`, walking a few steps into the hall. */
   function emerge(spot: WalkSpot): void {
@@ -793,6 +853,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       ghost?.restore();
       ghost = alias ? makeGhost(world.avatar) : null;
       world.teleport(SPAWN, 0);
+      triggerSpawnFx();
       presence?.rejoin();
       flash.classList.remove('active');
     }, PRIVATE_FADE_MS);
@@ -819,6 +880,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     fog.far = light ? 300 : 230;
     hemisphere.groundColor.set(light ? 0xdde5f2 : 0x202020);
     hemisphere.intensity = light ? 2 : 1.6;
+    spawnRay.setTheme(light);
     floorUniforms.uBackground.value.set(light ? 0xf1f4fa : 0x000000);
     floorUniforms.uHaze.value.copy(background);
     floorUniforms.uLight.value = light ? 1 : 0;
@@ -1056,6 +1118,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     (plainFloor.material as MeshBasicMaterial).dispose();
     sky.geometry.dispose();
     sky.material.dispose();
+    spawnRay.dispose();
+    beamRefraction.dispose();
     ground.geometry.dispose();
     (ground.material as MeshStandardMaterial).dispose();
     mirror.dispose();
@@ -1098,8 +1162,8 @@ interface Emerging {
 }
 
 interface Ghost {
-  /** A slow hologram flicker. Call once per frame. */
-  shimmer(time: number): void;
+  /** A slow hologram flicker. Call once per frame. `appear` scales 0–1 during spawn fade-in. */
+  shimmer(time: number, appear?: number): void;
   /** Put every material back exactly as it was. */
   restore(): void;
 }
@@ -1130,8 +1194,8 @@ function makeGhost(root: Object3D | null): Ghost | null {
       material.needsUpdate = true;
     }
   });
-  const shimmer = (time: number) => {
-    const opacity = GHOST_OPACITY + Math.sin(time * 3.1) * Math.sin(time * 7.3) * GHOST_SHIMMER;
+  const shimmer = (time: number, appear = 1) => {
+    const opacity = (GHOST_OPACITY + Math.sin(time * 3.1) * Math.sin(time * 7.3) * GHOST_SHIMMER) * appear;
     for (const material of saved.keys()) {
       // The drawn-on face stays a little clearer than the body.
       material.opacity = material instanceof MeshBasicMaterial ? Math.min(1, opacity * 1.8) : opacity;
@@ -1151,6 +1215,22 @@ function makeGhost(root: Object3D | null): Ghost | null {
       saved.clear();
     },
   };
+}
+
+/** Fade the local figure in on spawn. Leaves materials transparent until fully opaque. */
+function setLocalAppear(root: Object3D | null, amount: number): void {
+  if (!root) return;
+  const solid = amount >= 0.999;
+  root.traverse((child) => {
+    if (!(child instanceof Mesh)) return;
+    for (const material of Array.isArray(child.material) ? child.material : [child.material]) {
+      const face = material instanceof MeshBasicMaterial;
+      material.transparent = face || !solid;
+      material.opacity = amount;
+      material.depthWrite = !face && solid;
+      material.needsUpdate = true;
+    }
+  });
 }
 
 const ALIAS_WORDS = [

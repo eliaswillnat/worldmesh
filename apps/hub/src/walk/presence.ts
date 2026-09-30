@@ -6,7 +6,7 @@ import {
   type PlayerState,
   type WorldMeshHandle,
 } from '@worldmesh/runtime';
-import { CanvasTexture, Group, Mesh, Sprite, SpriteMaterial, Vector3, type Object3D, type Scene } from 'three';
+import { CanvasTexture, Group, Mesh, MeshBasicMaterial, Sprite, SpriteMaterial, Vector3, type Object3D, type Scene } from 'three';
 
 /** How often the local position goes out, per second. */
 const SEND_RATE = 10;
@@ -24,6 +24,8 @@ interface Remote {
   /** Text currently drawn on the tag. */
   label: string;
   tag: Sprite;
+  /** Seconds since this figure first appeared; drives spawn fade-in. */
+  appear: number;
 }
 
 /** Height of the name tag's centre above the avatar's feet. */
@@ -102,6 +104,12 @@ export class Presence implements NetworkAdapter {
       const moved = Math.hypot(remote.root.position.x - before.x, remote.root.position.z - before.z);
       remote.speed += (moved / Math.max(dt, 1e-4) - remote.speed) * blend;
       animateDefaultAvatar(remote.root, { dt, speed: remote.speed, grounded: remote.root.position.y < 0.05 });
+
+      remote.appear += dt;
+      if (remote.appear < APPEAR_FADE + 0.05) {
+        const t = Math.min(1, remote.appear / APPEAR_FADE);
+        setFigureOpacity(remote.root, t * t * (3 - 2 * t));
+      }
     }
   }
 
@@ -215,8 +223,9 @@ export class Presence implements NetworkAdapter {
       tag.position.y = TAG_HEIGHT;
       root.add(tag);
       this.group.add(root);
-      remote = { root, target: new Vector3(), targetYaw: yaw, yaw, speed: 0, label: GUEST, tag };
+      remote = { root, target: new Vector3(), targetYaw: yaw, yaw, speed: 0, label: GUEST, tag, appear: 0 };
       this.remotes.set(id, remote);
+      setFigureOpacity(root, 0);
       snap = true;
     }
     remote.target.set(p[0], p[1], p[2]);
@@ -230,7 +239,11 @@ export class Presence implements NetworkAdapter {
       remote.root.add(remote.tag);
     }
     // A long jump is a teleport or respawn, not a sprint: do not animate it.
-    if (remote.root.position.distanceTo(remote.target) > 6) snap = true;
+    if (remote.root.position.distanceTo(remote.target) > 6) {
+      snap = true;
+      remote.appear = 0;
+      setFigureOpacity(remote.root, 0);
+    }
     if (snap) {
       remote.root.position.copy(remote.target);
       remote.yaw = yaw;
@@ -261,7 +274,30 @@ function round(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
+/** How long a newly appeared figure takes to go from transparent to opaque. */
+const APPEAR_FADE = 0.55;
+
 const GUEST = 'Guest';
+
+/** Ease every mesh on an avatar toward a shared opacity. */
+function setFigureOpacity(root: Object3D, amount: number): void {
+  const solid = amount >= 0.999;
+  root.traverse((child) => {
+    if (!(child instanceof Mesh)) return;
+    for (const material of Array.isArray(child.material) ? child.material : [child.material]) {
+      const face = material instanceof MeshBasicMaterial;
+      material.transparent = face || !solid;
+      material.opacity = amount;
+      material.depthWrite = !face && solid;
+      material.needsUpdate = true;
+    }
+  });
+  for (const child of root.children) {
+    if (!(child instanceof Sprite)) continue;
+    child.material.opacity = amount;
+    child.material.transparent = true;
+  }
+}
 
 /**
  * '@username' for a signed-in visitor, their made-up name in private mode,
