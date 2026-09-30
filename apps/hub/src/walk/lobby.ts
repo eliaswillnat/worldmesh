@@ -30,8 +30,16 @@ import { CITY_GLOW_WHITE, SKY_HORIZON, applyCityTheme, createCity, createCityMat
 import { Presence } from './presence';
 import { DOOR_HALF_SPAN, DOOR_TOP, Door, type DoorWorld } from './door';
 
+/** A place in the lobby and the way to face there. */
+export interface WalkSpot {
+  position: Vec3Tuple;
+  yaw: number;
+}
+
 export interface LobbyOptions {
   worlds: DoorWorld[];
+  /** Start here instead of the middle of the hall, e.g. back outside the door someone left through. */
+  start?: WalkSpot | null;
   /** Draw the lobby white with dark lines instead of black with light ones. */
   light?: boolean;
   /** WebSocket base URL of the presence server. Leave empty for single-player. */
@@ -42,8 +50,11 @@ export interface LobbyOptions {
   private?: boolean;
   /** Called with how many people are in the lobby, or null while offline. */
   onPresenceCount?: (count: number | null) => void;
-  /** Called right before the page navigates into a world. */
-  onEnterWorld?: (world: DoorWorld) => void;
+  /**
+   * Called right before the page navigates into a world, with where to put
+   * the visitor if they come back: just outside that door, facing the room.
+   */
+  onEnterWorld?: (world: DoorWorld, returnTo: WalkSpot) => void;
   /** Called when someone picks an empty door to add their own world. */
   onAddWorld?: () => void;
 }
@@ -92,6 +103,8 @@ const EMPTY_DOOR_REACH = 2.4;
 /** A tap on an empty door this far away still counts. */
 const TAP_RANGE = 40;
 const WARP_MS = 450;
+/** Someone back from a world stands this far out in front of the door they took. */
+const RETURN_STEP = 1.6;
 /** Where every visitor arrives: the middle of the hall, facing the doors. */
 const SPAWN: Vec3Tuple = [0, 0, 0];
 /** How long the screen stays white while switching in or out of private mode. */
@@ -271,6 +284,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   let time = 0;
   let warping: Door | null = null;
   let warpTimer = 0;
+  // Outside the door the visitor last went through, for when they come back.
+  let returnTo: WalkSpot | null = null;
 
   const flash = document.createElement('div');
   flash.className = 'walk-flash';
@@ -337,7 +352,9 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     if (!target) return;
     warping = door;
     door.surge();
-    options.onEnterWorld?.(target);
+    const out = door.inFront(RETURN_STEP);
+    returnTo = { position: [out.x, 0, out.z], yaw: out.yaw };
+    options.onEnterWorld?.(target, returnTo);
     document.exitPointerLock?.();
     flash.classList.add('active');
     const url = travelUrl(target.url);
@@ -412,7 +429,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   renderer.domElement.addEventListener('pointerup', handlePointerUp);
 
   // Coming back with the browser's back button can restore this page as it
-  // was left: mid-warp and standing in a doorway. Put the visitor back.
+  // was left: mid-warp and standing in a doorway. Step the visitor back out.
   const handlePageShow = (event: PageTransitionEvent) => {
     if (!event.persisted) return;
     window.clearTimeout(warpTimer);
@@ -420,7 +437,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     warping = null;
     adding = false;
     flash.classList.remove('active');
-    world.respawn();
+    if (returnTo) world.teleport(returnTo.position, returnTo.yaw);
+    else world.respawn();
   };
   window.addEventListener('pageshow', handlePageShow);
 
@@ -437,6 +455,9 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   handleResize();
 
   setWorlds(options.worlds);
+  // Stored coordinates rather than a door to look up: community worlds arrive
+  // a moment later and shift every door, and these already match the full list.
+  if (options.start) world.teleport(options.start.position, options.start.yaw);
 
   if (import.meta.env.DEV) Object.assign(window, { lobby: world });
 

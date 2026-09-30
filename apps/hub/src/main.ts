@@ -375,6 +375,8 @@ const walkPrivate = document.querySelector<HTMLButtonElement>('#walk-private')!;
 const walkPrivateLabel = document.querySelector<HTMLSpanElement>('#walk-private-label')!;
 /** Remembered per browser, so a reload never quietly makes someone public again. */
 const PRIVATE_KEY = 'worldmesh.walkPrivate';
+/** Where someone left the lobby into a world, so coming back puts them there. This tab only. */
+const WALK_RETURN_KEY = 'worldmesh.walkReturn';
 let walkRoot: HTMLDivElement | null = null;
 let lobby: import('./walk/lobby').Lobby | null = null;
 let walkLoading = false;
@@ -406,9 +408,18 @@ walkToggle.addEventListener('click', () => {
   else enterWalkMode();
 });
 
-if (window.location.hash === '#walk') enterWalkMode();
+// Back from a world entered through a door: into the lobby, outside that
+// door, however they came back (back button, the world's WorldMesh badge…).
+const walkReturn = takeWalkReturn();
+if (window.location.hash === '#walk' || walkReturn) enterWalkMode(walkReturn);
 
-async function enterWalkMode(): Promise<void> {
+// A back-button return can restore the page with the lobby still running; it
+// puts the visitor back itself, so the stored spot is no longer needed.
+window.addEventListener('pageshow', (event) => {
+  if (event.persisted) takeWalkReturn();
+});
+
+async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = null): Promise<void> {
   if (walkRoot || walkLoading) return;
   walkLoading = true;
   walkToggle.disabled = true;
@@ -420,6 +431,7 @@ async function enterWalkMode(): Promise<void> {
     document.documentElement.classList.add('walking');
     lobby = createLobby(walkRoot, {
       worlds: ALL_WORLDS,
+      start,
       light: walkIsLight(),
       presenceEndpoint: PRESENCE_ENDPOINT,
       playerName: getUsername,
@@ -433,7 +445,10 @@ async function enterWalkMode(): Promise<void> {
           walkOnline.textContent = `${count} online`;
         }
       },
-      onEnterWorld: (world) => trackClick(world.url),
+      onEnterWorld: (world, returnTo) => {
+        trackClick(world.url);
+        saveWalkReturn(returnTo);
+      },
       onAddWorld: openAddFormFromWalk,
     });
     applyWalkTheme();
@@ -486,6 +501,29 @@ function toggleWalkPrivate(): void {
     // Storage blocked: private mode just lasts until the page is left.
   }
   showWalkPrivate(alias);
+}
+
+function saveWalkReturn(spot: import('./walk/lobby').WalkSpot): void {
+  try {
+    sessionStorage.setItem(WALK_RETURN_KEY, JSON.stringify(spot));
+  } catch {
+    // Storage blocked: coming back starts in the middle of the hall.
+  }
+}
+
+/** The spot saved by saveWalkReturn, if any, clearing it so it is used once. */
+function takeWalkReturn(): import('./walk/lobby').WalkSpot | null {
+  try {
+    const raw = sessionStorage.getItem(WALK_RETURN_KEY);
+    sessionStorage.removeItem(WALK_RETURN_KEY);
+    if (!raw) return null;
+    const { position, yaw } = JSON.parse(raw);
+    const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
+    if (!Array.isArray(position) || position.length !== 3 || !position.every(finite) || !finite(yaw)) return null;
+    return { position: [position[0], position[1], position[2]], yaw };
+  } catch {
+    return null;
+  }
 }
 
 function loadWalkPrivate(): boolean {
