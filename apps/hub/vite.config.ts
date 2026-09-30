@@ -16,6 +16,8 @@ export default defineConfig({
       // Accounts and federation run as local Workers: npm run dev:auth / dev:federation.
       // Host stays localhost:5170, so cookies and OAuth callbacks use the hub's origin.
       '/api/auth': 'http://localhost:8788',
+      // Billboard ads: npm run dev:ads (Stripe test keys in workers/ads/.dev.vars).
+      '/api/ads': 'http://localhost:8790',
       '/api/account': 'http://localhost:8788',
       '/.well-known/webfinger': 'http://localhost:8789',
       '/.well-known/nodeinfo': 'http://localhost:8789',

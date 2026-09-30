@@ -90,6 +90,16 @@
       ],
       "port": 8789,
       "autoPort": false
+    },
+    {
+      "name": "ads",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev:ads"
+      ],
+      "port": 8790,
+      "autoPort": false
     }
   ]
 }

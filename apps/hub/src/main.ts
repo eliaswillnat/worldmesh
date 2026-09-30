@@ -121,6 +121,16 @@ import { initAccount } from './account';
 
 initAccount();
 
+// Back from a bank redirect in the middle of paying for a billboard ad (rare:
+// card checks normally happen inside the payment form). Confirm with the server.
+if (new URLSearchParams(window.location.search).has('ad_return')) {
+  void import('./ads/modal')
+    .then(({ resumeReturnedSubmission }) => resumeReturnedSubmission())
+    .then((message) => {
+      if (message) window.alert(message);
+    });
+}
+
 const form = document.querySelector<HTMLFormElement>('#add-form')!;
 const input = document.querySelector<HTMLInputElement>('#url')!;
 const addBtn = document.querySelector<HTMLButtonElement>('#add-btn')!;

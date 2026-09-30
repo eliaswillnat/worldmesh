@@ -19,6 +19,7 @@
     "dev:presence": "wrangler dev --config workers/presence/wrangler.toml --port 8787",
     "dev:auth": "npm run dev --prefix workers/auth",
     "dev:federation": "npm run dev --prefix workers/federation",
+    "dev:ads": "npm run dev --prefix workers/ads",
     "db:migrate:local": "cd workers/auth && npx wrangler d1 migrations apply worldmesh --local --persist-to ../../.wrangler/state",
     "dev:all": "npm run dev --workspaces --if-present",
     "build": "npm run build --workspaces --if-present",
@@ -31,8 +32,8 @@
     "build:medieval": "npm run build:runtime && npm run build --workspace=apps/medieval",
     "build:space": "npm run build:runtime && npm run build --workspace=apps/space",
     "typecheck": "npm run build:runtime && npm run typecheck --workspaces --if-present",
-    "typecheck:workers": "npm run typecheck --prefix workers/auth && npm run typecheck --prefix workers/federation",
-    "test:workers": "npm test --prefix workers/auth && npm test --prefix workers/federation",
+    "typecheck:workers": "npm run typecheck --prefix workers/auth && npm run typecheck --prefix workers/federation && npm run typecheck --prefix workers/ads",
+    "test:workers": "npm test --prefix workers/auth && npm test --prefix workers/federation && npm test --prefix workers/ads",
     "pack:runtime": "npm pack --workspace=packages/runtime --dry-run"
   },
   "devDependencies": {

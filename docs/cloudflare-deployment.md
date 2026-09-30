@@ -134,3 +134,12 @@ hostname, sharing one D1 database. Setup, secrets and routes are in
 [accounts-and-federation.md](accounts-and-federation.md), including OAuth
 provider setup (Google, Apple, GitHub, Discord redirect URLs and Worker
 secret names).
+
+---
+
+## 7. Billboard advertising
+
+`workers/ads` is a Worker routed onto the hub's hostname (`/api/ads/*`), using
+the same D1 database, a private R2 bucket (`worldmesh-ads`), Stripe and
+Resend. Bucket, migration, Stripe webhook, secrets and admin accounts are in
+[advertising.md](advertising.md#setup-production).
