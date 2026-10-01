@@ -1,12 +1,20 @@
-import {
-  animateDefaultAvatar,
-  createDefaultAvatar,
-  setAvatarExpression,
-  type NetworkAdapter,
-  type PlayerState,
-  type WorldMeshHandle,
-} from '@worldmesh/runtime';
 import { CanvasTexture, Group, Mesh, MeshBasicMaterial, Sprite, SpriteMaterial, Vector3, type Object3D, type Scene } from 'three';
+import { animateDefaultAvatar, createDefaultAvatar, setAvatarExpression } from '../player/avatar.js';
+import type { NetworkAdapter, PlayerState, WorldMeshHandle } from '../types.js';
+
+/** The relay WorldMesh hosts (workers/presence). Worlds can point at their own. */
+export const DEFAULT_PRESENCE_SERVER = 'wss://worldmesh-presence.elias-willnat.workers.dev';
+
+export interface PresenceOptions {
+  /** Full WebSocket URL of the room, e.g. `wss://relay.example/world`. */
+  url: string;
+  scene: Scene;
+  /** Players in the room including this one, or null while disconnected. */
+  onCount?: (count: number | null) => void;
+  getName?: () => string | null;
+  /** Made-up name shown instead of the username in private mode. */
+  getAlias?: () => string | null;
+}
 
 /** How often the local position goes out, per second. */
 const SEND_RATE = 10;
@@ -57,21 +65,25 @@ export class Presence implements NetworkAdapter {
   private lastSent = 0;
   private lastPayload = '';
 
-  constructor(
-    private endpoint: string,
-    private room: string,
-    scene: Scene,
-    private onCount: (count: number | null) => void,
-    private getName: () => string | null = () => null,
-    /** Made-up name shown instead of the username in private mode. */
-    private getAlias: () => string | null = () => null,
-  ) {
+  private url: string;
+  private onCount: (count: number | null) => void;
+  private getName: () => string | null;
+  private getAlias: () => string | null;
+
+  constructor(options: PresenceOptions) {
+    this.url = options.url;
+    this.onCount = options.onCount ?? (() => {});
+    this.getName = options.getName ?? (() => null);
+    this.getAlias = options.getAlias ?? (() => null);
     this.group.name = 'worldmesh:remote-players';
-    scene.add(this.group);
+    options.scene.add(this.group);
   }
 
   attach(world: WorldMeshHandle): void {
-    this.unsubscribe = world.on('update', ({ state }) => this.sendLocalState(state));
+    this.unsubscribe = world.on('update', ({ dt, state }) => {
+      this.sendLocalState(state);
+      this.update(dt);
+    });
     window.addEventListener('pagehide', this.handlePageHide);
     window.addEventListener('pageshow', this.handlePageShow);
     this.connect();
@@ -101,7 +113,7 @@ export class Presence implements NetworkAdapter {
     socket.send(JSON.stringify({ t: 'c', m: line }));
   }
 
-  /** Ease remote avatars toward their last known position. Call once per frame. */
+  /** Ease remote avatars toward their last known position. Driven by the world's update event. */
   update(dt: number): void {
     const blend = 1 - Math.exp(-dt * 10);
     for (const remote of this.remotes.values()) {
@@ -158,7 +170,7 @@ export class Presence implements NetworkAdapter {
 
     let socket: WebSocket;
     try {
-      socket = new WebSocket(`${this.endpoint.replace(/\/$/, '')}/room/${this.room}`);
+      socket = new WebSocket(this.url);
     } catch {
       this.scheduleReconnect();
       return;

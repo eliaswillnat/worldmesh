@@ -101,11 +101,13 @@ The Hub automatically routes world submission alerts to `/api/notify`, which is 
 
 ---
 
-## 5. Walk mode presence (multiplayer lobby)
+## 5. Presence relay (multiplayer)
 
-The hub's walk mode shows everyone else who is in the lobby. Positions are
-relayed by a small Worker with one Durable Object per room, in
-`workers/presence`. It stores nothing and carries only positions.
+The hub's walk mode shows everyone else who is in the lobby, and any world
+created with `multiplayer: true` shows everyone else in that world. Positions
+are relayed by a small Worker with one Durable Object per room, in
+`workers/presence`. It stores nothing and carries only positions. The runtime's
+default server (`DEFAULT_PRESENCE_SERVER`) points at this Worker.
 
 1. Deploy it (SQLite-backed Durable Objects work on the Workers free plan):
    ```bash

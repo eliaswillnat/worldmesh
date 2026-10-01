@@ -188,12 +188,13 @@ export interface WorldMeshEvents {
   'avatar:load': { descriptor: AvatarDescriptor };
   /** An external avatar could not be shown; the default body stays. */
   'avatar:error': { descriptor: AvatarDescriptor | null; error: unknown };
+  /** People in this world including the visitor, or null while not connected. Only with `multiplayer`. */
+  players: { count: number | null };
 }
 
 /**
- * Multiplayer seam. Nothing in the runtime implements this yet — it exists so
- * the local player loop stays shaped like something a network can drive later
- * (peer-to-peer, a world-hosted server, or a WorldMesh signaling service).
+ * Multiplayer seam. `multiplayer` plugs in the built-in relay client; pass
+ * your own adapter here to network the world some other way.
  */
 export interface NetworkAdapter {
   /** Called once with a read-only view of the local world. */
@@ -233,8 +234,19 @@ export interface WorldMeshOptions {
   autoResize?: boolean;
   /** Your per-frame world logic. Runs after movement, before rendering. */
   onUpdate?: (dt: number, world: WorldMeshHandle) => void;
-  /** Reserved. Not used by the MVP. */
+  /**
+   * Show everyone else who is in this world. `true` uses the relay WorldMesh
+   * hosts; `{ server }` points at your own copy of workers/presence.
+   * Ignored when `network` is set.
+   */
+  multiplayer?: boolean | MultiplayerOptions;
+  /** A custom network layer. Replaces `multiplayer`. */
   network?: NetworkAdapter;
+}
+
+export interface MultiplayerOptions {
+  /** WebSocket base URL of a presence relay, e.g. `wss://relay.example.com`. */
+  server?: string;
 }
 
 export interface WorldMeshHandle {
