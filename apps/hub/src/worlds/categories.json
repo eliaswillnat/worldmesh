@@ -42,6 +42,20 @@
       "tagline": "People to meet",
       "color": "#6ec6e0",
       "keywords": ["social", "hangout", "party", "friends", "meetup", "lounge", "community", "gather"]
+    },
+    {
+      "id": "discover",
+      "name": "Discover",
+      "tagline": "Somewhere new",
+      "color": "#c4b5fd",
+      "keywords": ["discover", "discovery"]
+    },
+    {
+      "id": "create",
+      "name": "Create",
+      "tagline": "Make something",
+      "color": "#f2d16b",
+      "keywords": ["sandbox", "maker", "workshop"]
     }
   ]
 }

@@ -137,43 +137,27 @@ function gateAngles(): number[] {
   return Array.from({ length: GATE_COUNT }, (_, i) => (i / GATE_COUNT) * Math.PI * 2);
 }
 
-/** Wall between a gate opening and the door set against it. */
-const GATE_DOOR_GAP = 0.45;
-
 /**
- * Door angles around the drum. Each gate gets a door on both sides; any
- * doors left over share the wall between those pairs.
+ * Door angles around the drum. Each stretch of wall between two gates is a
+ * bay, and every bay gets the same number of doors. Within a bay the doors
+ * are spaced so the clear gap beside each gate equals the clear gap between
+ * neighbouring doors — both sides of an exit match.
  */
 function doorAngles(total: number, radius: number): number[] {
-  const flank = (GATE_WIDTH / 2 + GATE_DOOR_GAP + DOOR_HALF_SPAN) / radius;
   const gates = gateAngles();
-  const beside = gates.flatMap((gate) => [gate - flank, gate + flank]).map((angle) => (angle + Math.PI * 2) % (Math.PI * 2));
-  beside.sort((a, b) => a - b);
-  const pinned = beside.slice(0, Math.min(total, beside.length));
-  const rest = total - pinned.length;
-  if (rest <= 0) return pinned;
-
-  const arcs: { start: number; end: number }[] = [];
-  for (let i = 0; i < gates.length; i++) {
-    const start = (gates[i] + flank + DOOR_SPACING / radius) % (Math.PI * 2);
-    const end = (gates[(i + 1) % gates.length] - flank - DOOR_SPACING / radius + Math.PI * 2) % (Math.PI * 2);
-    const length = (end - start + Math.PI * 2) % (Math.PI * 2);
-    if (length > 0.05) arcs.push({ start, end: start + length });
+  const bay = (Math.PI * 2) / GATE_COUNT;
+  const count = Math.floor(total / GATE_COUNT);
+  if (count <= 0) return [];
+  const bayMetres = bay * radius;
+  // Centre-to-centre pitch. The +1 counts the gap on each side of the bay as
+  // one more interval, so those gaps come out equal to the ones between doors.
+  const pitch = (bayMetres - GATE_WIDTH + 2 * DOOR_HALF_SPAN) / (count + 1);
+  const first = GATE_WIDTH / 2 + pitch - DOOR_HALF_SPAN;
+  const angles: number[] = [];
+  for (const gate of gates) {
+    for (let i = 0; i < count; i++) angles.push(gate + (first + i * pitch) / radius);
   }
-  const span = arcs.reduce((sum, arc) => sum + (arc.end - arc.start), 0);
-  const filled: number[] = [];
-  for (let i = 0; i < rest; i++) {
-    let along = ((i + 0.5) / rest) * span;
-    for (const arc of arcs) {
-      const length = arc.end - arc.start;
-      if (along <= length || arc === arcs[arcs.length - 1]) {
-        filled.push(arc.start + along);
-        break;
-      }
-      along -= length;
-    }
-  }
-  return [...pinned, ...filled].sort((a, b) => a - b);
+  return angles.map((angle) => (angle + Math.PI * 2) % (Math.PI * 2)).sort((a, b) => a - b);
 }
 /**
  * Slot indexes for `count` worlds on a ring of `total` doors, spaced as evenly
@@ -395,10 +379,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const wallMaterial = new MeshStandardMaterial({ side: DoubleSide, roughness: 0.7, metalness: 0 });
   const cityMaterials = createCityMaterials(renderer.capabilities.getMaxAnisotropy());
   let disposed = false;
-  // Screen lettering uses the page font, which may still be loading.
-  document.fonts?.load('700 100px Urbanist').then(() => {
-    if (!disposed) cityMaterials.redraw();
-  }, () => {});
   const mirror = new Reflector(new PlaneGeometry(FLOOR_SIZE, FLOOR_SIZE), {
     shader: floorShader,
     ...mirrorResolution(),
@@ -1126,7 +1106,9 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     const claims = loadClaims().filter((claim) => !worlds.some((entry) => entry.url === claim.url));
     const claimUrls = new Set(claims.map((claim) => claim.url));
     const urls = [...known.keys()].filter((url) => !claimUrls.has(url)).sort();
-    const total = Math.max(MIN_DOORS, urls.length + SPARE_DOORS);
+    // A multiple of the gate count, so every bay — and both sides of every exit — match.
+    const needed = Math.max(MIN_DOORS, urls.length + SPARE_DOORS);
+    const total = needed + ((GATE_COUNT - (needed % GATE_COUNT)) % GATE_COUNT);
     const gateArc = GATE_COUNT * (GATE_WIDTH + GATE_MARGIN * 2);
     const radius = Math.max(WALL_MIN_RADIUS, (total * DOOR_SPACING + gateArc) / (Math.PI * 2));
     // Doors share the wall between the gates.
@@ -1311,13 +1293,55 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       glow.push(place(new BoxGeometry(GATE_WIDTH, 0.05, 0.05), glowX, GATE_HEIGHT - 0.02, glowZ, angle));
     }
 
-    // The banner over the gate: a tall screen in a deep white bezel, deep
-    // enough to meet the curved wall behind it.
-    const bannerW = 7;
+    // A tall screen over every gate, facing the plaza. Explore and Discover
+    // alternate, each at its own picture's shape, in a deep white bezel.
+    const portrait = [cityMaterials.banners.explore, cityMaterials.banners.discover];
     const bannerH = 14;
     const bannerBottom = GATE_HEIGHT + 2.4;
-    solid.push(place(new BoxGeometry(bannerW + 0.6, bannerH + 0.6, 1.4), 0, bannerBottom + bannerH / 2, outer - 0.35));
-    glow.push(place(new BoxGeometry(bannerW + 0.6, 0.05, 0.05), 0, bannerBottom - 0.35, outer + 0.36));
+    const banners: Mesh[] = [];
+    gateAngles().forEach((angle, index) => {
+      const art = portrait[index % portrait.length];
+      const bannerW = bannerH * art.aspect;
+      const y = bannerBottom + bannerH / 2;
+      const bezelZ = outer - 0.35;
+      const faceZ = outer + 0.37;
+      solid.push(place(new BoxGeometry(bannerW + 0.6, bannerH + 0.6, 1.4), Math.sin(angle) * bezelZ, y, Math.cos(angle) * bezelZ, angle));
+      glow.push(place(new BoxGeometry(bannerW + 0.6, 0.05, 0.05), Math.sin(angle) * faceZ, bannerBottom - 0.35, Math.cos(angle) * faceZ, angle));
+      const banner = new Mesh(new PlaneGeometry(bannerW, bannerH), art.material);
+      banner.position.set(Math.sin(angle) * faceZ, y, Math.cos(angle) * faceZ);
+      banner.rotation.y = angle;
+      banners.push(banner);
+    });
+
+    // The wide brand line, on the inside of each wall between two gates,
+    // above the doors. From the middle of the hall it is in view whichever
+    // way you look.
+    const platform = cityMaterials.banners.platform;
+    const bay = (Math.PI * 2) / GATE_COUNT;
+    const interior: Mesh[] = [];
+    for (const gate of gateAngles()) {
+      const center = gate + bay / 2;
+      const margin = 2.2;
+      const maxArc = bay - (GATE_WIDTH + margin * 2) / radius;
+      const width = Math.min(maxArc * radius, 4.2 * platform.aspect);
+      const height = width / platform.aspect;
+      const arc = width / radius;
+      const start = center - arc / 2;
+      const y = 5.4 + height / 2;
+      const segments = Math.max(12, Math.ceil(arc * 28));
+      const bezel = new Mesh(
+        flipInside(new CylinderGeometry(radius - 0.05, radius - 0.05, height + 0.45, segments, 1, true, start - 0.22 / radius, arc + 0.44 / radius)),
+        wallMaterial,
+      );
+      bezel.position.y = y;
+      const screenGeometry = flipInside(new CylinderGeometry(radius - 0.2, radius - 0.2, height, segments, 1, true, start, arc));
+      // The arc's U runs opposite the way you face it, so flip it to read left to right.
+      const uv = screenGeometry.getAttribute('uv');
+      for (let i = 0; i < uv.count; i++) uv.setX(i, 1 - uv.getX(i));
+      const screen = new Mesh(screenGeometry, platform.material);
+      screen.position.y = y;
+      interior.push(bezel, screen);
+    }
 
     // The random door's backing and porch, on the outer wall beside the gate.
     const doorAngle = RANDOM_DOOR_ARC / outer;
@@ -1338,10 +1362,10 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     add(solid, wallMaterial);
     add(glow, cityMaterials.glow);
 
-    const banner = new Mesh(new PlaneGeometry(bannerW, bannerH), cityMaterials.citadelPoster.material);
-    banner.position.set(0, bannerBottom + bannerH / 2, outer + 0.37);
-    scene.add(banner);
-    trim.push(banner);
+    for (const mesh of [...banners, ...interior]) {
+      scene.add(mesh);
+      trim.push(mesh);
+    }
   }
 
   /** The towers stand around the citadel, so they follow its width. */

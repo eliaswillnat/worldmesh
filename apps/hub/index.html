@@ -1677,10 +1677,12 @@
       }
       .walk-pause-actions .walk-private,
       .walk-pause-actions .walk-theme,
-      .walk-pause-actions .walk-gallery {
+      .walk-pause-actions .walk-gallery,
+      .walk-pause-actions .walk-discord {
         position: static;
       }
-      .walk-pause-actions .walk-gallery {
+      .walk-pause-actions .walk-gallery,
+      .walk-pause-actions .walk-discord {
         height: 44px;
         padding: 0 16px;
         border-radius: 22px;
@@ -1690,8 +1692,10 @@
         color: #fff;
         background: rgba(255, 255, 255, 0.1);
         border: 1px solid rgba(255, 255, 255, 0.35);
+        text-decoration: none;
       }
-      html.walking[data-walk-theme="light"] .walk-pause-actions .walk-gallery {
+      html.walking[data-walk-theme="light"] .walk-pause-actions .walk-gallery,
+      html.walking[data-walk-theme="light"] .walk-pause-actions .walk-discord {
         color: #111;
         background: rgba(0, 0, 0, 0.06);
         border-color: rgba(0, 0, 0, 0.3);

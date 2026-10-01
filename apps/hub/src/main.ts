@@ -704,6 +704,13 @@ function mountPauseActions(): void {
   gallery.className = 'walk-gallery';
   gallery.textContent = 'Back to the gallery';
 
+  const discord = document.createElement('a');
+  discord.className = 'walk-discord';
+  discord.href = 'https://discord.gg/cJYFfyVheP';
+  discord.target = '_blank';
+  discord.rel = 'noopener noreferrer';
+  discord.textContent = 'Feedback on Discord';
+
   const priv = document.createElement('button');
   priv.type = 'button';
   priv.className = 'walk-private';
@@ -734,7 +741,7 @@ function mountPauseActions(): void {
 
   const colors = walkColors.cloneNode(true) as HTMLDivElement;
   colors.removeAttribute('id');
-  bar.append(gallery, priv, theme, colors);
+  bar.append(gallery, discord, priv, theme, colors);
   const keys = content.querySelector('.wm-keys');
   if (keys) content.insertBefore(bar, keys);
   else content.appendChild(bar);
