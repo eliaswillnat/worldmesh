@@ -2,7 +2,7 @@ import { BackSide, Mesh, MeshBasicMaterial, MeshToonMaterial, type Material, typ
 
 /** How far the shell sits outside the body, in metres. Thick enough to read as ink. */
 const STROKE_WIDTH = 0.05;
-/** Same ink as the door frames, so the stroke belongs to the light lobby. */
+/** Same ink as the door frames. Shown in both themes. */
 const STROKE_COLOR = 0x1c1c1c;
 
 /**

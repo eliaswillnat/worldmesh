@@ -19,6 +19,8 @@ export interface PresenceOptions {
    * for the people already in the room when this visitor joins.
    */
   onArrive?: (x: number, z: number) => void;
+  /** Called with each remote figure as it is made, e.g. to add an outline. */
+  onFigure?: (root: Object3D) => void;
 }
 
 /** How often the local position goes out, per second. */
@@ -75,6 +77,7 @@ export class Presence implements NetworkAdapter {
   private getName: () => string | null;
   private getAlias: () => string | null;
   private onArrive: (x: number, z: number) => void;
+  private onFigure: (root: Object3D) => void;
 
   constructor(options: PresenceOptions) {
     this.url = options.url;
@@ -82,6 +85,7 @@ export class Presence implements NetworkAdapter {
     this.getName = options.getName ?? (() => null);
     this.getAlias = options.getAlias ?? (() => null);
     this.onArrive = options.onArrive ?? (() => {});
+    this.onFigure = options.onFigure ?? (() => {});
     this.group.name = 'worldmesh:remote-players';
     options.scene.add(this.group);
   }
@@ -142,8 +146,10 @@ export class Presence implements NetworkAdapter {
         if (remote.bubbleLeft <= 0) dropBubble(remote);
       }
 
+      // The frame that crosses the end of the fade lands on fully opaque, however long it was.
+      const fading = remote.appear < APPEAR_FADE;
       remote.appear += dt;
-      if (remote.appear < APPEAR_FADE + 0.05) {
+      if (fading) {
         const t = Math.min(1, remote.appear / APPEAR_FADE);
         setFigureOpacity(remote.root, t * t * (3 - 2 * t));
       }
@@ -264,6 +270,7 @@ export class Presence implements NetworkAdapter {
       const tag = createNameTag(GUEST);
       tag.position.y = TAG_HEIGHT;
       root.add(tag);
+      this.onFigure(root);
       this.group.add(root);
       remote = { root, target: new Vector3(), targetYaw: yaw, yaw, speed: 0, label: GUEST, tag, appear: 0, bubble: null, bubbleLeft: 0 };
       this.remotes.set(id, remote);
@@ -325,13 +332,20 @@ const GUEST = 'Guest';
 /** Ease every mesh on an avatar toward a shared opacity. */
 function setFigureOpacity(root: Object3D, amount: number): void {
   const solid = amount >= 0.999;
+  let outlined = false;
+  root.traverse((child) => {
+    if (child instanceof Mesh && child.userData.stroke === true) outlined = true;
+  });
   root.traverse((child) => {
     if (!(child instanceof Mesh)) return;
     for (const material of Array.isArray(child.material) ? child.material : [child.material]) {
-      const face = material instanceof MeshBasicMaterial;
+      const stroke = material.userData.stroke === true;
+      const face = material instanceof MeshBasicMaterial && !stroke;
       material.transparent = face || !solid;
       material.opacity = amount;
-      material.depthWrite = !face && solid;
+      // An outline sits behind the body, so a fading body still writes depth
+      // to keep the outline's far side from showing through it as a black blob.
+      material.depthWrite = stroke ? solid : !face && (solid || outlined);
       material.needsUpdate = true;
     }
   });
