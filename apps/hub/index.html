@@ -1081,7 +1081,7 @@
         opacity: 0;
       }
       .walk-bubble.visible { opacity: 1; }
-      .walk-bubble.saying { pointer-events: auto; }
+      .walk-bubble.saying { pointer-events: auto; display: flex; flex-direction: row; align-items: center; }
       .walk-bubble input, .walk-bubble p {
         margin: 0;
         width: 100%;
@@ -1092,6 +1092,7 @@
         font: 600 15px/1.3 "Urbanist", ui-sans-serif, system-ui, sans-serif;
       }
       .walk-bubble input { outline: none; min-width: 120px; }
+      .walk-bubble.saying input { width: auto; flex: 1; }
       .walk-bubble:not(.saying) input { display: none; }
       .walk-bubble:not(.saying) .walk-bubble-close { display: none; }
       .walk-bubble.saying p { display: none; }
@@ -1105,7 +1106,6 @@
         -webkit-tap-highlight-color: transparent;
       }
       .walk-bubble-close:active { color: #333; }
-      .walk-bubble.saying { display: flex; align-items: center; }
       @media (pointer: coarse) {
         .walk-bubble.saying .walk-bubble-close { display: block; }
       }
