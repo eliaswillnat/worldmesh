@@ -27,9 +27,9 @@ export interface DoorWorld {
   creator?: string;
 }
 
-/** Size of the doorway opening, in metres. */
-const DOOR_WIDTH = 1.4;
-const DOOR_HEIGHT = 2.6;
+/** Size of the doorway opening, in metres: 3:4 portrait, like the covers. */
+const DOOR_WIDTH = 2.1;
+const DOOR_HEIGHT = 2.8;
 /** Frame thickness and depth. */
 const FRAME = 0.16;
 const DEPTH = 0.32;

@@ -1355,11 +1355,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     const doorAngle = RANDOM_DOOR_ARC / outer;
     const around = (r: number) => [Math.sin(doorAngle) * r, Math.cos(doorAngle) * r] as const;
     const [backX, backZ] = around(outer - 0.05);
-    solid.push(place(new BoxGeometry(2.4, DOOR_TOP + 2.2, 0.5), backX, (DOOR_TOP + 2.2) / 2, backZ, doorAngle));
+    solid.push(place(new BoxGeometry(2.8, DOOR_TOP + 2.2, 0.5), backX, (DOOR_TOP + 2.2) / 2, backZ, doorAngle));
     const [porchX, porchZ] = around(outer + 0.55);
-    solid.push(place(new BoxGeometry(2.4, 0.16, 0.9), porchX, DOOR_TOP + 0.75, porchZ, doorAngle));
+    solid.push(place(new BoxGeometry(2.8, 0.16, 0.9), porchX, DOOR_TOP + 0.75, porchZ, doorAngle));
     const [lineX, lineZ] = around(outer + 1.0);
-    glow.push(place(new BoxGeometry(2.4, 0.04, 0.04), lineX, DOOR_TOP + 0.67, lineZ, doorAngle));
+    glow.push(place(new BoxGeometry(2.8, 0.04, 0.04), lineX, DOOR_TOP + 0.67, lineZ, doorAngle));
 
     const add = (geometries: BufferGeometry[], material: MeshStandardMaterial | typeof cityMaterials.glow) => {
       const mesh = new Mesh(mergeGeometries(geometries), material);
