@@ -1,9 +1,11 @@
 import {
   AdditiveBlending,
   BoxGeometry,
+  BufferGeometry,
   CanvasTexture,
   Color,
   DoubleSide,
+  Float32BufferAttribute,
   Group,
   LinearFilter,
   Mesh,
@@ -15,10 +17,10 @@ import {
   Texture,
   TextureLoader,
   Vector2,
-  type BufferGeometry,
   type Material,
 } from 'three';
-import { drawEntries, hasEntries, measureEntries } from '../entries';
+import { drawEntries, measureEntries } from '../entries';
+import { createGodRayMaterial } from './city';
 
 export interface DoorWorld {
   name: string;
@@ -29,10 +31,10 @@ export interface DoorWorld {
 }
 
 /** Size of the doorway opening, in metres: 3:4 portrait, like the covers. */
-const DOOR_WIDTH = 4.2;
-const DOOR_HEIGHT = 5.6;
+export const DOOR_WIDTH = 4.2;
+export const DOOR_HEIGHT = 5.6;
 /** Frame thickness and depth. */
-const FRAME = 0.16;
+export const FRAME = 0.16;
 const DEPTH = 0.32;
 /** Step this close to the doorway to go through. */
 const THRESHOLD = 0.1;
@@ -47,6 +49,41 @@ export const DOOR_HALF_SPAN = DOOR_WIDTH / 2 + FRAME;
 export const DOOR_TOP = DOOR_HEIGHT + FRAME;
 /** Widest a name above a door may get, so neighbouring labels never touch. */
 const MAX_LABEL_WIDTH = 4;
+/** How far occupied doors spill god-rays into the hall. */
+const RAY_LENGTH = 2.05;
+/** Keep the shaft off the floor so the glow sits in the opening, not on the tiles. */
+const RAY_CLEARANCE = 0.02;
+/** Far end is wider than the doorway; a little taller, not as much. */
+const RAY_FLARE_W = 1.18;
+const RAY_FLARE_H = 1.06;
+
+/**
+ * Open-bottom trapezoid: door-sized at the opening, larger out in the hall.
+ * The sill stays level so the far end does not dip into the floor.
+ */
+function openBottomTrapeze(nearW: number, nearH: number, farW: number, farH: number, depth: number): BufferGeometry {
+  const z0 = -depth / 2;
+  const z1 = depth / 2;
+  const nx = nearW / 2;
+  const ny = nearH / 2;
+  const fx = farW / 2;
+  const bottom = -ny;
+  const farTop = bottom + farH;
+  const positions = new Float32Array([
+    -nx, bottom, z0, -nx, ny, z0, nx, ny, z0, nx, bottom, z0,
+    -fx, bottom, z1, -fx, farTop, z1, fx, farTop, z1, fx, bottom, z1,
+  ]);
+  const geometry = new BufferGeometry();
+  geometry.setAttribute('position', new Float32BufferAttribute(positions, 3));
+  geometry.setIndex([
+    0, 1, 5, 0, 5, 4,
+    3, 7, 6, 3, 6, 2,
+    1, 2, 6, 1, 6, 5,
+    4, 5, 6, 4, 6, 7,
+  ]);
+  geometry.computeVertexNormals();
+  return geometry;
+}
 
 const portalVertex = /* glsl */ `
   varying vec2 vUv;
@@ -72,12 +109,12 @@ const portalFragment = /* glsl */ `
 
   // An empty doorway: a plain recess with a soft "+" asking to be filled.
   vec3 emptyDoor(vec2 p) {
-    vec3 base = mix(vec3(0.07), vec3(0.9, 0.915, 0.94), uLight);
-    vec3 ink = mix(vec3(0.8), vec3(0.45, 0.5, 0.62), uLight);
+    vec3 base = mix(vec3(0.01), vec3(0.78, 0.8, 0.84), uLight);
+    vec3 ink = mix(vec3(0.55), vec3(0.4, 0.45, 0.56), uLight);
     // Shade toward the edges so it reads as depth, not a sticker.
     float edge = max(abs(p.x) * 2.0, abs(p.y) * 2.0);
     vec3 color = base * (1.0 - 0.18 * smoothstep(0.4, 1.0, edge));
-    vec2 q = vec2(p.x * 0.54, p.y);
+    vec2 q = vec2(p.x * ${(DOOR_WIDTH / DOOR_HEIGHT).toFixed(4)}, p.y);
     float bar = 0.012;
     float arm = 0.1;
     float plus = max(
@@ -131,9 +168,9 @@ const portalFragment = /* glsl */ `
     vec3 color = mix(corridor, far, uHasMap);
     // Light spilling in around the edges of the opening.
     float edge = max(abs(p.x) * 2.0, abs(p.y) * 2.0);
-    color = mix(color, vec3(1.0), smoothstep(0.82, 1.0, edge) * 0.4 * uOpen);
+    color = mix(color, uTint * 0.55, smoothstep(0.88, 1.0, edge) * 0.22 * uOpen);
     color *= 0.6 + 0.4 * uOpen;
-    color += uGlow * 0.6;
+    color += uTint * uGlow * 0.6;
 
     gl_FragColor = vec4(min(color, vec3(1.0)), 1.0);
     #include <colorspace_fragment>
@@ -166,6 +203,10 @@ export class Door {
   private cover: Texture | null = null;
   private placeholder: Texture;
   private halo: Mesh<PlaneGeometry, MeshBasicMaterial> | null = null;
+  private rays: Mesh<BufferGeometry, ShaderMaterial>[] = [];
+  private rayTime: { value: number } | null = null;
+  private rayTheme: { value: number } | null = null;
+  private rayTint: Color | null = null;
   private light: boolean;
   private entries: number | undefined;
   private disposed = false;
@@ -176,9 +217,9 @@ export class Door {
     this.light = light;
     this.group.name = random ? 'door:random' : world ? `door:${world.name}` : 'door:empty';
 
-    const tint = new Color(world?.color ?? '#ffffff');
-    // Keep the lobby monochrome-ish: only a hint of the world's colour.
-    tint.lerp(new Color(0xffffff), 0.45);
+    const tint = random
+      ? new Color(RANDOM_BLUE)
+      : new Color(world?.color ?? '#ffffff');
     const shared = {
       uTint: { value: tint },
       uTime: { value: 0 },
@@ -227,6 +268,36 @@ export class Door {
     this.portal.position.set(0, DOOR_HEIGHT / 2, -0.02);
     this.group.add(this.portal);
 
+    if (world || random) {
+      const rayTime = { value: 0 };
+      const rayTheme = { value: light ? 1 : 0 };
+      const rayPresence = { value: 1 };
+      this.rayTime = rayTime;
+      this.rayTheme = rayTheme;
+      const rayTint = tint;
+      this.rayTint = rayTint;
+      const rayHeight = DOOR_HEIGHT - RAY_CLEARANCE;
+      const farW = DOOR_WIDTH * RAY_FLARE_W;
+      const farH = rayHeight * RAY_FLARE_H;
+      const ray = new Mesh(
+        openBottomTrapeze(DOOR_WIDTH, rayHeight, farW, farH, RAY_LENGTH),
+        createGodRayMaterial({
+          length: RAY_LENGTH,
+          gain: 0.7,
+          time: rayTime,
+          theme: rayTheme,
+          presence: rayPresence,
+          tint: rayTint,
+          square: { width: farW, height: farH },
+        }),
+      );
+      ray.position.set(0, RAY_CLEARANCE + rayHeight / 2, RAY_LENGTH / 2);
+      ray.renderOrder = 2;
+      ray.frustumCulled = false;
+      this.group.add(ray);
+      this.rays.push(ray);
+    }
+
     if (random) {
       // A soft blue glow spilling around the frame.
       this.halo = createHalo();
@@ -238,7 +309,7 @@ export class Door {
       ? createLabel('Random Door', undefined, false, 'Somewhere new every time')
       : world
         ? createLabel(world.name, world.creator, false, undefined, () => this.entries)
-        : createLabel('Your world here', undefined, true);
+        : createLabel('Claim this portal', undefined, true);
     this.label = label.mesh;
     this.drawLabel = label.draw;
     // Painted on the wall above the doorway; far enough out that long names
@@ -267,9 +338,10 @@ export class Door {
   /** How many times people have gone through: shown beside the creator under the name. */
   setEntries(count: number | undefined): void {
     if (!this.world || this.random) return;
-    const next = hasEntries(count) ? count : undefined;
-    if (next === this.entries) return;
-    this.entries = next;
+    const next = Number(count);
+    const shown = Number.isFinite(next) && next >= 0 ? next : undefined;
+    if (shown === this.entries) return;
+    this.entries = shown;
     this.drawLabel(this.light);
   }
 
@@ -319,11 +391,13 @@ export class Door {
 
   update(time: number): void {
     this.portal.material.uniforms.uTime.value = time;
+    if (this.rayTime) this.rayTime.value = time;
   }
 
   setTheme(light: boolean): void {
     this.light = light;
     this.portal.material.uniforms.uLight.value = light ? 1 : 0;
+    if (this.rayTheme) this.rayTheme.value = light ? 1 : 0;
     // White doors on the black grid, ink doors on the white one.
     this.frameMaterial.color.set(light ? 0x1c1c1c : 0xf2f2f2);
     if (this.random) {
@@ -353,6 +427,10 @@ export class Door {
     this.halo?.geometry.dispose();
     this.halo?.material.map?.dispose();
     this.halo?.material.dispose();
+    for (const mesh of this.rays) {
+      mesh.geometry.dispose();
+      mesh.material.dispose();
+    }
     this.label.material.map?.dispose();
     this.label.geometry.dispose();
     this.label.material.dispose();
@@ -378,6 +456,51 @@ export class Door {
     uniforms.uFit.value = fit;
     uniforms.uHasMap.value = 1;
     this.cover = texture;
+    const sampled = colorFromCover(texture.image);
+    if (sampled) {
+      this.rayTint?.copy(sampled);
+      this.portal.material.uniforms.uTint.value.copy(sampled);
+    }
+  }
+}
+
+/** Average colour of a cover, lifted so additive shafts still read at a distance. */
+function colorFromCover(image: unknown): Color | null {
+  if (!image || typeof image !== 'object' || !('width' in image) || !('height' in image)) return null;
+  const source = image as CanvasImageSource & { width: number; height: number };
+  if (!source.width || !source.height) return null;
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = 24;
+    canvas.height = 24;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.drawImage(source, 0, 0, 24, 24);
+    const { data } = ctx.getImageData(0, 0, 24, 24);
+    let r = 0;
+    let g = 0;
+    let b = 0;
+    let weight = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      const pr = data[i] / 255;
+      const pg = data[i + 1] / 255;
+      const pb = data[i + 2] / 255;
+      const lum = 0.2126 * pr + 0.7152 * pg + 0.0722 * pb;
+      if (lum < 0.06) continue;
+      const w = 0.35 + lum;
+      r += pr * w;
+      g += pg * w;
+      b += pb * w;
+      weight += w;
+    }
+    if (weight < 1e-4) return null;
+    const color = new Color(r / weight, g / weight, b / weight);
+    const hsl = { h: 0, s: 0, l: 0 };
+    color.getHSL(hsl);
+    color.setHSL(hsl.h, Math.min(1, Math.max(0.42, hsl.s * 1.2)), Math.min(0.62, Math.max(0.4, hsl.l)));
+    return color;
+  } catch {
+    return null;
   }
 }
 
@@ -445,7 +568,7 @@ function createHalo(): Mesh<PlaneGeometry, MeshBasicMaterial> {
   return new Mesh(new PlaneGeometry(DOOR_WIDTH + 4.8, DOOR_HEIGHT + 4.8), material);
 }
 
-function createLabel(
+export function createLabel(
   name: string,
   creator?: string,
   quiet = false,
@@ -455,6 +578,9 @@ function createLabel(
   const canvas = document.createElement('canvas');
   const texture = new CanvasTexture(canvas);
   texture.colorSpace = SRGBColorSpace;
+  texture.generateMipmaps = false;
+  texture.minFilter = LinearFilter;
+  texture.magFilter = LinearFilter;
   const material = new MeshBasicMaterial({ map: texture, transparent: true, depthWrite: false });
   const mesh = new Mesh(new PlaneGeometry(1, 1), material);
   let light = false;
@@ -466,23 +592,28 @@ function createLabel(
     const subFont = '500 44px Urbanist, ui-sans-serif, system-ui, sans-serif';
     const title = name.length > 32 ? `${name.slice(0, 31)}…` : name;
     const sub = subtitle ?? (creator ? `by ${creator}`.slice(0, 48) : '');
-    const count = entries();
-    const shown = hasEntries(count);
+    const countRaw = entries();
+    const count = typeof countRaw === 'number' ? countRaw : Number(countRaw);
+    const shown = Number.isFinite(count) && count >= 0;
     // The entries count sits on the second line, after the creator.
     const iconSize = 38;
     const iconGap = 12;
     const runGap = sub ? 34 : 0;
 
     ctx.font = titleFont;
-    const titleWidth = ctx.measureText(title).width;
+    const titleLines = title.split('\n');
+    const titleWidth = Math.max(...titleLines.map((line) => ctx.measureText(line).width));
     ctx.font = subFont;
-    const subTextWidth = sub ? ctx.measureText(sub).width : 0;
-    const entriesWidth = shown ? measureEntries(ctx, count, iconSize, iconGap) : 0;
-    const subWidth = subTextWidth + (shown ? runGap + entriesWidth : 0);
+    const measuredSub = sub ? ctx.measureText(sub).width : 0;
+    const measuredEntries = shown ? measureEntries(ctx, count, iconSize, iconGap) : 0;
+    const measuredLine = measuredSub + (shown ? runGap + measuredEntries : 0);
     const secondLine = !!sub || shown;
+    const titleLine = 96;
+    const titleBlock = titleLines.length > 1 ? 40 + titleLine * titleLines.length : 120;
+    const subY = titleLines.length > 1 ? titleBlock + 32 : 152;
 
-    canvas.width = Math.ceil(Math.max(titleWidth, subWidth) + 48);
-    canvas.height = secondLine ? 170 : 120;
+    canvas.width = Math.ceil(Math.max(titleWidth, measuredLine) + 64);
+    canvas.height = Math.ceil(secondLine ? Math.max(subY + 36, 200) : titleBlock);
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.textAlign = 'center';
@@ -497,20 +628,26 @@ function createLabel(
       ctx.shadowColor = light ? 'rgba(255, 255, 255, 0.9)' : 'rgba(77, 178, 255, 0.9)';
       ctx.shadowBlur = 24;
     }
-    ctx.fillText(title, canvas.width / 2, 92);
+    titleLines.forEach((line, i) => {
+      ctx.fillText(line, canvas.width / 2, 92 + i * titleLine);
+    });
     if (secondLine) {
       ctx.font = subFont;
       const color = light ? 'rgba(0, 0, 0, 0.55)' : 'rgba(255, 255, 255, 0.55)';
       ctx.fillStyle = color;
+      ctx.shadowBlur = 8;
       ctx.textAlign = 'left';
+      const subTextWidth = sub ? ctx.measureText(sub).width : 0;
+      const entriesWidth = shown ? measureEntries(ctx, count, iconSize, iconGap) : 0;
+      const subWidth = subTextWidth + (shown ? runGap + entriesWidth : 0);
       const left = (canvas.width - subWidth) / 2;
-      if (sub) ctx.fillText(sub, left, 152);
-      if (shown) drawEntries(ctx, count, left + subTextWidth + runGap, 152, iconSize, iconGap, color);
+      if (sub) ctx.fillText(sub, left, subY);
+      if (shown) drawEntries(ctx, count, left + subTextWidth + runGap, subY, iconSize, iconGap, color);
       ctx.textAlign = 'center';
     }
 
     texture.needsUpdate = true;
-    let worldHeight = quiet ? 0.62 : secondLine ? 1.15 : 0.82;
+    let worldHeight = quiet ? (titleLines.length > 2 ? 1.55 : titleLines.length > 1 ? 1.2 : 0.62) : secondLine ? 1.15 : 0.82;
     // Long names shrink rather than run into the next door's label.
     worldHeight = Math.min(worldHeight, (MAX_LABEL_WIDTH * canvas.height) / canvas.width);
     mesh.scale.set((canvas.width / canvas.height) * worldHeight, worldHeight, 1);

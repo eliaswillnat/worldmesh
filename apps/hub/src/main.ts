@@ -30,7 +30,8 @@ import communityWorldsStatic from './community.json';
 import { AD_CONFIG } from './ads/config';
 import { entryIconSvg, formatEntries, hasEntries } from './entries';
 
-const VIEWS_ENDPOINT = import.meta.env.VITE_VIEWS_ENDPOINT as string | undefined;
+const VIEWS_ENDPOINT = (import.meta.env.VITE_VIEWS_ENDPOINT as string | undefined)
+  || (import.meta.env.DEV ? 'https://worldmesh-views.elias-willnat.workers.dev' : '/api/views');
 const viewCounts: Record<string, number> = {};
 const sessionViewed = new Map<string, number>();
 const COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes
@@ -532,7 +533,10 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
       // Lifetime visits, for ranking in the towers (see discovery/ranking.ts).
       signals: { signals: (world) => ({ views: viewCounts[world.url] }) },
       // The same counter, shown beside each door as "entries".
-      entries: (url) => viewCounts[url],
+      entries: (url) => {
+        const count = viewCounts[url];
+        return typeof count === 'number' ? count : undefined;
+      },
     });
     applyWalkTheme();
     mountPauseActions();
@@ -540,7 +544,7 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
     walkColor = color && WALK_COLORS.includes(color) ? color : WALK_COLORS[0];
     showWalkColor(walkColor);
     history.replaceState(null, '', '#walk');
-    setWalkToggleLabel('Back to the gallery');
+    setWalkToggleLabel('Go to Gallery');
   } catch (error) {
     console.error('Walk mode failed to start', error);
     // Walk mode is unlisted for now: fail quietly back to the list.
@@ -682,9 +686,9 @@ function askWalk(title: string, body: string, okLabel: string): Promise<boolean>
 async function confirmLeaveWalk(): Promise<void> {
   if (!walkRoot) return;
   const yes = await askWalk(
-    'Back to the gallery?',
+    'Go to Gallery?',
     'You will leave the lobby and return to the list of worlds.',
-    'Go to the gallery',
+    'Go to Gallery',
   );
   if (yes) exitWalkMode();
 }
@@ -712,7 +716,7 @@ function mountPauseActions(): void {
   const gallery = document.createElement('button');
   gallery.type = 'button';
   gallery.className = 'walk-gallery';
-  gallery.textContent = 'Back to the gallery';
+  gallery.textContent = 'Go to Gallery';
 
   const discord = document.createElement('a');
   discord.className = 'walk-discord';
@@ -1153,7 +1157,7 @@ function trackClick(url: string): void {
   if (last && Date.now() - last < COOLDOWN_MS) return;
   sessionViewed.set(url, Date.now());
 
-  const endpoint = VIEWS_ENDPOINT || '/api/views';
+  const endpoint = VIEWS_ENDPOINT;
   fetch(`${endpoint}/view`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1173,7 +1177,7 @@ function trackClick(url: string): void {
 
 async function fetchViewCounts(urls: string[]): Promise<void> {
   if (urls.length === 0) return;
-  const endpoint = VIEWS_ENDPOINT || '/api/views';
+  const endpoint = VIEWS_ENDPOINT;
   try {
     const res = await fetch(`${endpoint}/views?urls=${encodeURIComponent(urls.join(','))}`);
     const counts = (await res.json()) as Record<string, number>;
