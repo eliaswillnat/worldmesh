@@ -496,12 +496,18 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
       color,
       ads: adsEnabled(),
       onPresenceCount: (count) => {
+        const prev = walkOnline.dataset.count != null ? Number(walkOnline.dataset.count) : null;
         if (count === null) {
           delete walkOnline.dataset.count;
           walkOnline.textContent = '';
         } else {
           walkOnline.dataset.count = String(count);
           walkOnline.textContent = `${count} online`;
+          if (prev !== null && count > prev) {
+            walkOnline.classList.remove('glow');
+            void walkOnline.offsetWidth;
+            walkOnline.classList.add('glow');
+          }
         }
       },
       onEnterWorld: (world, returnTo) => {
