@@ -29,8 +29,8 @@ export interface DoorWorld {
 }
 
 /** Size of the doorway opening, in metres: 3:4 portrait, like the covers. */
-const DOOR_WIDTH = 2.1;
-const DOOR_HEIGHT = 2.8;
+const DOOR_WIDTH = 4.2;
+const DOOR_HEIGHT = 5.6;
 /** Frame thickness and depth. */
 const FRAME = 0.16;
 const DEPTH = 0.32;
@@ -46,7 +46,7 @@ export const DOOR_HALF_SPAN = DOOR_WIDTH / 2 + FRAME;
 /** Top of the frame, where the wall closes over the doorway. */
 export const DOOR_TOP = DOOR_HEIGHT + FRAME;
 /** Widest a name above a door may get, so neighbouring labels never touch. */
-const MAX_LABEL_WIDTH = 3.3;
+const MAX_LABEL_WIDTH = 4;
 
 const portalVertex = /* glsl */ `
   varying vec2 vUv;
@@ -243,9 +243,9 @@ export class Door {
     this.drawLabel = label.draw;
     // Painted on the wall above the doorway; far enough out that long names
     // clear the wall's curve.
-    this.label.position.set(0, DOOR_HEIGHT + FRAME + 0.6, 0.25);
+    this.label.position.set(0, DOOR_HEIGHT + FRAME + 1.2, 0.25);
     // The random door has a porch canopy over it: sit its name on top.
-    if (random) this.label.position.set(0, DOOR_HEIGHT + FRAME + 1.55, 0.3);
+    if (random) this.label.position.set(0, DOOR_HEIGHT + FRAME + 3.1, 0.3);
     this.group.add(this.label);
 
     this.setTheme(light);
@@ -442,7 +442,7 @@ function createHalo(): Mesh<PlaneGeometry, MeshBasicMaterial> {
     side: DoubleSide,
     fog: false,
   });
-  return new Mesh(new PlaneGeometry(DOOR_WIDTH + 2.4, DOOR_HEIGHT + 2.4), material);
+  return new Mesh(new PlaneGeometry(DOOR_WIDTH + 4.8, DOOR_HEIGHT + 4.8), material);
 }
 
 function createLabel(
@@ -510,7 +510,7 @@ function createLabel(
     }
 
     texture.needsUpdate = true;
-    let worldHeight = quiet ? 0.5 : secondLine ? 0.95 : 0.67;
+    let worldHeight = quiet ? 0.62 : secondLine ? 1.15 : 0.82;
     // Long names shrink rather than run into the next door's label.
     worldHeight = Math.min(worldHeight, (MAX_LABEL_WIDTH * canvas.height) / canvas.width);
     mesh.scale.set((canvas.width / canvas.height) * worldHeight, worldHeight, 1);
