@@ -19,7 +19,7 @@ export interface PresenceOptions {
    * for the people already in the room when this visitor joins.
    */
   onArrive?: (x: number, z: number) => void;
-  /** Called with each remote figure as it is made, e.g. to add a theme's outline. */
+  /** Called with each remote figure as it is made, e.g. to add an outline. */
   onFigure?: (root: Object3D) => void;
 }
 
@@ -154,11 +154,6 @@ export class Presence implements NetworkAdapter {
         setFigureOpacity(remote.root, t * t * (3 - 2 * t));
       }
     }
-  }
-
-  /** Every remote figure currently shown, e.g. to restyle them when the theme changes. */
-  forEachFigure(callback: (root: Object3D) => void): void {
-    for (const remote of this.remotes.values()) callback(remote.root);
   }
 
   /**

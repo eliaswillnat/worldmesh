@@ -449,8 +449,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         onArrive: (x, z) => {
           if (Math.hypot(x - SPAWN[0], z - SPAWN[2]) < ARRIVE_RADIUS) spawnRay.trigger();
         },
-        // Other people get the same ink outline as your own figure in the light theme.
-        onFigure: (root) => setFigureStroke(root, light),
+        // Other people get the same ink outline as your own figure.
+        onFigure: (root) => setFigureStroke(root, true),
       })
     : undefined;
 
@@ -604,7 +604,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       placeChatBubble();
     },
   });
-  setFigureStroke(world.avatar, light);
+  setFigureStroke(world.avatar, true);
   if (alias) ghost = makeGhost(world.avatar);
 
   // Chat is a bubble over your head. Enter opens it, Enter sends it, then it
@@ -1117,8 +1117,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     applyTheme();
     for (const door of [...doors.values(), ...emptyDoors, randomDoor]) door.setTheme(light);
     towerCity.setTheme(light);
-    setFigureStroke(world.avatar, light);
-    presence?.forEachFigure((root) => setFigureStroke(root, light));
   }
 
   function applyTheme(): void {
@@ -1851,7 +1849,7 @@ function makeGhost(root: Object3D | null): Ghost | null {
           ? Math.min(1, opacity * 1.8)
           : opacity;
     }
-    // A stroke added after the ghost was made (the light theme turning on) is not in `saved`.
+    // A stroke added after the ghost was made is not in `saved`.
     root.traverse((child) => {
       if (!(child instanceof Mesh) || !isStrokeMaterial(child.material as Material)) return;
       const material = child.material as Material;
