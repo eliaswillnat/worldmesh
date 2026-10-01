@@ -36,6 +36,8 @@
     "url": "https://threejscafe.com",
     "description": "An always-open virtual café where you can explore arcade games, prototypes and a robot arena in a rainy Three.js world.",
     "cover": "/covers/threejs-cafe.webp",
+    "creator": "Murat",
+    "portfolio": "https://x.com/mkcuriosity",
     "addedAt": "2026-10-01T12:00:00Z",
     "categories": ["explore"]
   }
