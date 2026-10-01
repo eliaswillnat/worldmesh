@@ -67,6 +67,11 @@ export class Presence implements NetworkAdapter {
     private getName: () => string | null = () => null,
     /** Made-up name shown instead of the username in private mode. */
     private getAlias: () => string | null = () => null,
+    /**
+     * Someone new just started walking here, first seen at (x, z). Not called
+     * for the people already in the room when this visitor joins.
+     */
+    private onArrive: (x: number, z: number) => void = () => {},
   ) {
     this.group.name = 'worldmesh:remote-players';
     scene.add(this.group);
@@ -258,6 +263,7 @@ export class Presence implements NetworkAdapter {
       remote = { root, target: new Vector3(), targetYaw: yaw, yaw, speed: 0, label: GUEST, tag, appear: 0, bubble: null, bubbleLeft: 0 };
       this.remotes.set(id, remote);
       setFigureOpacity(root, 0);
+      if (!snap) this.onArrive(p[0], p[2]);
       snap = true;
     }
     remote.target.set(p[0], p[1], p[2]);
