@@ -51,6 +51,7 @@ export type {
   MovementTuning,
   MultiplayerOptions,
   NetworkAdapter,
+  PeerBody,
   PlayerOptions,
   PlayerState,
   PortalMode,

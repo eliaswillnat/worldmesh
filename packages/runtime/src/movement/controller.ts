@@ -1,6 +1,6 @@
 import { Vector3 } from 'three';
 import type { Input } from '../controls/input.js';
-import type { Abilities, MovementTuning } from '../types.js';
+import type { Abilities, MovementTuning, PeerBody } from '../types.js';
 import type { CollisionWorld } from './collision.js';
 
 export const DEFAULT_TUNING: MovementTuning = {
@@ -17,6 +17,13 @@ export const DEFAULT_TUNING: MovementTuning = {
   maxFallSpeed: 55,
   fallLimit: -60,
 };
+
+/**
+ * How fast two people who start out inside each other (both arriving at the
+ * spawn point, say) drift apart, in m/s. Slow, so it reads as making room
+ * rather than a shove.
+ */
+const SEPARATE_SPEED = 1.5;
 
 export interface ControllerOptions {
   input: Input;
@@ -42,6 +49,8 @@ export class MovementController {
   flying = false;
   /** Current standing height, shrinks while crouching. */
   currentHeight: number;
+  /** Other people's bodies, which this player walks into rather than through. */
+  bodies: (() => Iterable<PeerBody>) | null = null;
 
   readonly tuning: MovementTuning;
 
@@ -197,18 +206,26 @@ export class MovementController {
 
   private applyMotion(dt: number): void {
     const horizontal = this.scratch.set(this.velocity.x * dt, 0, this.velocity.z * dt);
-    const resolved = this.collision.resolveHorizontal(
+    let resolved = this.collision.resolveHorizontal(
       this.position,
       horizontal,
       this.radius,
       this.currentHeight,
     );
+    const walked = resolved.clone();
+    const apart = this.keepApart(resolved, dt);
+    // Stepping round someone can lead into a wall, so check the walls again.
+    if (apart !== 'clear') {
+      resolved = this.collision.resolveHorizontal(this.position, resolved, this.radius, this.currentHeight);
+    }
 
     // Feed the resolved slide back into velocity so we do not keep pushing
-    // into a wall and accelerating along it.
+    // into a wall and accelerating along it. Drifting out of someone is not
+    // walking, so it does not carry on once clear of them.
     if (dt > 0) {
-      this.velocity.x = resolved.x / dt;
-      this.velocity.z = resolved.z / dt;
+      const moved = apart === 'separating' ? walked : resolved;
+      this.velocity.x = moved.x / dt;
+      this.velocity.z = moved.z / dt;
     }
     this.position.x += resolved.x;
     this.position.z += resolved.z;
@@ -244,5 +261,42 @@ export class MovementController {
     } else {
       this.onGround = false;
     }
+  }
+
+  /**
+   * Bend this step's horizontal `move` so the player does not end up inside
+   * anyone else. Walking into someone stops at their edge and slides round
+   * them; already overlapping, the gap may only grow. Says whether `move`
+   * changed, and whether that includes drifting out of someone.
+   */
+  private keepApart(move: Vector3, dt: number): 'clear' | 'blocked' | 'separating' {
+    if (!this.bodies) return 'clear';
+    const { x, y, z } = this.position;
+    let result: 'clear' | 'blocked' | 'separating' = 'clear';
+    for (const body of this.bodies()) {
+      // Only bodies at the same height block: jumping over someone is fine.
+      if (body.y >= y + this.currentHeight || y >= body.y + body.height) continue;
+      const reach = this.radius + body.radius;
+      const nowX = x - body.x;
+      const nowZ = z - body.z;
+      const now = Math.hypot(nowX, nowZ);
+      if (now >= reach + Math.hypot(move.x, move.z)) continue;
+      let awayX = nowX + move.x;
+      let awayZ = nowZ + move.z;
+      const next = Math.hypot(awayX, awayZ);
+      const floor = Math.min(reach, now + SEPARATE_SPEED * dt);
+      if (next >= floor) continue;
+      if (next < 1e-4) {
+        // Heading straight through their middle: step back the way we came, or any way at all.
+        awayX = now > 1e-4 ? nowX : 1;
+        awayZ = now > 1e-4 ? nowZ : 0;
+      }
+      // End the step `floor` away from them, in the direction we were headed.
+      const away = Math.hypot(awayX, awayZ);
+      move.x = (awayX / away) * floor - nowX;
+      move.z = (awayZ / away) * floor - nowZ;
+      if (result !== 'separating') result = now < reach ? 'separating' : 'blocked';
+    }
+    return result;
   }
 }

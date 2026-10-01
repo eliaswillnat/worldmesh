@@ -151,6 +151,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
 
   const network = options.network ?? createMultiplayer();
   network?.attach(handle);
+  if (network?.bodies) controller.bodies = () => network.bodies!();
 
   startAvatar();
 

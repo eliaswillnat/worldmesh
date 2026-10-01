@@ -15,9 +15,9 @@ import { DurableObject } from 'cloudflare:workers';
  * visitors of the same space see each other.
  *
  * Protocol (JSON text frames):
- *   server → client  { t: 'welcome', id, peers: [{ id, p, r, e, n, a }] }
- *   client → server  { t: 's', p: [x, y, z], r: yaw, e?: expression, n?: username, a?: alias }
- *   server → client  { t: 's', id, p, r, e, n, a }   another peer moved ('' n and a = guest)
+ *   server → client  { t: 'welcome', id, peers: [{ id, p, r, e, n, a, g }] }
+ *   client → server  { t: 's', p: [x, y, z], r: yaw, e?: expression, n?: username, a?: alias, g?: grounded }
+ *   server → client  { t: 's', id, p, r, e, n, a, g? }   another peer moved ('' n and a = guest; g 1 on the ground, 0 in the air)
  *   client → server  { t: 'c', m }             a short line of chat
  *   server → client  { t: 'c', id, m }         that line, for everyone else
  *   server → client  { t: 'leave', id }        another peer left
@@ -43,6 +43,8 @@ interface Peer {
    * 'Quiet Fox'. Never an account name: clients draw it without an '@'.
    */
   a: string;
+  /** 1 standing on something, 0 in the air; absent from clients too old to say. */
+  g?: 0 | 1;
   /** False until the peer has sent its first position. */
   seen: boolean;
   /** Last time this peer sent a chat line, so they cannot flood the room. */
@@ -123,7 +125,7 @@ export class Room extends DurableObject<Env> {
     const peers = sockets
       .map((ws) => ws.deserializeAttachment() as Peer | null)
       .filter((other): other is Peer => !!other?.seen)
-      .map(({ id, p, r, e, n, a }) => ({ id, p, r, e, n: n ?? '', a: a ?? '' }));
+      .map(({ id, p, r, e, n, a, g }) => ({ id, p, r, e, n: n ?? '', a: a ?? '', g }));
     server.send(JSON.stringify({ t: 'welcome', id: peer.id, peers }));
 
     return new Response(null, { status: 101, webSocket: client });
@@ -132,7 +134,7 @@ export class Room extends DurableObject<Env> {
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     if (typeof message !== 'string' || message.length > MAX_MESSAGE_BYTES) return;
 
-    let data: { t?: unknown; p?: unknown; r?: unknown; e?: unknown; n?: unknown; a?: unknown; m?: unknown };
+    let data: { t?: unknown; p?: unknown; r?: unknown; e?: unknown; n?: unknown; a?: unknown; g?: unknown; m?: unknown };
     try {
       data = JSON.parse(message);
     } catch {
@@ -163,10 +165,11 @@ export class Room extends DurableObject<Env> {
     if (typeof data.e === 'string' && EXPRESSION.test(data.e)) peer.e = data.e;
     if (typeof data.n === 'string') peer.n = USERNAME.test(data.n) ? data.n : '';
     peer.a = typeof data.a === 'string' && ALIAS.test(data.a) ? data.a : '';
+    peer.g = data.g === 0 || data.g === 1 ? data.g : undefined;
     peer.seen = true;
     ws.serializeAttachment(peer);
 
-    this.broadcast(JSON.stringify({ t: 's', id: peer.id, p: peer.p, r: peer.r, e: peer.e, n: peer.n ?? '', a: peer.a ?? '' }), ws);
+    this.broadcast(JSON.stringify({ t: 's', id: peer.id, p: peer.p, r: peer.r, e: peer.e, n: peer.n ?? '', a: peer.a ?? '', g: peer.g }), ws);
   }
 
   async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {

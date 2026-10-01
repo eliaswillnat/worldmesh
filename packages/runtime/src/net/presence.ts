@@ -1,6 +1,6 @@
 import { CanvasTexture, Group, Mesh, MeshBasicMaterial, Sprite, SpriteMaterial, Vector3, type Object3D, type Scene } from 'three';
 import { animateDefaultAvatar, createDefaultAvatar, setAvatarExpression } from '../player/avatar.js';
-import type { NetworkAdapter, PlayerState, WorldMeshHandle } from '../types.js';
+import type { NetworkAdapter, PeerBody, PlayerState, WorldMeshHandle } from '../types.js';
 
 /** The relay WorldMesh hosts (workers/presence). Worlds can point at their own. */
 export const DEFAULT_PRESENCE_SERVER = 'wss://worldmesh-presence.elias-willnat.workers.dev';
@@ -36,6 +36,8 @@ interface Remote {
   yaw: number;
   /** Smoothed horizontal speed, estimated from how far the avatar moves. */
   speed: number;
+  /** Standing on something (floor, platform, step) rather than in the air. */
+  grounded: boolean;
   /** Text currently drawn on the tag. */
   label: string;
   tag: Sprite;
@@ -46,12 +48,32 @@ interface Remote {
   bubbleLeft: number;
 }
 
+/**
+ * For peers that do not send `g`: a height change smaller than this between
+ * two updates is standing, not jumping or falling.
+ */
+const GROUND_HOLD = 0.02;
+
+/** The size of a remote figure for collisions: the default player's. */
+const BODY_RADIUS = 0.35;
+const BODY_HEIGHT = 1.8;
+
 /** Height of the name tag's centre above the avatar's feet. */
 const TAG_HEIGHT = 2.15;
 
+/** Where a peer is. `g` is 1 on the ground, 0 in the air; older peers leave it out. */
+interface PeerState {
+  p: [number, number, number];
+  r: number;
+  e?: string;
+  n?: string;
+  a?: string;
+  g?: number;
+}
+
 type ServerMessage =
-  | { t: 'welcome'; id: string; peers: { id: string; p: [number, number, number]; r: number; e?: string; n?: string; a?: string }[] }
-  | { t: 's'; id: string; p: [number, number, number]; r: number; e?: string; n?: string; a?: string }
+  | { t: 'welcome'; id: string; peers: (PeerState & { id: string })[] }
+  | ({ t: 's'; id: string } & PeerState)
   | { t: 'c'; id: string; m: string }
   | { t: 'leave'; id: string };
 
@@ -108,7 +130,7 @@ export class Presence implements NetworkAdapter {
     if (now - this.lastSent < 1000 / SEND_RATE) return;
 
     const [x, y, z] = state.position;
-    const payload = JSON.stringify({ t: 's', p: [round(x), round(y), round(z)], r: round(state.facing), e: state.expression, n: this.getName() ?? '', a: this.getAlias() ?? '' });
+    const payload = JSON.stringify({ t: 's', p: [round(x), round(y), round(z)], r: round(state.facing), e: state.expression, n: this.getName() ?? '', a: this.getAlias() ?? '', g: state.onGround || state.flying ? 1 : 0 });
     if (payload === this.lastPayload && now - this.lastSent < HEARTBEAT_MS) return;
 
     socket.send(payload);
@@ -122,6 +144,16 @@ export class Presence implements NetworkAdapter {
     const line = text.replace(/[\u0000-\u001f]/g, '').trim().slice(0, 80);
     if (!line || !socket || socket.readyState !== WebSocket.OPEN) return;
     socket.send(JSON.stringify({ t: 'c', m: line }));
+  }
+
+  /** Everyone else's body where it is drawn, so walking into them stops where they appear to be. */
+  bodies(): PeerBody[] {
+    const bodies: PeerBody[] = [];
+    for (const { root } of this.remotes.values()) {
+      const { x, y, z } = root.position;
+      bodies.push({ x, y, z, radius: BODY_RADIUS, height: BODY_HEIGHT });
+    }
+    return bodies;
   }
 
   /** Ease remote avatars toward their last known position. Driven by the world's update event. */
@@ -138,7 +170,7 @@ export class Presence implements NetworkAdapter {
 
       const moved = Math.hypot(remote.root.position.x - before.x, remote.root.position.z - before.z);
       remote.speed += (moved / Math.max(dt, 1e-4) - remote.speed) * blend;
-      animateDefaultAvatar(remote.root, { dt, speed: remote.speed, grounded: remote.root.position.y < 0.05 });
+      animateDefaultAvatar(remote.root, { dt, speed: remote.speed, grounded: remote.grounded });
 
       if (remote.bubble) {
         remote.bubbleLeft -= dt;
@@ -234,10 +266,10 @@ export class Presence implements NetworkAdapter {
         this.backoff = 1000;
         this.lastPayload = '';
         this.lastSent = 0;
-        for (const peer of message.peers) this.upsert(peer.id, peer.p, peer.r, peer.e, nameLabel(peer.n, peer.a), true);
+        for (const peer of message.peers) this.upsert(peer.id, peer, true);
         break;
       case 's':
-        if (message.id !== this.selfId) this.upsert(message.id, message.p, message.r, message.e, nameLabel(message.n, message.a), false);
+        if (message.id !== this.selfId) this.upsert(message.id, message, false);
         break;
       case 'c': {
         const remote = message.id === this.selfId ? undefined : this.remotes.get(message.id);
@@ -254,15 +286,10 @@ export class Presence implements NetworkAdapter {
     this.onCount(this.remotes.size + 1);
   }
 
-  private upsert(
-    id: string,
-    p: [number, number, number],
-    yaw: number,
-    expression: unknown,
-    label: string,
-    snap: boolean,
-  ): void {
+  private upsert(id: string, state: PeerState, snap: boolean): void {
+    const { p, r: yaw, e: expression, g } = state;
     if (!Array.isArray(p) || p.length !== 3 || !p.every(Number.isFinite) || !Number.isFinite(yaw)) return;
+    const label = nameLabel(state.n, state.a);
 
     let remote = this.remotes.get(id);
     if (!remote) {
@@ -272,12 +299,16 @@ export class Presence implements NetworkAdapter {
       root.add(tag);
       this.onFigure(root);
       this.group.add(root);
-      remote = { root, target: new Vector3(), targetYaw: yaw, yaw, speed: 0, label: GUEST, tag, appear: 0, bubble: null, bubbleLeft: 0 };
+      remote = { root, target: new Vector3(p[0], p[1], p[2]), targetYaw: yaw, yaw, speed: 0, grounded: true, label: GUEST, tag, appear: 0, bubble: null, bubbleLeft: 0 };
       this.remotes.set(id, remote);
       setFigureOpacity(root, 0);
       if (!snap) this.onArrive(p[0], p[2]);
       snap = true;
     }
+    // Peers that do not say whether they are grounded count as standing when
+    // their height holds still, so a raised floor like the spawn platform
+    // does not leave them in the jump pose.
+    remote.grounded = g === 0 || g === 1 ? g === 1 : p[1] < 0.05 || Math.abs(p[1] - remote.target.y) < GROUND_HOLD;
     remote.target.set(p[0], p[1], p[2]);
     remote.targetYaw = yaw;
     if (typeof expression === 'string') setAvatarExpression(remote.root, expression);
