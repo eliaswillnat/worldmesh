@@ -182,6 +182,20 @@ export class Room extends DurableObject<Env> {
     this.leave(ws);
   }
 
+  /**
+   * Who is here right now, for the admin dashboard (workers/admin binds this
+   * namespace and calls it over RPC; nothing public can reach it). The same
+   * fields every peer in the room already receives, nothing more.
+   */
+  async stats(): Promise<{ connections: number; peers: { id: string; name: string; alias: string; position: [number, number, number] }[] }> {
+    const sockets = this.ctx.getWebSockets();
+    const peers = sockets
+      .map((ws) => ws.deserializeAttachment() as Peer | null)
+      .filter((peer): peer is Peer => !!peer?.seen)
+      .map((peer) => ({ id: peer.id, name: peer.n ?? '', alias: peer.a ?? '', position: peer.p }));
+    return { connections: sockets.length, peers };
+  }
+
   /** Tell the owner on Telegram that someone started walking in this room. */
   private async notifyEntered(): Promise<void> {
     const { TELEGRAM_BOT_TOKEN: token, TELEGRAM_CHAT_ID: chatId } = this.env;

@@ -1,0 +1,16 @@
+# Only used by tests: in-memory D1 and KV for test/admin.test.ts.
+name = "worldmesh-admin-test"
+compatibility_date = "2026-09-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "worldmesh-test"
+database_id = "00000000-0000-0000-0000-000000000000"
+
+[[kv_namespaces]]
+binding = "WORLDS"
+id = "00000000000000000000000000000001"
+
+[[kv_namespaces]]
+binding = "VIEWS"
+id = "00000000000000000000000000000002"

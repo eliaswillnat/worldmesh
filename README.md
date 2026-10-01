@@ -54,6 +54,7 @@ worldmesh/
 │   ├── auth/           accounts: Better Auth + D1 (Google, Apple, GitHub, Discord)
 │   ├── federation/     WebFinger + ActivityPub for creators
 │   ├── ads/            paid billboard ads in walk mode: uploads, Stripe, moderation
+│   ├── admin/          admin.worldmesh.net: read-only dashboard over everything
 │   └── …               presence, views, screenshot, notify
 ├── db/migrations/      the D1 schema both of them share
 ├── apps/
@@ -128,6 +129,7 @@ reference and [docs/controls.md](docs/controls.md) for the control convention.
 - [Accounts and federation](docs/accounts-and-federation.md) — login, D1, ActivityPub
 - [Tower city](docs/tower-city.md) — walk mode's towers, doors, rotation and ranking
 - [Billboard advertising](docs/advertising.md) — paid, reviewed ads on walk mode's screens
+- [Admin dashboard](docs/admin.md) — admin.worldmesh.net: users, worlds, live, ads, traffic, health
 - [Publishing](docs/publishing.md) — how the runtime is built and versioned
 - [Roadmap](docs/roadmap.md) — what is deliberately not built yet
 

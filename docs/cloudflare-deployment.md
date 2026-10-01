@@ -147,3 +147,11 @@ secret names).
 the same D1 database, a private R2 bucket (`worldmesh-ads`), Stripe and
 Resend. Bucket, migration, Stripe webhook, secrets and admin accounts are in
 [advertising.md](advertising.md#setup-production).
+
+---
+
+## 8. Admin dashboard
+
+`workers/admin` serves `admin.worldmesh.net` (a Custom Domain) and one hand-off
+path on the hub's hostname (`/api/dashboard/*`). It reads D1, the hub's `WORLDS`
+KV, the `VIEWS` KV and the presence rooms. Setup in [admin.md](admin.md#deploy).
