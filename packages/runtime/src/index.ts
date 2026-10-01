@@ -36,6 +36,8 @@ export { loadAvatarModel } from './avatar/loader.js';
 export type { LoadAvatarOptions, LoadedAvatar } from './avatar/loader.js';
 export { Overlay } from './ui/overlay.js';
 export { deserializePlayerState, serializePlayerState } from './net/adapter.js';
+export { DEFAULT_PRESENCE_SERVER, Presence } from './net/presence.js';
+export type { PresenceOptions } from './net/presence.js';
 
 export const WORLDMESH_VERSION = '0.1.0';
 /** Bumped when the world-facing contract changes in an incompatible way. */
@@ -47,6 +49,7 @@ export type {
   InputAction,
   Keymap,
   MovementTuning,
+  MultiplayerOptions,
   NetworkAdapter,
   PlayerOptions,
   PlayerState,

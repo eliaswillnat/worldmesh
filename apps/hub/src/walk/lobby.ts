@@ -1,4 +1,4 @@
-import { AVATAR_TICKET_PARAM, buildTravelUrl, createWorldMesh, setAvatarAppear, setAvatarColor, type Vec3Tuple } from '@worldmesh/runtime';
+import { AVATAR_TICKET_PARAM, buildTravelUrl, createWorldMesh, Presence, setAvatarAppear, setAvatarColor, type Vec3Tuple } from '@worldmesh/runtime';
 import {
   BoxGeometry,
   CircleGeometry,
@@ -29,7 +29,6 @@ import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { CITY_GLOW_WHITE, applyCityTheme, applySkyTheme, createBeamRefraction, createCityMaterials, createSky, createSpawnRay, flipInside, skyHorizon } from './city';
 import { isStrokeMaterial, setFigureStroke, setStrokeOpacity } from './stroke';
-import { Presence } from './presence';
 import { DOOR_HALF_SPAN, DOOR_TOP, Door, type DoorWorld } from './door';
 import { ImageCropper } from '../cropper';
 import { describeBillboard } from './layout';
@@ -439,19 +438,18 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   /** Lobby clock when the local figure started fading in; negative = idle. */
   let appearStarted = Number.NEGATIVE_INFINITY;
   const presence = options.presenceEndpoint
-    ? new Presence(
-        options.presenceEndpoint,
-        'lobby',
+    ? new Presence({
+        url: `${options.presenceEndpoint.replace(/\/$/, '')}/room/lobby`,
         scene,
-        (count) => options.onPresenceCount?.(count),
-        () => (alias ? null : options.playerName?.() ?? null),
-        () => alias,
+        onCount: (count) => options.onPresenceCount?.(count),
+        getName: () => (alias ? null : options.playerName?.() ?? null),
+        getAlias: () => alias,
         // Someone else entering lights the same beam for everyone watching.
         // Visitors coming back out of a world appear at a door, not here.
-        (x, z) => {
+        onArrive: (x, z) => {
           if (Math.hypot(x - SPAWN[0], z - SPAWN[2]) < ARRIVE_RADIUS) spawnRay.trigger();
         },
-      )
+      })
     : undefined;
 
   // The citadel's walls (solid) and trim (just for looks). Rebuilt whenever
@@ -601,12 +599,10 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       plainFloor.visible = !mirror.visible;
       plainFloor.position.x = mirror.position.x;
       plainFloor.position.z = mirror.position.z;
-      presence?.update(dt);
       placeChatBubble();
     },
   });
   setFigureStroke(world.avatar, light);
-  presence?.setStroke(light);
   if (alias) ghost = makeGhost(world.avatar);
 
   // Chat is a bubble over your head. Enter opens it, Enter sends it, then it
@@ -1120,7 +1116,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     for (const door of [...doors.values(), ...emptyDoors, randomDoor]) door.setTheme(light);
     towerCity.setTheme(light);
     setFigureStroke(world.avatar, light);
-    presence?.setStroke(light);
   }
 
   function applyTheme(): void {

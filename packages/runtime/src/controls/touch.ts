@@ -198,6 +198,11 @@ export class TouchControls {
     menuBtn.addEventListener('pointerdown', (e) => {
       e.stopPropagation();
       e.preventDefault();
+    });
+    // Open on click, not pointerdown: opening hides this button, and the tap's
+    // click would then land on the pause screen and resume straight away.
+    menuBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
       this.onExit?.();
     });
     this.root.appendChild(menuBtn);

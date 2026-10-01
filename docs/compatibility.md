@@ -47,6 +47,7 @@ overlay, gravity, jumping and respawning.
 | `view` | `{ mode: 'first', distance: 5 }` | Starting camera mode, boom length, mouse sensitivity, initial `yaw`/`pitch`. |
 | `movement` | see `DEFAULT_TUNING` | `gravity`, `walkSpeed`, `jumpSpeed`, `fallLimit`, … |
 | `keymap` | the convention | Add bindings; do not move the core row. |
+| `multiplayer` | off | `true` shows everyone else in your world through the relay WorldMesh hosts; `{ server: 'wss://…' }` uses your own. See below. |
 | `ui` | all on | `title`, `hubUrl`, `crosshair`, `badge`, `controlsHint`. |
 | `autoStart` | `true` | `false` if you drive your own loop. |
 | `autoResize` | `true` | `false` if the canvas is not full-window. |
@@ -97,6 +98,33 @@ world.on('portal:activate', (event) => {
 });
 ```
 
+## Multiplayer
+
+```js
+createWorldMesh({ scene, camera, renderer, multiplayer: true });
+```
+
+Everyone on your world's page sees everyone else as a figure that walks,
+turns and pulls faces. Visitors are anonymous guests. Positions go through a
+small relay (`workers/presence`): the relay passes them along and stores
+nothing.
+
+- **One room per world.** The relay picks the room from the page's origin
+  (`https://forest.example`), so there is nothing to register and another
+  site cannot join your room from a browser. Different pages on the same
+  origin share one room.
+- **Up to 16 people per world** on the hosted relay. Visitors past that play
+  single-player and retry in the background.
+- **Your own relay.** Deploy `workers/presence` to your own Cloudflare
+  account and pass `multiplayer: { server: 'wss://your-relay.example' }`. The
+  traffic and cost are then yours, and you can raise the limit.
+- **Offline is fine.** If the relay cannot be reached the world stays
+  single-player.
+
+`world.on('players', ({ count }) => …)` reports how many people are in the
+room, including the visitor (`null` while disconnected). To network the world
+some other way, pass your own `NetworkAdapter` as `network`.
+
 ## The handle
 
 `createWorldMesh` returns:
@@ -120,7 +148,7 @@ world.dispose()
 
 Events: `update`, `portal:enter`, `portal:exit`, `portal:activate`,
 `view:change`, `pointer:lock`, `interact`, `respawn`, `avatar:load`,
-`avatar:error`.
+`avatar:error`, `players`.
 
 ## The manifest
 
@@ -147,5 +175,5 @@ be able to read it.
 ## What compatibility does *not* require
 
 No WorldMesh account. No build plugin. No asset upload. No SDK beyond one
-import. No server. Your world stays entirely on your hosting, and removing the
+import. No server, not even for multiplayer. Your world stays entirely on your hosting, and removing the
 `createWorldMesh` call leaves you with the Three.js project you started with.

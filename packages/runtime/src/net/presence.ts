@@ -1,13 +1,25 @@
-import {
-  animateDefaultAvatar,
-  createDefaultAvatar,
-  setAvatarExpression,
-  type NetworkAdapter,
-  type PlayerState,
-  type WorldMeshHandle,
-} from '@worldmesh/runtime';
-import { CanvasTexture, Group, Mesh, MeshBasicMaterial, Sprite, SpriteMaterial, Vector3, type Material, type Object3D, type Scene } from 'three';
-import { isStrokeMaterial, setFigureStroke } from './stroke';
+import { CanvasTexture, Group, Mesh, MeshBasicMaterial, Sprite, SpriteMaterial, Vector3, type Object3D, type Scene } from 'three';
+import { animateDefaultAvatar, createDefaultAvatar, setAvatarExpression } from '../player/avatar.js';
+import type { NetworkAdapter, PlayerState, WorldMeshHandle } from '../types.js';
+
+/** The relay WorldMesh hosts (workers/presence). Worlds can point at their own. */
+export const DEFAULT_PRESENCE_SERVER = 'wss://worldmesh-presence.elias-willnat.workers.dev';
+
+export interface PresenceOptions {
+  /** Full WebSocket URL of the room, e.g. `wss://relay.example/world`. */
+  url: string;
+  scene: Scene;
+  /** Players in the room including this one, or null while disconnected. */
+  onCount?: (count: number | null) => void;
+  getName?: () => string | null;
+  /** Made-up name shown instead of the username in private mode. */
+  getAlias?: () => string | null;
+  /**
+   * Someone new just started walking here, first seen at (x, z). Not called
+   * for the people already in the room when this visitor joins.
+   */
+  onArrive?: (x: number, z: number) => void;
+}
 
 /** How often the local position goes out, per second. */
 const SEND_RATE = 10;
@@ -57,28 +69,28 @@ export class Presence implements NetworkAdapter {
   private closed = false;
   private lastSent = 0;
   private lastPayload = '';
-  private stroke = false;
 
-  constructor(
-    private endpoint: string,
-    private room: string,
-    scene: Scene,
-    private onCount: (count: number | null) => void,
-    private getName: () => string | null = () => null,
-    /** Made-up name shown instead of the username in private mode. */
-    private getAlias: () => string | null = () => null,
-    /**
-     * Someone new just started walking here, first seen at (x, z). Not called
-     * for the people already in the room when this visitor joins.
-     */
-    private onArrive: (x: number, z: number) => void = () => {},
-  ) {
+  private url: string;
+  private onCount: (count: number | null) => void;
+  private getName: () => string | null;
+  private getAlias: () => string | null;
+  private onArrive: (x: number, z: number) => void;
+
+  constructor(options: PresenceOptions) {
+    this.url = options.url;
+    this.onCount = options.onCount ?? (() => {});
+    this.getName = options.getName ?? (() => null);
+    this.getAlias = options.getAlias ?? (() => null);
+    this.onArrive = options.onArrive ?? (() => {});
     this.group.name = 'worldmesh:remote-players';
-    scene.add(this.group);
+    options.scene.add(this.group);
   }
 
   attach(world: WorldMeshHandle): void {
-    this.unsubscribe = world.on('update', ({ state }) => this.sendLocalState(state));
+    this.unsubscribe = world.on('update', ({ dt, state }) => {
+      this.sendLocalState(state);
+      this.update(dt);
+    });
     window.addEventListener('pagehide', this.handlePageHide);
     window.addEventListener('pageshow', this.handlePageShow);
     this.connect();
@@ -108,13 +120,7 @@ export class Presence implements NetworkAdapter {
     socket.send(JSON.stringify({ t: 'c', m: line }));
   }
 
-  /** Ink outline on every remote figure. Light lobby only. */
-  setStroke(enabled: boolean): void {
-    this.stroke = enabled;
-    for (const remote of this.remotes.values()) setFigureStroke(remote.root, enabled);
-  }
-
-  /** Ease remote avatars toward their last known position. Call once per frame. */
+  /** Ease remote avatars toward their last known position. Driven by the world's update event. */
   update(dt: number): void {
     const blend = 1 - Math.exp(-dt * 10);
     for (const remote of this.remotes.values()) {
@@ -171,7 +177,7 @@ export class Presence implements NetworkAdapter {
 
     let socket: WebSocket;
     try {
-      socket = new WebSocket(`${this.endpoint.replace(/\/$/, '')}/room/${this.room}`);
+      socket = new WebSocket(this.url);
     } catch {
       this.scheduleReconnect();
       return;
@@ -258,7 +264,6 @@ export class Presence implements NetworkAdapter {
       const tag = createNameTag(GUEST);
       tag.position.y = TAG_HEIGHT;
       root.add(tag);
-      if (this.stroke) setFigureStroke(root, true);
       this.group.add(root);
       remote = { root, target: new Vector3(), targetYaw: yaw, yaw, speed: 0, label: GUEST, tag, appear: 0, bubble: null, bubbleLeft: 0 };
       this.remotes.set(id, remote);
@@ -323,7 +328,7 @@ function setFigureOpacity(root: Object3D, amount: number): void {
   root.traverse((child) => {
     if (!(child instanceof Mesh)) return;
     for (const material of Array.isArray(child.material) ? child.material : [child.material]) {
-      const face = material instanceof MeshBasicMaterial && !isStrokeMaterial(material);
+      const face = material instanceof MeshBasicMaterial;
       material.transparent = face || !solid;
       material.opacity = amount;
       material.depthWrite = !face && solid;
@@ -433,21 +438,15 @@ function createNameTag(text: string): Sprite {
 }
 
 function disposeObject(root: Object3D): void {
-  const disposedStroke = new Set<Material>();
   root.traverse((child) => {
     if (child instanceof Sprite) {
       child.material.map?.dispose();
       child.material.dispose();
     } else if (child instanceof Mesh) {
-      // The outline reuses the body geometry. Disposing it twice frees the same buffer.
-      if (child.userData.stroke !== true) child.geometry.dispose();
+      child.geometry.dispose();
       const material = child.material;
-      const list = Array.isArray(material) ? material : [material];
-      for (const entry of list) {
-        if (isStrokeMaterial(entry) && disposedStroke.has(entry)) continue;
-        if (isStrokeMaterial(entry)) disposedStroke.add(entry);
-        entry.dispose();
-      }
+      if (Array.isArray(material)) material.forEach((m) => m.dispose());
+      else material.dispose();
     }
   });
   root.removeFromParent();

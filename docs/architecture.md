@@ -109,9 +109,18 @@ needs no coordination between the two sites. Richer handoffs (seamless
 transitions, carried state) layer on top via the `portal:activate` event, which
 a world can `preventDefault()` to take over.
 
-### Multiplayer is designed for, not built
+### Multiplayer is presence, not game state
 
-Nothing multiplayer ships. What ships is a runtime that will not fight it:
+`multiplayer: true` connects the world to a relay (`workers/presence`) with one
+Durable Object per world, keyed by the page's origin. Each visitor sends its
+position, facing and expression about ten times a second, and the room forwards
+it to everyone else. The relay keeps no game state and stores nothing, so it is
+cheap: rooms with nobody in them hibernate and cost nothing. Rooms are capped
+(16 per world, 64 for the hub lobby) so one busy world cannot use up the free
+plan. A creator who needs more runs their own copy and passes `server`.
+
+Physics, shared objects and other game state are not synced. The runtime is
+shaped so a richer network layer can replace this one:
 
 - the local player is fully described by a small serializable `PlayerState`, so
   a remote peer's state can drive an identical avatar with no changes to
@@ -120,13 +129,13 @@ Nothing multiplayer ships. What ships is a runtime that will not fight it:
 - `Player` is a plain `Object3D` wrapper, so remote avatars instantiate the same
   way local ones do;
 - nothing in movement, camera or portals reaches for a global connection;
-- `NetworkAdapter` (in `src/net/adapter.ts`) pins the seam and has no
-  implementation.
+- `NetworkAdapter` (in `src/net/adapter.ts`) is the seam. `Presence`
+  (`src/net/presence.ts`) is the built-in implementation, and a world can pass
+  its own as `network`.
 
-Expected topologies, ordered by how little WorldMesh has to host: peer-to-peer
-WebRTC first, then world-hosted servers run by creators, then optional
-WorldMesh signaling/discovery carrying no game traffic, and only as a last
-resort an optional hosted fallback.
+Peer-to-peer WebRTC was considered and left out: it still needs a server to
+introduce peers, relays some traffic anyway, does not scale past a handful of
+people, and shows every visitor everyone else's IP address.
 
 ### The overlay lives in the runtime
 
