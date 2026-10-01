@@ -27,6 +27,9 @@ const world = createWorldMesh({
     airAccel: 6,
   },
   ui: {
+    // No click-to-enter panel: WASD works from the first frame, Esc brings up the menu.
+    deferLockPanel: true,
+    moveBeforeLock: true,
     title: 'Mars',
     badge: false,
     hubUrl:

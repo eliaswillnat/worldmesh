@@ -164,19 +164,11 @@ function doorAngles(total: number, radius: number): number[] {
   return angles.map((angle) => (angle + Math.PI * 2) % (Math.PI * 2)).sort((a, b) => a - b);
 }
 /**
- * Slot indexes for `count` worlds on a ring of `total` doors, spaced as evenly
- * as integer slots allow. Worlds keep a stable order around the wall.
+ * Slot indexes for `count` worlds on a ring of `total` doors: side by side,
+ * so the worlds people added sit together. Worlds keep a stable order around the wall.
  */
 function distribute(count: number, total: number): number[] {
-  const taken = new Set<number>();
-  const slots: number[] = [];
-  for (let i = 0; i < count; i++) {
-    let slot = Math.floor((i * total) / count) % total;
-    while (taken.has(slot)) slot = (slot + 1) % total;
-    taken.add(slot);
-    slots.push(slot);
-  }
-  return slots;
+  return Array.from({ length: Math.min(count, total) }, (_, i) => i);
 }
 
 /** The hall always has at least this many doors, and always a few empty ones. */
@@ -1191,8 +1183,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     const radius = Math.max(WALL_MIN_RADIUS, (total * DOOR_SPACING + gateArc) / (Math.PI * 2));
     // Doors share the wall between the gates.
     const angles = doorAngles(total, radius);
-    // Worlds sit evenly around the drum so each has its own stretch of wall.
-    // The doors between them stay empty.
+    // Worlds sit next to each other; the doors after them stay empty.
     const slots = distribute(urls.length, total);
     const at = (door: Door, slot: number) =>
       // Set into the wall, facing the middle of the room.

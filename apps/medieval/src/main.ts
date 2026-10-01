@@ -19,6 +19,9 @@ const world = createWorldMesh({
   colliders,
   view: { mode: 'third' },
   ui: {
+    // No click-to-enter panel: WASD works from the first frame, Esc brings up the menu.
+    deferLockPanel: true,
+    moveBeforeLock: true,
     title: 'Medieval Village',
     badge: false,
     hubUrl:

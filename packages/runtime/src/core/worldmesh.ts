@@ -242,7 +242,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     const look = input.readLook();
     const playing = isPlaying();
     if (playing) {
-      if (input.locked || isTouchDevice()) {
+      if (input.locked || isTouchDevice() || options.ui?.moveBeforeLock === true) {
         cameraRig.look(look.dx, look.dy);
         if (input.locked) cameraRig.zoom(look.wheel);
       }
@@ -277,7 +277,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     events.emit('update', { dt, state: getState() });
   }
 
-  /** Walking, until Esc opens the pause screen. Mouse look still needs the cursor captured. */
+  /** Walking, until Esc opens the pause screen. */
   function isPlaying(): boolean {
     return !overlay.isPaused() && (input.locked || options.ui?.moveBeforeLock === true);
   }

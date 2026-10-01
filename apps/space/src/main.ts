@@ -28,6 +28,9 @@ const world = createWorldMesh({
     fallLimit: -40,
   },
   ui: {
+    // No click-to-enter panel: WASD works from the first frame, Esc brings up the menu.
+    deferLockPanel: true,
+    moveBeforeLock: true,
     title: 'Space Station',
     badge: false,
     hubUrl:

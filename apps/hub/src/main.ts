@@ -136,6 +136,11 @@ const DEMO_WORLDS: WorldEntry[] = [
 let communityWorlds: WorldEntry[] = communityWorldsStatic as WorldEntry[];
 const ALL_WORLDS: WorldEntry[] = [...communityWorlds, ...DEMO_WORLDS];
 
+/** The 3D lobby only gets doors for worlds people added; the demos stay in the gallery. */
+function lobbyWorlds(): WorldEntry[] {
+  return ALL_WORLDS.filter((world) => world.source !== 'demo');
+}
+
 import { ImageCropper } from './cropper';
 import { getUsername, initAccount } from './account';
 
@@ -488,7 +493,7 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
     document.body.appendChild(walkRoot);
     document.documentElement.classList.add('walking');
     lobby = createLobby(walkRoot, {
-      worlds: ALL_WORLDS,
+      worlds: lobbyWorlds(),
       start,
       enteredAt,
       light: walkIsLight(),
@@ -798,7 +803,7 @@ async function fetchCommunityWorlds(): Promise<void> {
     ALL_WORLDS.length = 0;
     ALL_WORLDS.push(...communityWorlds, ...DEMO_WORLDS);
     render();
-    lobby?.setWorlds(ALL_WORLDS);
+    lobby?.setWorlds(lobbyWorlds());
     fetchViewCounts(ALL_WORLDS.map((w) => w.url));
   } catch {
     // Fall back to demo worlds only

@@ -28,6 +28,9 @@ const world = createWorldMesh({
     hubUrl: import.meta.env.VITE_WORLDMESH_HUB ?? (import.meta.env.DEV ? 'http://localhost:5170/' : 'https://worldmesh.net/'),
   },
   ui: {
+    // No click-to-enter panel: WASD works from the first frame, Esc brings up the menu.
+    deferLockPanel: true,
+    moveBeforeLock: true,
     title: 'Forest',
     badge: false,
     hubUrl:
