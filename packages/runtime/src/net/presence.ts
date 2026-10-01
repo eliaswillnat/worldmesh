@@ -1,6 +1,6 @@
 import { CanvasTexture, Group, Mesh, MeshBasicMaterial, Sprite, SpriteMaterial, Vector3, type Object3D, type Scene } from 'three';
 import { animateDefaultAvatar, createDefaultAvatar, setAvatarExpression } from '../player/avatar.js';
-import type { NetworkAdapter, PlayerState, WorldMeshHandle } from '../types.js';
+import type { NetworkAdapter, PeerBody, PlayerState, WorldMeshHandle } from '../types.js';
 
 /** The relay WorldMesh hosts (workers/presence). Worlds can point at their own. */
 export const DEFAULT_PRESENCE_SERVER = 'wss://worldmesh-presence.elias-willnat.workers.dev';
@@ -53,6 +53,10 @@ interface Remote {
  * two updates is standing, not jumping or falling.
  */
 const GROUND_HOLD = 0.02;
+
+/** The size of a remote figure for collisions: the default player's. */
+const BODY_RADIUS = 0.35;
+const BODY_HEIGHT = 1.8;
 
 /** Height of the name tag's centre above the avatar's feet. */
 const TAG_HEIGHT = 2.15;
@@ -140,6 +144,16 @@ export class Presence implements NetworkAdapter {
     const line = text.replace(/[\u0000-\u001f]/g, '').trim().slice(0, 80);
     if (!line || !socket || socket.readyState !== WebSocket.OPEN) return;
     socket.send(JSON.stringify({ t: 'c', m: line }));
+  }
+
+  /** Everyone else's body where it is drawn, so walking into them stops where they appear to be. */
+  bodies(): PeerBody[] {
+    const bodies: PeerBody[] = [];
+    for (const { root } of this.remotes.values()) {
+      const { x, y, z } = root.position;
+      bodies.push({ x, y, z, radius: BODY_RADIUS, height: BODY_HEIGHT });
+    }
+    return bodies;
   }
 
   /** Ease remote avatars toward their last known position. Driven by the world's update event. */

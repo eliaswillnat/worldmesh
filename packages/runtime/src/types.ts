@@ -193,6 +193,16 @@ export interface WorldMeshEvents {
   players: { count: number | null };
 }
 
+/** Someone else's body, an upright cylinder the local player cannot walk through. */
+export interface PeerBody {
+  /** Feet position in world space. */
+  x: number;
+  y: number;
+  z: number;
+  radius: number;
+  height: number;
+}
+
 /**
  * Multiplayer seam. `multiplayer` plugs in the built-in relay client; pass
  * your own adapter here to network the world some other way.
@@ -204,6 +214,8 @@ export interface NetworkAdapter {
   sendLocalState?(state: PlayerState): void;
   /** Called by the adapter when a remote peer's state arrives. */
   onRemoteState?(peerId: string, state: PlayerState): void;
+  /** Where everyone else is standing right now. The local player is kept out of them. */
+  bodies?(): Iterable<PeerBody>;
   detach?(): void;
 }
 
