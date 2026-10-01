@@ -1,0 +1,13 @@
+# WorldMesh
+
+> An open network of independently hosted 3D worlds. Worlds share one set of controls, link to each other through portals, and can let visitors see each other. Each world stays on its creator's own hosting.
+
+## For AI coding agents
+
+- [Connect a Three.js world to WorldMesh](https://worldmesh.net/connect.md): step-by-step instructions to follow in a creator's project.
+
+## Reference
+
+- [Compatibility standard](https://github.com/eliaswillnat/worldmesh/blob/main/docs/compatibility.md): every option, event and method of the runtime.
+- [Terms](https://worldmesh.net/terms.html)
+- [Privacy](https://worldmesh.net/privacy.html)

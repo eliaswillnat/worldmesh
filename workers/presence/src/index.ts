@@ -3,7 +3,13 @@ import { DurableObject } from 'cloudflare:workers';
 /**
  * Presence relay: who is standing where (and what face they are pulling), nothing else.
  *
- * Each room is one Durable Object holding hibernatable WebSockets. A peer
+ * Each room is one Durable Object holding hibernatable WebSockets. Rooms are
+ * either named (`/room/lobby`, used by the hub) or belong to a world
+ * (`/world`): the room is picked from the page's Origin header, so a world
+ * gets its own room without registering, and one site cannot open another
+ * site's room from a browser.
+ *
+ * A peer
  * sends its position a few times a second; the room forwards it to everyone
  * else. No accounts, no storage, no game logic — the smallest thing that lets
  * visitors of the same space see each other.
@@ -41,9 +47,16 @@ interface Peer {
   seen: boolean;
   /** Last time this peer sent a chat line, so they cannot flood the room. */
   chatAt: number;
+  /** Ping the owner on Telegram when this peer appears. Only for named rooms. */
+  notify: boolean;
 }
 
-const MAX_PEERS = 64;
+/** Named rooms such as the hub lobby. */
+const MAX_ROOM_PEERS = 64;
+/** A world's room. Lower, because every creator's world draws on the same free plan. */
+const MAX_WORLD_PEERS = 16;
+/** Set by this Worker on the request it hands to a room; clients cannot choose it. */
+const ROOM_HEADER = 'X-WorldMesh-Room';
 const MAX_MESSAGE_BYTES = 256;
 /** Anything further than this from the origin is nonsense, not a position. */
 const MAX_COORD = 10_000;
@@ -56,25 +69,53 @@ const ALIAS = /^[A-Z][a-z]{1,11} [A-Z][a-z]{1,11}$/;
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    let name: string;
+    let kind: 'room' | 'world';
     const match = url.pathname.match(/^\/room\/([a-z0-9-]{1,64})$/i);
-    if (!match) return new Response('WorldMesh presence', { status: 404 });
+    if (match) {
+      name = match[1].toLowerCase();
+      kind = 'room';
+    } else if (url.pathname === '/world') {
+      const origin = worldOrigin(request.headers.get('Origin'));
+      if (!origin) return new Response('A world room needs an http(s) Origin', { status: 403 });
+      // Prefixed so a world can never land in a named room such as the lobby.
+      name = `world:${origin}`;
+      kind = 'world';
+    } else {
+      return new Response('WorldMesh presence', { status: 404 });
+    }
 
     if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
       return new Response('Expected a WebSocket upgrade', { status: 426 });
     }
 
-    const room = env.ROOMS.get(env.ROOMS.idFromName(match[1].toLowerCase()));
-    return room.fetch(request);
+    const forwarded = new Request(request);
+    forwarded.headers.set(ROOM_HEADER, kind);
+    const room = env.ROOMS.get(env.ROOMS.idFromName(name));
+    return room.fetch(forwarded);
   },
 };
 
+/** 'https://forest.example' (scheme + host + port), or null for opaque/odd origins. */
+function worldOrigin(header: string | null): string | null {
+  if (!header) return null;
+  try {
+    const url = new URL(header);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+    return url.origin.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
 export class Room extends DurableObject<Env> {
-  async fetch(_request: Request): Promise<Response> {
+  async fetch(request: Request): Promise<Response> {
+    const isWorld = request.headers.get(ROOM_HEADER) === 'world';
     const sockets = this.ctx.getWebSockets();
-    if (sockets.length >= MAX_PEERS) return new Response('Room is full', { status: 503 });
+    if (sockets.length >= (isWorld ? MAX_WORLD_PEERS : MAX_ROOM_PEERS)) return new Response('Room is full', { status: 503 });
 
     const { 0: client, 1: server } = new WebSocketPair();
-    const peer: Peer = { id: crypto.randomUUID().slice(0, 8), p: [0, 0, 0], r: 0, e: 'smile', n: '', a: '', seen: false, chatAt: 0 };
+    const peer: Peer = { id: crypto.randomUUID().slice(0, 8), p: [0, 0, 0], r: 0, e: 'smile', n: '', a: '', seen: false, chatAt: 0, notify: !isWorld };
 
     this.ctx.acceptWebSocket(server);
     server.serializeAttachment(peer);
@@ -116,7 +157,7 @@ export class Room extends DurableObject<Env> {
     }
 
     const peer = ws.deserializeAttachment() as Peer;
-    if (!peer.seen) this.ctx.waitUntil(this.notifyEntered());
+    if (!peer.seen && peer.notify) this.ctx.waitUntil(this.notifyEntered());
     peer.p = position.map(round) as Peer['p'];
     peer.r = round(yaw);
     if (typeof data.e === 'string' && EXPRESSION.test(data.e)) peer.e = data.e;

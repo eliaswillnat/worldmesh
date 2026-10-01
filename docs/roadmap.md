@@ -48,16 +48,11 @@ push hosting costs onto WorldMesh instead of onto the creators.
    spawn. Still plain navigation, just with more in the URL.
 5. **Touch and gamepad input.** Same reasoning as the keyboard convention:
    it belongs in the runtime or it will diverge across worlds.
-6. **Multiplayer, in the order that keeps WorldMesh cheapest.**
-   1. Peer-to-peer WebRTC between visitors in the same world.
-   2. World-hosted servers, for worlds whose creators want authority.
-   3. Optional WorldMesh signaling/discovery — introductions only, no game
-      traffic.
-   4. An optional hosted fallback, only if the first three prove insufficient.
-
-   The runtime is already shaped for this: serializable `PlayerState`,
-   `update(dt)` split from rendering, and an unimplemented `NetworkAdapter`
-   marking the seam.
+6. **Multiplayer beyond presence.** `multiplayer: true` already shows
+   everyone in a world (see compatibility.md). Next: visitors' Avatar Wallet
+   bodies instead of the default figure, names for signed-in visitors, chat
+   in worlds, and world-hosted servers for creators who want shared game
+   state.
 
 ## Open questions
 

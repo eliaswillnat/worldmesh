@@ -2,27 +2,44 @@ User-agent: *
 Disallow: /api/
 Sitemap: https://worldmesh.net/sitemap.xml
 
-# Block AI crawlers, automated scrapers, and LLM collectors
+# Block AI crawlers, automated scrapers, and LLM collectors, except for the
+# instructions creators hand to their coding agents
 User-agent: GPTBot
+Allow: /connect.md
+Allow: /llms.txt
 Disallow: /
 
 User-agent: ChatGPT-User
+Allow: /connect.md
+Allow: /llms.txt
 Disallow: /
 
 User-agent: ClaudeBot
+Allow: /connect.md
+Allow: /llms.txt
 Disallow: /
 
 User-agent: CCBot
+Allow: /connect.md
+Allow: /llms.txt
 Disallow: /
 
 User-agent: Bytespider
+Allow: /connect.md
+Allow: /llms.txt
 Disallow: /
 
 User-agent: Diffbot
+Allow: /connect.md
+Allow: /llms.txt
 Disallow: /
 
 User-agent: FacebookBot
+Allow: /connect.md
+Allow: /llms.txt
 Disallow: /
 
 User-agent: Amazonbot
+Allow: /connect.md
+Allow: /llms.txt
 Disallow: /

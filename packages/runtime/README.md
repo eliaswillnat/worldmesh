@@ -74,7 +74,7 @@ loaders (`@pixiv/three-vrm`) are only downloaded when an avatar is shown.
 | `PortalManager`, `buildTravelUrl`, `getReferringWorld` | travel between worlds |
 | `loadAvatarModel`, `resolveWorldMeshAvatar`, `parseAvatarDescriptor`, `AvatarDescriptor` | visitors' own avatars |
 | `Overlay`, `Emitter` | the shared overlay, a tiny typed emitter |
-| `serializePlayerState`, `deserializePlayerState`, `NetworkAdapter` | the multiplayer seam |
+| `Presence`, `DEFAULT_PRESENCE_SERVER`, `NetworkAdapter` | multiplayer (`multiplayer: true`) and the seam for your own |
 | `WORLDMESH_VERSION`, `WORLDMESH_PROTOCOL` | what your world is speaking |
 
 Full option, handle and event reference:

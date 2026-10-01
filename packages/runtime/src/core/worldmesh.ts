@@ -21,6 +21,7 @@ import type {
 import { Overlay } from '../ui/overlay.js';
 import { isTouchDevice } from '../controls/touch.js';
 import { Emitter } from './events.js';
+import { DEFAULT_PRESENCE_SERVER, Presence } from '../net/presence.js';
 
 /** Never simulate more than this per substep, so a stall cannot tunnel the player. */
 const MAX_STEP = 1 / 60;
@@ -148,7 +149,8 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
 
   if (options.autoStart !== false) start();
 
-  options.network?.attach(handle);
+  const network = options.network ?? createMultiplayer();
+  network?.attach(handle);
 
   startAvatar();
 
@@ -386,13 +388,23 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     cameraRig.resize(width, viewHeight);
   }
 
+  function createMultiplayer(): Presence | undefined {
+    if (!options.multiplayer) return undefined;
+    const server = (options.multiplayer === true ? undefined : options.multiplayer.server) ?? DEFAULT_PRESENCE_SERVER;
+    return new Presence({
+      url: `${server.replace(/\/$/, '')}/world`,
+      scene,
+      onCount: (count) => events.emit('players', { count }),
+    });
+  }
+
   function dispose(): void {
     if (disposed) return;
     disposed = true;
     stop();
     avatarLoad?.abort();
     window.removeEventListener('resize', handleResize);
-    options.network?.detach?.();
+    network?.detach?.();
     input.dispose();
     overlay.dispose();
     portals.dispose();

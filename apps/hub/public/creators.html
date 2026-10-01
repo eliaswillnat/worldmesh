@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Connect your world — WorldMesh</title>
+    <meta name="description" content="Connect your Three.js world to WorldMesh with one prompt to your AI coding agent." />
+    <link rel="alternate" type="text/markdown" href="/connect.md" title="Instructions for AI agents" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      :root { color-scheme: light dark; }
+      * { box-sizing: border-box; margin: 0; }
+      body {
+        background: #000; color: #ccc;
+        font-family: "Urbanist", system-ui, sans-serif;
+        padding: 4vh 16px 80px;
+        display: flex; justify-content: center;
+        -webkit-font-smoothing: antialiased;
+      }
+      main { max-width: 640px; width: 100%; }
+      h1 { font-size: 24px; font-weight: 600; margin: 0 0 8px; color: #fff; }
+      .back { font-size: 13px; color: #888; text-decoration: none; display: inline-block; margin-bottom: 24px; }
+      .back:hover { color: #fff; }
+      .lead { font-size: 15px; line-height: 1.6; margin-bottom: 28px; }
+      h2 { font-size: 15px; font-weight: 600; margin: 32px 0 8px; color: #eee; }
+      p, ul, ol { font-size: 14px; line-height: 1.7; margin: 0 0 12px; }
+      ul, ol { padding-left: 20px; }
+      a { color: #999; }
+      .prompt {
+        border: 1px solid #333; border-radius: 12px; padding: 16px;
+        background: #0d0d0d; margin: 8px 0 12px;
+      }
+      .prompt p { font-size: 15px; color: #fff; margin: 0 0 14px; }
+      .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+      button {
+        font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+        border-radius: 999px; padding: 8px 14px; border: 1px solid #444;
+        background: transparent; color: #ddd;
+      }
+      button.primary { background: #fff; color: #000; border-color: #fff; }
+      pre {
+        font-size: 13px; line-height: 1.6; overflow-x: auto;
+        background: #0d0d0d; border: 1px solid #222; border-radius: 10px;
+        padding: 12px 14px; margin: 0 0 12px; color: #ddd;
+      }
+      code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .note { font-size: 12px; color: #777; }
+      @media (prefers-color-scheme: light) {
+        body { background: #fff; color: #222; }
+        h1 { color: #111; }
+        h2 { color: #222; }
+        a { color: #444; }
+        .back:hover { color: #000; }
+        .prompt, pre { background: #f6f6f6; border-color: #ddd; }
+        .prompt p, pre { color: #111; }
+        button { color: #222; border-color: #bbb; }
+        button.primary { background: #111; color: #fff; border-color: #111; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <a class="back" href="/">← Back to WorldMesh</a>
+      <h1>Connect your world</h1>
+      <p class="lead">Give your Three.js world the shared WorldMesh controls, portals to other worlds, and multiplayer, so visitors see each other. Your world stays on your own hosting. No account, no server.</p>
+
+      <h2>Hand this to your AI coding agent</h2>
+      <div class="prompt">
+        <p id="prompt">Connect this 3D world to WorldMesh. Read https://worldmesh.net/connect.md and follow it step by step.</p>
+        <div class="actions">
+          <button type="button" class="primary" id="copy-prompt">Copy prompt</button>
+          <button type="button" id="copy-full">Copy full instructions</button>
+        </div>
+      </div>
+      <p class="note">Works with Claude Code, Cursor, Codex, Copilot and similar agents. If your agent cannot open web pages, use <strong>Copy full instructions</strong> and paste everything instead.</p>
+
+      <h2>Or do it yourself</h2>
+      <pre><code>npm i @worldmesh/runtime three</code></pre>
+      <pre><code>import { createWorldMesh } from '@worldmesh/runtime';
+
+createWorldMesh({ scene, camera, renderer, multiplayer: true });</code></pre>
+      <p>Pass the scene, camera and renderer you already have. Add <code>colliders</code> for the meshes visitors should stand on, and remove your own camera controls. <a href="/connect.md">The full instructions</a> cover the rest.</p>
+
+      <h2>Then</h2>
+      <ol>
+        <li>Deploy your world wherever you host it.</li>
+        <li>Submit its URL with <strong>Submit world</strong> on the <a href="/">WorldMesh homepage</a>. Submissions are reviewed before they appear.</li>
+      </ol>
+
+      <h2>Good to know</h2>
+      <ul>
+        <li>Only Three.js worlds can use the runtime. Worlds made with other engines can still be listed if they use the standard controls.</li>
+        <li>Up to 16 people can be in a world at once. Need more? Run your own relay and pass <code>multiplayer: { server: 'wss://…' }</code>.</li>
+        <li>See the <a href="/terms.html">terms</a> and what multiplayer shares in the <a href="/privacy.html">privacy policy</a>.</li>
+      </ul>
+    </main>
+    <script>
+      // Fetched up front: Safari only allows copying right inside the click.
+      let full = '';
+      fetch('/connect.md').then((r) => (r.ok ? r.text() : '')).then((text) => (full = text)).catch(() => {});
+
+      async function copy(button, text) {
+        const label = button.textContent;
+        try {
+          if (!text) throw new Error('empty');
+          await navigator.clipboard.writeText(text);
+          button.textContent = 'Copied';
+        } catch {
+          button.textContent = 'Copy failed';
+        }
+        setTimeout(() => (button.textContent = label), 1600);
+      }
+      document.getElementById('copy-prompt').addEventListener('click', (event) => {
+        copy(event.currentTarget, document.getElementById('prompt').textContent);
+      });
+      document.getElementById('copy-full').addEventListener('click', (event) => copy(event.currentTarget, full));
+    </script>
+  </body>
+</html>
