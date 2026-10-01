@@ -109,7 +109,10 @@ const shellFragment = /* glsl */ `
     if (uInterior < 0.5) {
       // Exterior: vertical fluting, floor joints, a band of window slits per floor.
       float rib = s / 3.2;
-      float flute = 0.9 + 0.1 * cos(rib * 2.0 * PI);
+      float day = 1.0 - uNight;
+      // Daylight fluting stays faint, so the wall reads as the citadel's flat white.
+      float fluteDepth = mix(0.1, 0.025, day);
+      float flute = 1.0 - fluteDepth + fluteDepth * cos(rib * 2.0 * PI);
       color = uBase * flute;
       float joint = line(f, 0.012) ;
       color = mix(color, uLine, joint * 0.8);
@@ -125,20 +128,24 @@ const shellFragment = /* glsl */ `
       float isLedge = step(level, 0.5) * step(1.0, floorIndex);
       color = mix(color, uBase * 1.18, isLedge * step(f, 0.1));
       color = mix(color, uAccent, isLedge * line(f - 0.1, 0.006) * 0.9);
-      color *= mix(1.0, 0.72, plinth);
+      color *= mix(1.0, mix(0.72, 0.98, day), plinth);
       // Simple lighting: sky from above, sun from the side.
       float sun = max(dot(n, normalize(uSun)), 0.0);
-      color *= 0.62 + 0.5 * sun + 0.12 * n.y;
+      // Night keeps the shaded drum. Day stays white the way the citadel wall does.
+      float nightLight = 0.62 + 0.5 * sun + 0.12 * n.y;
+      float dayLight = 0.96 + 0.04 * sun;
+      color *= mix(nightLight, dayLight, day);
       color += glass * slit * lit * uNight * 0.35;
     } else {
       // Interior: pilasters, a dark skirting per floor and a light cove under each slab.
       float pil = s / 4.6;
       float pilaster = line(fract(pil) - 0.5, 0.04);
-      color = uBase * (0.86 + 0.14 * pilaster);
-      color = mix(color, uLine, step(f, 0.07) * 0.7);
+      float day = 1.0 - uNight;
+      color = uBase * mix(0.86 + 0.14 * pilaster, 0.97 + 0.03 * pilaster, day);
+      color = mix(color, uLine, step(f, 0.07) * mix(0.7, 0.25, day));
       float cove = line(f - 0.945, 0.006);
-      float spill = smoothstep(0.6, 0.94, f) * 0.25;
-      color *= 0.7 + spill;
+      float spill = smoothstep(0.6, 0.94, f) * mix(0.25, 0.08, day);
+      color *= mix(0.7, 0.96, day) + spill;
       color = mix(color, uGlow, cove * (0.55 + 0.45 * uNight));
     }
 
@@ -149,6 +156,13 @@ const shellFragment = /* glsl */ `
   }
 `;
 
+/** A picture hung on the outside of a tower. */
+export interface TowerBanner {
+  material: MeshBasicMaterial;
+  /** Width divided by height. */
+  aspect: number;
+}
+
 export interface TowerShell {
   readonly group: Group;
   readonly exterior: Mesh;
@@ -158,10 +172,98 @@ export interface TowerShell {
   setTheme(light: boolean): void;
   /** Interior drum only draws when someone is in or near the tower. */
   setInteriorVisible(visible: boolean): void;
+  /** Spin the signs that travel around the drum. */
+  update(dt: number): void;
   dispose(): void;
 }
 
-export function createTowerShell(tower: TowerPlan, config: CityConfig, materials: CityMaterials, interiorLayer: number): TowerShell {
+interface HungBanners {
+  meshes: Mesh[];
+  /** Rigs that travel around the tower, in radians per second. */
+  orbits: { rig: Group; speed: number }[];
+}
+
+/** A sign bent onto the drum. `turn` aims it; the arc itself is centred on local +Z. */
+function placeSign(
+  parent: Group,
+  radius: number,
+  art: TowerBanner,
+  portraitHeight: number,
+  wideHeight: number,
+  bottom: number,
+  bezelMaterial: MeshBasicMaterial,
+): { rig: Group; meshes: Mesh[] } {
+  const portrait = art.aspect < 1;
+  const height = portrait ? portraitHeight : wideHeight;
+  const width = Math.min(height * art.aspect, radius * 1.65);
+  const arc = width / radius;
+  const segments = Math.max(18, Math.ceil(arc * 28));
+  const screen = new Mesh(
+    new CylinderGeometry(radius, radius, height, segments, 1, true, -arc / 2, arc),
+    art.material,
+  );
+  screen.position.y = bottom + height / 2;
+  const bezel = new Mesh(
+    new CylinderGeometry(radius - 0.2, radius - 0.2, height + 0.85, segments, 1, true, -arc / 2 - 0.36 / radius, arc + 0.72 / radius),
+    bezelMaterial,
+  );
+  bezel.position.y = screen.position.y;
+  const rig = new Group();
+  rig.add(bezel, screen);
+  parent.add(rig);
+  return { rig, meshes: [bezel, screen] };
+}
+
+/**
+ * A few large pictures on the outside of the drum. Two stay put (one over the
+ * entrance, one around the side). Two more circle the tower above them.
+ */
+function hangBanners(
+  group: Group,
+  outer: number,
+  entrance: number,
+  banners: TowerBanner[],
+  variety: number,
+  bezelMaterial: MeshBasicMaterial,
+): HungBanners {
+  if (banners.length === 0) return { meshes: [], orbits: [] };
+  const radius = outer + 0.5;
+  const art = (slot: number) => banners[(slot + variety) % banners.length];
+  const meshes: Mesh[] = [];
+  const side = variety % 2 === 0 ? 1 : -1;
+
+  const front = placeSign(group, radius, art(0), 28, 11, 16.8, bezelMaterial);
+  front.rig.rotation.y = entrance;
+  meshes.push(...front.meshes);
+
+  const flank = placeSign(group, radius, art(1), 32, 12, 2.2, bezelMaterial);
+  flank.rig.rotation.y = entrance + side * 2.05;
+  meshes.push(...flank.meshes);
+
+  // One revolution in about forty seconds, neighbouring towers drifting opposite ways.
+  const speed = (0.12 + (variety % 3) * 0.025) * (variety % 2 === 0 ? 1 : -1);
+  const phase = entrance + variety * 0.85;
+  const orbits: HungBanners['orbits'] = [];
+  const lane = 58;
+  for (const [slot, turn] of [[2, 0], [3, Math.PI]] as const) {
+    const picture = art(slot);
+    const height = picture.aspect < 1 ? 24 : 10;
+    const sign = placeSign(group, radius + 0.15, picture, 24, 10, lane - height / 2, bezelMaterial);
+    sign.rig.rotation.y = phase + turn;
+    meshes.push(...sign.meshes);
+    orbits.push({ rig: sign.rig, speed });
+  }
+  return { meshes, orbits };
+}
+
+export function createTowerShell(
+  tower: TowerPlan,
+  config: CityConfig,
+  materials: CityMaterials,
+  interiorLayer: number,
+  banners: TowerBanner[] = [],
+  variety = 0,
+): TowerShell {
   const group = new Group();
   group.name = `tower:${tower.id}`;
   group.position.set(tower.center.x, 0, tower.center.z);
@@ -279,6 +381,10 @@ export function createTowerShell(tower: TowerPlan, config: CityConfig, materials
   group.add(nameRing);
   const nameTint = (light: boolean) => nameMaterial.color.set(light ? 0x2b2d33 : 0xffffff);
 
+  // Pictures sitting on the outside of the drum: up the front, around the
+  // sides, and higher up, the way signs cover a facade. The entrance stays clear.
+  const { meshes: bannerMeshes, orbits } = hangBanners(group, outer, entrance.angle, banners, variety, materials.trim);
+
   const setTheme = (light: boolean) => {
     const palette = PALETTES[light ? 'light' : 'dark'];
     for (const [material, base] of [
@@ -303,12 +409,16 @@ export function createTowerShell(tower: TowerPlan, config: CityConfig, materials
     setInteriorVisible(visible) {
       interior.visible = visible;
     },
+    update(dt) {
+      for (const orbit of orbits) orbit.rig.rotation.y += orbit.speed * dt;
+    },
     dispose() {
       exterior.geometry.dispose();
       exteriorMaterial.dispose();
       interior.geometry.dispose();
       interiorMaterial.dispose();
       frameMesh?.geometry.dispose();
+      for (const mesh of bannerMeshes) mesh.geometry.dispose();
       nameRing.geometry.dispose();
       nameMaterial.dispose();
       (nameTexture as Texture).dispose();

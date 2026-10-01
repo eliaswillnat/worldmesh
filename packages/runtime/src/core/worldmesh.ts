@@ -64,6 +64,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   const input = new Input({
     element: renderer.domElement,
     keymap: options.keymap,
+    moveBeforeLock: options.ui?.moveBeforeLock === true,
     onPointerLockChange: (locked) => {
       overlay.setLocked(locked);
       events.emit('pointer:lock', { locked });
@@ -236,9 +237,12 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     elapsed += dt;
 
     const look = input.readLook();
-    if (input.locked) {
-      cameraRig.look(look.dx, look.dy);
-      cameraRig.zoom(look.wheel);
+    const playing = isPlaying();
+    if (playing) {
+      if (input.locked || isTouchDevice()) {
+        cameraRig.look(look.dx, look.dy);
+        if (input.locked) cameraRig.zoom(look.wheel);
+      }
       if (input.consume('toggleView')) setViewMode(cameraRig.mode === 'first' ? 'third' : 'first');
       const digit = input.consumeDigit();
       const expression = digit === null ? null : expressionForDigit(digit);
@@ -249,7 +253,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     let remaining = dt;
     while (remaining > 0) {
       const step = Math.min(remaining, MAX_STEP);
-      controller.step(step, cameraRig.yaw, input.locked || options.ui?.moveBeforeLock === true);
+      controller.step(step, cameraRig.yaw, playing);
       remaining -= step;
     }
 
@@ -270,6 +274,11 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     events.emit('update', { dt, state: getState() });
   }
 
+  /** Walking, until Esc opens the pause screen. Mouse look still needs the cursor captured. */
+  function isPlaying(): boolean {
+    return !overlay.isPaused() && (input.locked || options.ui?.moveBeforeLock === true);
+  }
+
   function updatePortals(): void {
     const nearest = portals.findActive(controller.position);
 
@@ -281,7 +290,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
 
     if (!nearest) {
       overlay.setPrompt(null);
-      if (input.locked && input.consume('interact')) {
+      if (isPlaying() && input.consume('interact')) {
         events.emit('interact', { position: controller.position.toArray() as Vec3Tuple });
       }
       return;
@@ -295,7 +304,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
 
     const isTouch = isTouchDevice();
     overlay.setPrompt(isTouch ? `Tap to enter ${nearest.label}` : `Press E to enter ${nearest.label}`);
-    if (input.locked && input.consume('interact')) activatePortal(nearest);
+    if (isPlaying() && input.consume('interact')) activatePortal(nearest);
   }
 
   function activatePortal(portal: ResolvedPortal): void {

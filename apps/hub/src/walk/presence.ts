@@ -6,7 +6,8 @@ import {
   type PlayerState,
   type WorldMeshHandle,
 } from '@worldmesh/runtime';
-import { CanvasTexture, Group, Mesh, MeshBasicMaterial, Sprite, SpriteMaterial, Vector3, type Object3D, type Scene } from 'three';
+import { CanvasTexture, Group, Mesh, MeshBasicMaterial, Sprite, SpriteMaterial, Vector3, type Material, type Object3D, type Scene } from 'three';
+import { isStrokeMaterial, setFigureStroke } from './stroke';
 
 /** How often the local position goes out, per second. */
 const SEND_RATE = 10;
@@ -56,6 +57,7 @@ export class Presence implements NetworkAdapter {
   private closed = false;
   private lastSent = 0;
   private lastPayload = '';
+  private stroke = false;
 
   constructor(
     private endpoint: string,
@@ -99,6 +101,12 @@ export class Presence implements NetworkAdapter {
     const line = text.replace(/[\u0000-\u001f]/g, '').trim().slice(0, 80);
     if (!line || !socket || socket.readyState !== WebSocket.OPEN) return;
     socket.send(JSON.stringify({ t: 'c', m: line }));
+  }
+
+  /** Ink outline on every remote figure. Light lobby only. */
+  setStroke(enabled: boolean): void {
+    this.stroke = enabled;
+    for (const remote of this.remotes.values()) setFigureStroke(remote.root, enabled);
   }
 
   /** Ease remote avatars toward their last known position. Call once per frame. */
@@ -245,6 +253,7 @@ export class Presence implements NetworkAdapter {
       const tag = createNameTag(GUEST);
       tag.position.y = TAG_HEIGHT;
       root.add(tag);
+      if (this.stroke) setFigureStroke(root, true);
       this.group.add(root);
       remote = { root, target: new Vector3(), targetYaw: yaw, yaw, speed: 0, label: GUEST, tag, appear: 0, bubble: null, bubbleLeft: 0 };
       this.remotes.set(id, remote);
@@ -308,7 +317,7 @@ function setFigureOpacity(root: Object3D, amount: number): void {
   root.traverse((child) => {
     if (!(child instanceof Mesh)) return;
     for (const material of Array.isArray(child.material) ? child.material : [child.material]) {
-      const face = material instanceof MeshBasicMaterial;
+      const face = material instanceof MeshBasicMaterial && !isStrokeMaterial(material);
       material.transparent = face || !solid;
       material.opacity = amount;
       material.depthWrite = !face && solid;
@@ -418,15 +427,21 @@ function createNameTag(text: string): Sprite {
 }
 
 function disposeObject(root: Object3D): void {
+  const disposedStroke = new Set<Material>();
   root.traverse((child) => {
     if (child instanceof Sprite) {
       child.material.map?.dispose();
       child.material.dispose();
     } else if (child instanceof Mesh) {
-      child.geometry.dispose();
+      // The outline reuses the body geometry. Disposing it twice frees the same buffer.
+      if (child.userData.stroke !== true) child.geometry.dispose();
       const material = child.material;
-      if (Array.isArray(material)) material.forEach((m) => m.dispose());
-      else material.dispose();
+      const list = Array.isArray(material) ? material : [material];
+      for (const entry of list) {
+        if (isStrokeMaterial(entry) && disposedStroke.has(entry)) continue;
+        if (isStrokeMaterial(entry)) disposedStroke.add(entry);
+        entry.dispose();
+      }
     }
   });
   root.removeFromParent();

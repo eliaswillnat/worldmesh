@@ -6,6 +6,8 @@ export interface InputOptions {
   /** The element that receives pointer lock. */
   element: HTMLElement;
   keymap?: Partial<Keymap>;
+  /** Keyboard and joysticks work before the cursor is captured. */
+  moveBeforeLock?: boolean;
   onPointerLockChange?: (locked: boolean) => void;
   /**
    * Escape toggles the pause screen. Return true when this press captures
@@ -29,6 +31,7 @@ export class Input {
   locked = false;
 
   private element: HTMLElement;
+  private moveBeforeLock: boolean;
   private pressed = new Set<string>();
   /** Actions that went down this frame and have not been consumed yet. */
   private justPressed = new Set<InputAction>();
@@ -42,6 +45,7 @@ export class Input {
 
   constructor(options: InputOptions) {
     this.element = options.element;
+    this.moveBeforeLock = options.moveBeforeLock === true;
     this.keymap = resolveKeymap(options.keymap);
     this.onPointerLockChange = options.onPointerLockChange;
     this.onEscape = options.onEscape;
@@ -71,6 +75,9 @@ export class Input {
     document.addEventListener('pointerlockerror', this.handlePointerLockError);
     this.element.addEventListener('mousemove', this.handleMouseMove);
     this.element.addEventListener('wheel', this.handleWheel, { passive: true });
+    this.element.addEventListener('pointerdown', this.handlePointerDown);
+    // The sticks are on screen from the start, so the first touch moves instead of "entering".
+    if (this.moveBeforeLock && isTouchDevice()) this.touch?.setVisible(true);
   }
 
   requestPointerLock(touchTriggered = false): void {
@@ -118,7 +125,14 @@ export class Input {
       document.exitPointerLock();
     }
     if (this.locked) this.setLocked(false);
-    else this.onPointerLockChange?.(false);
+    else {
+      // Never captured, but the pause screen is coming up: drop the sticks and any held keys.
+      this.pressed.clear();
+      this.justPressed.clear();
+      this.touch?.reset();
+      this.touch?.setVisible(false);
+      this.onPointerLockChange?.(false);
+    }
   }
 
   triggerAction(action: InputAction): void {
@@ -196,6 +210,7 @@ export class Input {
     document.removeEventListener('pointerlockerror', this.handlePointerLockError);
     this.element.removeEventListener('mousemove', this.handleMouseMove);
     this.element.removeEventListener('wheel', this.handleWheel);
+    this.element.removeEventListener('pointerdown', this.handlePointerDown);
     this.pressed.clear();
     this.justPressed.clear();
   }
@@ -236,6 +251,18 @@ export class Input {
   private handleBlur = (): void => {
     this.pressed.clear();
     this.justPressed.clear();
+  };
+
+  /**
+   * A click captures the cursor for looking. Touch is left alone: the joysticks
+   * already have the finger, and they do not need a tap before they work.
+   */
+  private handlePointerDown = (event: PointerEvent): void => {
+    if (!this.moveBeforeLock || this.locked || this.disposed || event.button !== 0) return;
+    if (event.pointerType === 'touch' || event.pointerType === 'pen') return;
+    const target = event.target instanceof Element ? event.target : null;
+    if (target?.closest('button, a, input, textarea, select, label, dialog, .wm-lock, .walk-pause-actions')) return;
+    this.requestPointerLock();
   };
 
   private handleMouseMove = (event: MouseEvent): void => {

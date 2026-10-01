@@ -295,7 +295,8 @@ export class Overlay {
 
     this.root = document.createElement('div');
     this.root.className = 'wm-overlay';
-    this.root.dataset.locked = 'false';
+    // Already walking: no click-to-enter layer. Esc is what brings the pause screen up.
+    this.root.dataset.locked = options.moveBeforeLock ? 'true' : 'false';
     if (this.deferLockPanel) this.root.dataset.deferLock = 'true';
 
     if (options.crosshair !== false) {
