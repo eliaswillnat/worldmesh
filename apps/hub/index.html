@@ -1609,6 +1609,18 @@
         background: currentColor;
       }
       html.walking .walk-online[data-count] { display: flex; }
+      @keyframes online-glow {
+        0% { color: rgba(130, 255, 180, 1); text-shadow: 0 0 6px rgba(130, 255, 180, 0.8); }
+        100% { color: rgba(255, 255, 255, 0.72); text-shadow: none; }
+      }
+      .walk-online.glow { animation: online-glow 1.2s ease-out forwards; }
+      html.walking[data-walk-theme="light"] .walk-online.glow {
+        animation-name: online-glow-light;
+      }
+      @keyframes online-glow-light {
+        0% { color: rgba(0, 180, 80, 1); text-shadow: 0 0 6px rgba(0, 180, 80, 0.6); }
+        100% { color: rgba(0, 0, 0, 0.55); text-shadow: none; }
+      }
       /* Private mode: under the walk toggle. Shows the made-up name while on. */
       .walk-private {
         position: fixed;
