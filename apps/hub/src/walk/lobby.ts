@@ -85,6 +85,8 @@ export interface LobbyOptions {
   ads?: boolean;
   /** Visit counts and the like, for ranking worlds in the towers. */
   signals?: SignalSource;
+  /** How many times people have entered a world, by URL; shown beside its doors. */
+  entries?: (url: string) => number | undefined;
   /**
    * `performance.now()` when the visitor hit Walk. The spawn beam starts from
    * that moment so load time does not delay it.
@@ -95,6 +97,8 @@ export interface LobbyOptions {
 export interface Lobby {
   /** Add doors (and tower listings) for worlds that were not listed yet. */
   setWorlds(worlds: LobbyWorld[]): void;
+  /** Entry counts changed: update the numbers beside every door. */
+  refreshEntries(): void;
   /**
    * Switch between the dark and light lobby. Purely local: other visitors
    * keep whatever their own device prefers.
@@ -410,6 +414,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     interiorLayer: FLOOR_LAYER,
     banners: Object.values(cityMaterials.banners),
     signals: options.signals,
+    entries: (listing) => options.entries?.(listing.url),
     onEnterWorld: (listing, returnTo) =>
       travel({ name: listing.name, url: listing.url, cover: listing.cover, color: listing.color, creator: listing.creator.name }, returnTo, null),
   });
@@ -837,6 +842,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     empty.dispose();
     saveClaim({ angle, name: world.name, url: world.url, cover: world.cover });
     const door = new Door({ name: world.name, url: world.url, cover: world.cover }, light);
+    door.setEntries(options.entries?.(world.url));
     scene.add(door.group);
     door.place(x, z, 0, 0);
     door.group.userData.angle = angle;
@@ -1005,6 +1011,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
   return {
     setWorlds,
+    refreshEntries,
     setTheme,
     setPrivate,
     setColor,
@@ -1143,6 +1150,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     billboards?.setTheme(light);
   }
 
+  function refreshEntries(): void {
+    for (const [url, door] of doors) door.setEntries(options.entries?.(url));
+    towerCity.refreshEntries();
+  }
+
   function setWorlds(worlds: LobbyWorld[]): void {
     towerCity.setWorlds(worlds);
     for (const entry of worlds) {
@@ -1174,6 +1186,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       let door = doors.get(url);
       if (!door) {
         door = new Door(known.get(url)!, light);
+        door.setEntries(options.entries?.(url));
         scene.add(door.group);
         doors.set(url, door);
       }
@@ -1192,6 +1205,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         let door = doors.get(claim.url);
         if (!door) {
           door = new Door({ name: claim.name, url: claim.url, cover: claim.cover }, light);
+          door.setEntries(options.entries?.(claim.url));
           scene.add(door.group);
           known.set(claim.url, { name: claim.name, url: claim.url, cover: claim.cover });
           doors.set(claim.url, door);

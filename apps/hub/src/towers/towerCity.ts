@@ -25,7 +25,7 @@ import { canonicalUrl, type WorldListing, type WorldRecordInput } from '../world
 import { MemoryWorldRepository } from '../worlds/repository';
 import { BridgeManager } from './bridges';
 import { PathManager } from './paths';
-import { CardCache, createBadgeAtlas, createStatusAtlas } from './cards';
+import { CardCache, createBadgeAtlas, createStatusAtlas, type EntriesSource } from './cards';
 import cityData from './city.json';
 import { resolveCityConfig, type CityConfig } from './config';
 import { DoorView, type DoorResources } from './doorView';
@@ -60,6 +60,8 @@ export interface TowerCityOptions {
   /** Layer drawn by the main camera only (not the floor mirror). Interiors go here. */
   interiorLayer: number;
   signals?: SignalSource;
+  /** How many times people have entered each world, shown on its doors' captions. */
+  entries?: EntriesSource;
   analytics?: Analytics;
   config?: Partial<CityConfig>;
   categories?: CategoryRegistry;
@@ -194,7 +196,7 @@ export class TowerCity {
       badges: createBadgeAtlas(),
       status: createStatusAtlas(),
       blank,
-      cards: new CardCache(this.config.maxCachedCards),
+      cards: new CardCache(this.config.maxCachedCards, options.entries),
       config: this.config,
       audio: SILENT_SHUTTERS,
     };
@@ -243,6 +245,11 @@ export class TowerCity {
 
   attach(world: WorldMeshHandle): void {
     this.world = world;
+  }
+
+  /** Entry counts changed: redraw the door captions that show them. */
+  refreshEntries(): void {
+    this.doorResources.cards.refreshEntries();
   }
 
   /** Add listings (existing ones are kept). Rebuilds the city only if its shape changed. */

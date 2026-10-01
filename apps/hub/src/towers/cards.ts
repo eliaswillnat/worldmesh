@@ -2,6 +2,10 @@ import { CanvasTexture, Color, LinearFilter, SRGBColorSpace, type Texture } from
 import type { Badge } from '../discovery/placement';
 import type { WorldListing } from '../worlds/listing';
 import { SIGN_FONT } from './signage';
+import { drawEntries, hasEntries, measureEntries } from '../entries';
+
+/** How many times people have entered a world, by listing; undefined while unknown. */
+export type EntriesSource = (listing: WorldListing) => number | undefined;
 
 /**
  * What a door shows for one world: a 9:16 poster cut from the world's cover
@@ -18,6 +22,10 @@ export interface WorldCard {
   readonly ready: Promise<void>;
   loaded: boolean;
   disposed: boolean;
+  /** The entries count the caption was last drawn with. */
+  entries: number | undefined;
+  /** Redraw the caption, e.g. once the entries count arrives. */
+  redraw(): void;
 }
 
 /** Poster resolution: small, since a door is a few metres tall and rarely fills the screen. */
@@ -36,7 +44,10 @@ interface Entry {
 export class CardCache {
   private entries = new Map<string, Entry>();
 
-  constructor(private max: number) {}
+  constructor(
+    private max: number,
+    private entryCounts: EntriesSource = () => undefined,
+  ) {}
 
   get size(): number {
     return this.entries.size;
@@ -45,7 +56,7 @@ export class CardCache {
   acquire(listing: WorldListing): WorldCard {
     let entry = this.entries.get(listing.id);
     if (!entry) {
-      entry = { card: createCard(listing), refs: 0, lastUsed: 0 };
+      entry = { card: createCard(listing, this.entryCounts), refs: 0, lastUsed: 0 };
       this.entries.set(listing.id, entry);
     }
     entry.refs++;
@@ -61,6 +72,11 @@ export class CardCache {
       entry.lastUsed = performance.now();
     }
     this.evict();
+  }
+
+  /** Counts changed: redraw the captions whose number is now different. */
+  refreshEntries(): void {
+    for (const entry of this.entries.values()) entry.card.redraw();
   }
 
   dispose(): void {
@@ -85,15 +101,28 @@ function disposeCard(card: WorldCard): void {
   card.caption.dispose();
 }
 
-function createCard(listing: WorldListing): WorldCard {
+function createCard(listing: WorldListing, counts: EntriesSource): WorldCard {
+  const caption = drawCaption(listing);
   const card: WorldCard = {
     listingId: listing.id,
     poster: null,
-    caption: drawCaption(listing),
+    caption: caption.texture,
     loaded: false,
     disposed: false,
     ready: Promise.resolve(),
+    entries: undefined,
+    redraw() {
+      if (card.disposed) return;
+      const count = counts(listing);
+      const next = hasEntries(count) ? count : undefined;
+      if (next === card.entries) return;
+      card.entries = next;
+      caption.draw(next);
+    },
   };
+  const count = counts(listing);
+  card.entries = hasEntries(count) ? count : undefined;
+  caption.draw(card.entries);
   (card as { ready: Promise<void> }).ready = loadPoster(listing).then(
     (poster) => {
       // Evicted while loading: nobody will ever dispose it otherwise.
@@ -108,7 +137,7 @@ function createCard(listing: WorldListing): WorldCard {
   return card;
 }
 
-function drawCaption(listing: WorldListing): CanvasTexture {
+function drawCaption(listing: WorldListing): { texture: CanvasTexture; draw(entries: number | undefined): void } {
   const canvas = document.createElement('canvas');
   canvas.width = CAPTION_W;
   canvas.height = CAPTION_H;
@@ -116,6 +145,7 @@ function drawCaption(listing: WorldListing): CanvasTexture {
   texture.colorSpace = SRGBColorSpace;
   texture.minFilter = LinearFilter;
   texture.generateMipmaps = false;
+  let entries: number | undefined;
   const draw = () => {
     const ctx = canvas.getContext('2d')!;
     ctx.clearRect(0, 0, CAPTION_W, CAPTION_H);
@@ -133,16 +163,31 @@ function drawCaption(listing: WorldListing): CanvasTexture {
       ctx.font = `700 ${size}px ${SIGN_FONT}`;
     }
     ctx.fillText(fit(ctx, title, CAPTION_W - pad * 2), pad, 96);
+    // Second line: the creator on the left, entries on the right.
+    ctx.font = `500 34px ${SIGN_FONT}`;
+    const muted = 'rgba(255, 255, 255, 0.62)';
+    const iconSize = 30;
+    const iconGap = 10;
+    let room = CAPTION_W - pad * 2;
+    if (entries !== undefined) {
+      const width = measureEntries(ctx, entries, iconSize, iconGap);
+      drawEntries(ctx, entries, CAPTION_W - pad - width, 150, iconSize, iconGap, muted);
+      room -= width + 28;
+    }
     if (listing.creator.name) {
-      ctx.font = `500 34px ${SIGN_FONT}`;
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.62)';
-      ctx.fillText(fit(ctx, `by ${listing.creator.name}`, CAPTION_W - pad * 2), pad, 150);
+      ctx.fillStyle = muted;
+      ctx.fillText(fit(ctx, `by ${listing.creator.name}`, room), pad, 150);
     }
     texture.needsUpdate = true;
   };
-  draw();
   if (document.fonts && !document.fonts.check(`700 60px Urbanist`)) document.fonts.load('700 60px Urbanist').then(draw, () => {});
-  return texture;
+  return {
+    texture,
+    draw(next) {
+      entries = next;
+      draw();
+    },
+  };
 }
 
 function fit(ctx: CanvasRenderingContext2D, text: string, width: number): string {

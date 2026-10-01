@@ -18,6 +18,7 @@ import {
   type BufferGeometry,
   type Material,
 } from 'three';
+import { drawEntries, hasEntries, measureEntries } from '../entries';
 
 export interface DoorWorld {
   name: string;
@@ -165,11 +166,14 @@ export class Door {
   private cover: Texture | null = null;
   private placeholder: Texture;
   private halo: Mesh<PlaneGeometry, MeshBasicMaterial> | null = null;
+  private light: boolean;
+  private entries: number | undefined;
   private disposed = false;
 
   constructor(world: DoorWorld | null, light: boolean, random = false) {
     this.world = world;
     this.random = random;
+    this.light = light;
     this.group.name = random ? 'door:random' : world ? `door:${world.name}` : 'door:empty';
 
     const tint = new Color(world?.color ?? '#ffffff');
@@ -233,7 +237,7 @@ export class Door {
     const label = random
       ? createLabel('Random Door', undefined, false, 'Somewhere new every time')
       : world
-        ? createLabel(world.name, world.creator)
+        ? createLabel(world.name, world.creator, false, undefined, () => this.entries)
         : createLabel('Your world here', undefined, true);
     this.label = label.mesh;
     this.drawLabel = label.draw;
@@ -258,6 +262,15 @@ export class Door {
    */
   get face(): Mesh {
     return this.portal;
+  }
+
+  /** How many times people have gone through: shown beside the creator under the name. */
+  setEntries(count: number | undefined): void {
+    if (!this.world || this.random) return;
+    const next = hasEntries(count) ? count : undefined;
+    if (next === this.entries) return;
+    this.entries = next;
+    this.drawLabel(this.light);
   }
 
   /** Brighten the "+" while someone is close enough to use it. */
@@ -309,6 +322,7 @@ export class Door {
   }
 
   setTheme(light: boolean): void {
+    this.light = light;
     this.portal.material.uniforms.uLight.value = light ? 1 : 0;
     // White doors on the black grid, ink doors on the white one.
     this.frameMaterial.color.set(light ? 0x1c1c1c : 0xf2f2f2);
@@ -436,6 +450,7 @@ function createLabel(
   creator?: string,
   quiet = false,
   subtitle?: string,
+  entries: () => number | undefined = () => undefined,
 ): { mesh: Mesh<PlaneGeometry, MeshBasicMaterial>; draw: (light: boolean) => void } {
   const canvas = document.createElement('canvas');
   const texture = new CanvasTexture(canvas);
@@ -451,14 +466,23 @@ function createLabel(
     const subFont = '500 44px Urbanist, ui-sans-serif, system-ui, sans-serif';
     const title = name.length > 32 ? `${name.slice(0, 31)}…` : name;
     const sub = subtitle ?? (creator ? `by ${creator}`.slice(0, 48) : '');
+    const count = entries();
+    const shown = hasEntries(count);
+    // The entries count sits on the second line, after the creator.
+    const iconSize = 38;
+    const iconGap = 12;
+    const runGap = sub ? 34 : 0;
 
     ctx.font = titleFont;
     const titleWidth = ctx.measureText(title).width;
     ctx.font = subFont;
-    const subWidth = sub ? ctx.measureText(sub).width : 0;
+    const subTextWidth = sub ? ctx.measureText(sub).width : 0;
+    const entriesWidth = shown ? measureEntries(ctx, count, iconSize, iconGap) : 0;
+    const subWidth = subTextWidth + (shown ? runGap + entriesWidth : 0);
+    const secondLine = !!sub || shown;
 
     canvas.width = Math.ceil(Math.max(titleWidth, subWidth) + 48);
-    canvas.height = sub ? 170 : 120;
+    canvas.height = secondLine ? 170 : 120;
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.textAlign = 'center';
@@ -474,14 +498,19 @@ function createLabel(
       ctx.shadowBlur = 24;
     }
     ctx.fillText(title, canvas.width / 2, 92);
-    if (sub) {
+    if (secondLine) {
       ctx.font = subFont;
-      ctx.fillStyle = light ? 'rgba(0, 0, 0, 0.55)' : 'rgba(255, 255, 255, 0.55)';
-      ctx.fillText(sub, canvas.width / 2, 152);
+      const color = light ? 'rgba(0, 0, 0, 0.55)' : 'rgba(255, 255, 255, 0.55)';
+      ctx.fillStyle = color;
+      ctx.textAlign = 'left';
+      const left = (canvas.width - subWidth) / 2;
+      if (sub) ctx.fillText(sub, left, 152);
+      if (shown) drawEntries(ctx, count, left + subTextWidth + runGap, 152, iconSize, iconGap, color);
+      ctx.textAlign = 'center';
     }
 
     texture.needsUpdate = true;
-    let worldHeight = quiet ? 0.5 : sub ? 0.95 : 0.67;
+    let worldHeight = quiet ? 0.5 : secondLine ? 0.95 : 0.67;
     // Long names shrink rather than run into the next door's label.
     worldHeight = Math.min(worldHeight, (MAX_LABEL_WIDTH * canvas.height) / canvas.width);
     mesh.scale.set((canvas.width / canvas.height) * worldHeight, worldHeight, 1);

@@ -28,6 +28,7 @@ interface WorldEntry {
 
 import communityWorldsStatic from './community.json';
 import { AD_CONFIG } from './ads/config';
+import { entryIconSvg, formatEntries, hasEntries } from './entries';
 
 const VIEWS_ENDPOINT = import.meta.env.VITE_VIEWS_ENDPOINT as string | undefined;
 const viewCounts: Record<string, number> = {};
@@ -530,6 +531,8 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
       },
       // Lifetime visits, for ranking in the towers (see discovery/ranking.ts).
       signals: { signals: (world) => ({ views: viewCounts[world.url] }) },
+      // The same counter, shown beside each door as "entries".
+      entries: (url) => viewCounts[url],
     });
     applyWalkTheme();
     mountPauseActions();
@@ -1100,14 +1103,13 @@ function renderCard(world: WorldEntry): HTMLLIElement {
   host.textContent = hostOf(world.url);
   footer.appendChild(host);
 
-  const clicks = viewCounts[world.url] ?? 0;
-  if (clicks > 0) {
-    const clickBadge = document.createElement('span');
-    clickBadge.className = 'card-clicks';
-    clickBadge.innerHTML =
-      `<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M8 3C4.5 3 2 8 2 8s2.5 5 6 5 6-5 6-5-2.5-5-6-5Z" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.4"/></svg>` +
-      `${clicks}`;
-    footer.appendChild(clickBadge);
+  const entries = viewCounts[world.url] ?? 0;
+  if (hasEntries(entries)) {
+    const entriesBadge = document.createElement('span');
+    entriesBadge.className = 'card-clicks';
+    entriesBadge.title = `${entries.toLocaleString('en')} ${entries === 1 ? 'entry' : 'entries'}`;
+    entriesBadge.innerHTML = `${entryIconSvg(12)}${formatEntries(entries)}`;
+    footer.appendChild(entriesBadge);
   }
 
   body.appendChild(footer);
@@ -1158,6 +1160,7 @@ function trackClick(url: string): void {
       if (data.views != null) {
         viewCounts[url] = data.views;
         render();
+        lobby?.refreshEntries();
       }
     })
     .catch(() => {});
@@ -1173,6 +1176,7 @@ async function fetchViewCounts(urls: string[]): Promise<void> {
       viewCounts[url] = count;
     }
     render();
+    lobby?.refreshEntries();
   } catch {
     // Network or server error — keep existing counts.
   }
