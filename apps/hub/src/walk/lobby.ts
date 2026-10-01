@@ -12,11 +12,11 @@ import {
   MeshBasicMaterial,
   MeshStandardMaterial,
   Fog,
+  Group,
   HemisphereLight,
   PerspectiveCamera,
   PlaneGeometry,
   Raycaster,
-  RingGeometry,
   Scene,
   ShaderMaterial,
   Vector2,
@@ -29,7 +29,7 @@ import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { CITY_GLOW_WHITE, applyCityTheme, applySkyTheme, createBeamRefraction, createCityMaterials, createSky, createSpawnRay, flipInside, skyHorizon } from './city';
 import { isStrokeMaterial, setFigureStroke, setStrokeOpacity } from './stroke';
-import { DOOR_HALF_SPAN, DOOR_TOP, Door, type DoorWorld } from './door';
+import { DOOR_HALF_SPAN, DOOR_HEIGHT, DOOR_TOP, DOOR_WIDTH, FRAME, Door, createLabel, type DoorWorld } from './door';
 import { ImageCropper } from '../cropper';
 import { describeBillboard } from './layout';
 import { fetchBillboards } from '../ads/api';
@@ -126,10 +126,10 @@ const FLOOR_SIZE = 600;
 /** The citadel: never narrower than this, and grows so doors keep this much wall between them. */
 const WALL_MIN_RADIUS = 11;
 const DOOR_SPACING = 4.2;
-/** A tall drum open to the sky, with the doors around the inside of its base. */
+/** A tall closed drum, with the doors around the inside of its base. */
 const CITADEL_HEIGHT = 30;
 const WALL_THICKNESS = 1.2;
-/** Ways out to the city, evenly around the drum. Angle 0 faces +Z, behind you on arrival. */
+/** Ways out to the city, evenly around the drum. Sealed for now. Angle 0 faces +Z, behind you on arrival. */
 const GATE_COUNT = 4;
 const GATE_WIDTH = 4.4;
 const GATE_HEIGHT = 6.2;
@@ -337,12 +337,14 @@ const floorShader = {
       // A mirror under a tinted glaze: glossier at grazing angles, faint
       // looking straight down. The rough patches take some of the shine off.
       vec3 toCamera = normalize(cameraPosition - vWorld);
-      float glaze = clamp(mix(0.6, 0.88, abs(toCamera.y)) + rough * 0.18, 0.0, 1.0);
+      float glaze = clamp(mix(0.78, 0.96, abs(toCamera.y)) + rough * 0.12, 0.0, 1.0);
 
       // Dark: black stone with light lines. Light: white stone with ink lines.
       // A faint speckle keeps the black from reading as a flat void.
       vec3 darkFloor = reflection * (1.0 - glaze) * (1.0 - lines) + vec3(lines) + vec3(max(rough, 0.0) * 0.006);
+      darkFloor *= 0.5;
       vec3 lightFloor = mix(reflection, uBackground * (1.0 - rough * 0.035), glaze) * (1.0 - min(lines * 1.4, 1.0));
+      lightFloor *= 0.8;
 
       // Melt into the fog at the horizon, like everything else.
       float haze = smoothstep(60.0, 230.0, dist);
@@ -357,7 +359,7 @@ const floorShader = {
 /**
  * Walk mode: the directory as a place. You arrive inside the citadel, a tall
  * round hall whose wall is lined with a door per listed world; walking into
- * one travels to that world. A gate leads out to a plaza ringed by towers. Movement,
+ * one travels to that world. Gates to the plaza are closed for now. Movement,
  * camera, touch controls and portal triggers all come from the same runtime
  * the worlds themselves use.
  */
@@ -387,6 +389,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const beamRefraction = createBeamRefraction(renderer, camera);
 
   const wallMaterial = new MeshStandardMaterial({ side: DoubleSide, roughness: 0.7, metalness: 0 });
+  const innerWallMaterial = new MeshBasicMaterial({ side: DoubleSide });
+  const gateFrameMaterial = new MeshStandardMaterial({ roughness: 0.4, metalness: 0.05 });
   const cityMaterials = createCityMaterials(renderer.capabilities.getMaxAnisotropy());
   let disposed = false;
   const mirror = new Reflector(new PlaneGeometry(FLOOR_SIZE, FLOOR_SIZE), {
@@ -463,6 +467,10 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   // the door count changes.
   const wall: Mesh[] = [];
   const trim: Mesh[] = [];
+  const gateSeals: Group[] = [];
+  const gateLabelDraw: Array<(isLight: boolean) => void> = [];
+  let interiorBannerRing: Group | null = null;
+  let interiorBannerAngle = 0;
   // Standing on something is required once there are walls to bump into.
   const ground = new Mesh(
     new CircleGeometry(1, 48),
@@ -545,6 +553,10 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       if (emerging) stepEmerging(dt);
       towerCity.setBlocked(warping || emerging !== null || adModal !== null || claimModal !== null);
       towerCity.update(dt);
+      if (interiorBannerRing) {
+        interiorBannerAngle += dt * ((Math.PI * 2) / 360);
+        interiorBannerRing.rotation.y = interiorBannerAngle;
+      }
       const [x, , z] = handle.getState().position;
       if (exitDoor && !emerging) {
         const { x: doorX, z: doorZ } = exitDoor.inFront(0);
@@ -1123,6 +1135,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     light = isLight;
     applyTheme();
     for (const door of [...doors.values(), ...emptyDoors, randomDoor]) door.setTheme(light);
+    for (const draw of gateLabelDraw) draw(light);
     towerCity.setTheme(light);
   }
 
@@ -1143,6 +1156,9 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     floorUniforms.uHaze.value.copy(background);
     floorUniforms.uLight.value = light ? 1 : 0;
     wallMaterial.color.set(light ? 0xf5f6fa : 0x141418);
+    // Unlit: the sky lights would otherwise wash a highlight around the drum.
+    innerWallMaterial.color.set(light ? 0xc8ceda : 0x07070a);
+    gateFrameMaterial.color.set(light ? 0x1c1c1c : 0xf2f2f2);
     // Lift the shaded sides so white stays white, not grey.
     wallMaterial.emissive.set(light ? CITY_GLOW_WHITE : 0x000000);
     applyCityTheme(cityMaterials, light);
@@ -1230,11 +1246,19 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
    */
   function buildWall(radius: number, angles: number[]): void {
     for (const mesh of [...wall, ...trim]) {
+      if (mesh.userData.gateLabel) {
+        const material = mesh.material as MeshBasicMaterial;
+        material.map?.dispose();
+        material.dispose();
+      }
       mesh.geometry.dispose();
       mesh.removeFromParent();
     }
     wall.length = 0;
     trim.length = 0;
+    gateLabelDraw.length = 0;
+    for (const group of gateSeals) group.removeFromParent();
+    gateSeals.length = 0;
     const outer = radius + WALL_THICKNESS;
 
     const shell = (r: number, start: number, length: number, bottom: number, inward: boolean) => {
@@ -1242,15 +1266,15 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       const height = CITADEL_HEIGHT - bottom;
       const segments = Math.max(2, Math.ceil(length * 24));
       const geometry = new CylinderGeometry(r, r, height, segments, 1, true, start, length);
-      const section = new Mesh(inward ? flipInside(geometry) : geometry, wallMaterial);
+      const section = new Mesh(inward ? flipInside(geometry) : geometry, inward ? innerWallMaterial : wallMaterial);
       section.position.y = bottom + height / 2;
       scene.add(section);
       wall.push(section);
     };
 
-    // Inner drum: faces the hall, open at each gate and at every doorway.
+    // Inner drum: faces the hall, open at each doorway. Sealed exits use a door-sized opening.
     const openings = [
-      ...gateAngles().map((angle) => ({ angle, half: GATE_WIDTH / 2 / radius, top: GATE_HEIGHT })),
+      ...gateAngles().map((angle) => ({ angle, half: DOOR_HALF_SPAN / radius, top: DOOR_TOP })),
       ...angles.map((angle) => ({ angle, half: DOOR_HALF_SPAN / radius, top: DOOR_TOP })),
     ].sort((a, b) => a.angle - b.angle);
     openings.forEach((opening, i) => {
@@ -1261,31 +1285,46 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       shell(radius, opening.angle - opening.half, opening.half * 2, opening.top, true);
     });
 
-    // Outer drum: faces the city, open at each gate.
+    // Outer drum: faces the city, sealed at each gate for now.
     const gateOuter = GATE_WIDTH / 2 / outer;
     const gateStep = (Math.PI * 2) / GATE_COUNT;
     for (const angle of gateAngles()) {
       shell(outer, angle + gateOuter, gateStep - gateOuter * 2, 0, false);
-      shell(outer, angle - gateOuter, gateOuter * 2, GATE_HEIGHT, false);
+      shell(outer, angle - gateOuter, gateOuter * 2, 0, false);
     }
 
-    // Each gate's passage: side walls and a ceiling between the two drums.
-    const halfGate = GATE_WIDTH / 2;
-    const passageStart = Math.sqrt(radius * radius - halfGate * halfGate) - 0.05;
-    const passageDepth = outer + 0.05 - passageStart;
-    const passageZ = passageStart + passageDepth / 2;
-    const block = (w: number, h: number, d: number, x: number, y: number, z: number, angle: number, solid: boolean) => {
-      const mesh = new Mesh(new BoxGeometry(w, h, d), wallMaterial);
-      const worldX = Math.sin(angle) * z + Math.cos(angle) * x;
-      const worldZ = Math.cos(angle) * z - Math.sin(angle) * x;
-      mesh.position.set(worldX, y + h / 2, worldZ);
-      mesh.rotation.y = angle;
-      scene.add(mesh);
-      (solid ? wall : trim).push(mesh);
-    };
+    // Each sealed exit is a normal door. The old passage between the drums
+    // would show as a second frame behind it, so it stays closed.
     for (const angle of gateAngles()) {
-      for (const side of [-1, 1]) block(0.4, GATE_HEIGHT, passageDepth, side * (halfGate + 0.1), 0, passageZ, angle, true);
-      block(GATE_WIDTH + 0.4, 0.2, passageDepth, 0, GATE_HEIGHT, passageZ, angle, false);
+      const plug = new Mesh(new BoxGeometry(DOOR_WIDTH, DOOR_HEIGHT, 0.08), innerWallMaterial);
+      const sealed = new Group();
+      sealed.position.set(Math.sin(angle) * radius, 0, Math.cos(angle) * radius);
+      sealed.rotation.y = Math.atan2(-Math.sin(angle), -Math.cos(angle));
+      plug.position.set(0, DOOR_HEIGHT / 2, 0.04);
+      sealed.add(plug);
+      const postHeight = DOOR_HEIGHT + FRAME;
+      const depth = 0.32;
+      for (const side of [-1, 1]) {
+        const post = new Mesh(new BoxGeometry(FRAME, postHeight, depth), gateFrameMaterial);
+        post.position.set(side * (DOOR_WIDTH + FRAME) / 2, postHeight / 2, 0);
+        sealed.add(post);
+      }
+      const lintel = new Mesh(new BoxGeometry(DOOR_WIDTH + FRAME * 2, FRAME, depth), gateFrameMaterial);
+      lintel.position.set(0, DOOR_HEIGHT + FRAME / 2, 0);
+      sealed.add(lintel);
+      scene.add(sealed);
+      gateSeals.push(sealed);
+      wall.push(plug);
+      for (const mesh of sealed.children) {
+        if (mesh !== plug && mesh instanceof Mesh && !mesh.userData.gateLabel) wall.push(mesh);
+      }
+      const sign = createLabel('Extension\nUnder\nConstruction', undefined, true);
+      sign.draw(light);
+      sign.mesh.userData.gateLabel = true;
+      sign.mesh.position.set(0, DOOR_HEIGHT / 2, 0.14);
+      sealed.add(sign.mesh);
+      trim.push(sign.mesh);
+      gateLabelDraw.push(sign.draw);
     }
 
     buildTrim(radius, outer);
@@ -1318,23 +1357,25 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       solid.push(place(new BoxGeometry(0.5, CITADEL_HEIGHT, 0.4), Math.sin(angle) * r, CITADEL_HEIGHT / 2, Math.cos(angle) * r, angle));
     }
 
-    // Crown: a cornice around the top and a rim over the wall.
+    // Crown: a cornice around the top and a lid over the hall.
     solid.push(place(new CylinderGeometry(outer + 0.5, outer + 0.5, 1.2, 128, 1, true), 0, CITADEL_HEIGHT - 0.6, 0));
-    const rim = new RingGeometry(radius, outer + 0.5, 128);
-    rim.rotateX(-Math.PI / 2);
-    solid.push(place(rim, 0, CITADEL_HEIGHT, 0));
+    const roof = new CircleGeometry(outer + 0.5, 128);
+    roof.rotateX(-Math.PI / 2);
+    solid.push(place(roof, 0, CITADEL_HEIGHT, 0));
+    const ceiling = new CircleGeometry(radius, 128);
+    ceiling.rotateX(Math.PI / 2);
+    const soffit = new Mesh(ceiling, innerWallMaterial);
+    soffit.position.y = CITADEL_HEIGHT - 0.02;
+    scene.add(soffit);
+    trim.push(soffit);
 
     // Light bands: outside above the gate and under the crown, inside above
-    // the door labels (broken at the gate) and near the top.
+    // the doors (one unbroken line under the banners) and near the top.
     const band = (r: number, y: number, start = 0, length = Math.PI * 2) =>
       glow.push(place(new CylinderGeometry(r, r, 0.07, 128, 1, true, start, length), 0, y, 0));
     band(outer + 0.03, GATE_HEIGHT + 1.2);
     band(outer + 0.52, CITADEL_HEIGHT - 1.3);
-    const gateInner = (GATE_WIDTH / 2 + 0.3) / radius;
-    const gateStep = (Math.PI * 2) / GATE_COUNT;
-    for (const angle of gateAngles()) {
-      band(radius - 0.03, DOOR_TOP + 2.8, angle + gateInner, gateStep - gateInner * 2);
-    }
+    band(radius - 0.03, DOOR_TOP + 2.8);
     band(radius - 0.03, CITADEL_HEIGHT - 1);
 
     // A white portal frame around each gate, outlined in light.
@@ -1377,35 +1418,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       banners.push(banner);
     });
 
-    // The wide brand line, on the inside of each wall between two gates,
-    // above the doors. From the middle of the hall it is in view whichever
-    // way you look.
-    const platform = cityMaterials.banners.platform;
-    const bay = (Math.PI * 2) / GATE_COUNT;
-    const interior: Mesh[] = [];
-    for (const gate of gateAngles()) {
-      const center = gate + bay / 2;
-      const margin = 2.2;
-      const maxArc = bay - (GATE_WIDTH + margin * 2) / radius;
-      const width = Math.min(maxArc * radius, 4.2 * platform.aspect);
-      const height = width / platform.aspect;
-      const arc = width / radius;
-      const start = center - arc / 2;
-      const y = DOOR_TOP + 3.4 + height / 2;
-      const segments = Math.max(12, Math.ceil(arc * 28));
-      const bezel = new Mesh(
-        flipInside(new CylinderGeometry(radius - 0.05, radius - 0.05, height + 0.45, segments, 1, true, start - 0.22 / radius, arc + 0.44 / radius)),
-        wallMaterial,
-      );
-      bezel.position.y = y;
-      const screenGeometry = flipInside(new CylinderGeometry(radius - 0.2, radius - 0.2, height, segments, 1, true, start, arc));
-      // The arc's U runs opposite the way you face it, so flip it to read left to right.
-      const uv = screenGeometry.getAttribute('uv');
-      for (let i = 0; i < uv.count; i++) uv.setX(i, 1 - uv.getX(i));
-      const screen = new Mesh(screenGeometry, platform.material);
-      screen.position.y = y;
-      interior.push(bezel, screen);
-    }
+    hangInteriorBanners(radius);
 
     // The random door's backing and porch, on the outer wall beside the gate.
     const doorAngle = RANDOM_DOOR_ARC / outer;
@@ -1426,10 +1439,64 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     add(solid, wallMaterial);
     add(glow, cityMaterials.glow);
 
-    for (const mesh of [...banners, ...interior]) {
+    for (const mesh of banners) {
       scene.add(mesh);
       trim.push(mesh);
     }
+  }
+
+  /**
+   * Every citadel banner, curved onto the inside wall above the doors. Explore
+   * sits with the wide brand on one side of the hall; Discover is opposite,
+   * behind you. The ring still drifts slowly.
+   */
+  function hangInteriorBanners(radius: number): void {
+    if (interiorBannerRing) {
+      interiorBannerRing.traverse((obj) => {
+        if (obj instanceof Mesh) obj.geometry.dispose();
+      });
+      interiorBannerRing.removeFromParent();
+      interiorBannerRing = null;
+    }
+    const { platform, explore, discover } = cityMaterials.banners;
+    const portraits = [explore, discover];
+    // Native aspects, packed edge to edge so the band fills the drum with no gutters.
+    const totalAspect = portraits.reduce((sum, art) => sum + art.aspect, 0) + platform.aspect * portraits.length;
+    const height = (Math.PI * 2 * radius) / totalAspect;
+    const bottom = DOOR_TOP + 2.9;
+    const ringGroup = new Group();
+    ringGroup.name = 'interior-banners';
+    ringGroup.rotation.y = interiorBannerAngle;
+
+    const addPanel = (art: (typeof platform), theta0: number, width: number, panelH: number, yBottom: number) => {
+      const arc = width / radius;
+      const segments = Math.max(16, Math.ceil(arc * 32));
+      const pad = 0.08;
+      const y = yBottom + panelH / 2;
+      const bezel = new Mesh(
+        flipInside(new CylinderGeometry(radius - 0.05, radius - 0.05, panelH + pad * 2, segments, 1, true, theta0, arc)),
+        innerWallMaterial,
+      );
+      bezel.position.y = y;
+      const screenGeometry = flipInside(new CylinderGeometry(radius - 0.2, radius - 0.2, panelH, segments, 1, true, theta0, arc));
+      const uv = screenGeometry.getAttribute('uv');
+      for (let j = 0; j < uv.count; j++) uv.setX(j, 1 - uv.getX(j));
+      const screen = new Mesh(screenGeometry, art.material);
+      screen.position.y = y;
+      ringGroup.add(bezel, screen);
+    };
+
+    let theta = 0;
+    portraits.forEach((portrait) => {
+      const portraitW = height * portrait.aspect;
+      addPanel(portrait, theta, portraitW, height, bottom);
+      theta += portraitW / radius;
+      const landscapeW = height * platform.aspect;
+      addPanel(platform, theta, landscapeW, height, bottom);
+      theta += landscapeW / radius;
+    });
+    scene.add(ringGroup);
+    interiorBannerRing = ringGroup;
   }
 
   /** The towers stand around the citadel, so they follow its width. */
@@ -1469,8 +1536,25 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     document.documentElement.classList.remove('chatting');
     chatBubble.remove();
     chatBtn?.remove();
-    for (const mesh of [...wall, ...trim]) mesh.geometry.dispose();
+    for (const mesh of [...wall, ...trim]) {
+      if (mesh.userData.gateLabel) {
+        const material = mesh.material as MeshBasicMaterial;
+        material.map?.dispose();
+        material.dispose();
+      }
+      mesh.geometry.dispose();
+    }
+    if (interiorBannerRing) {
+      interiorBannerRing.traverse((obj) => {
+        if (obj instanceof Mesh) obj.geometry.dispose();
+      });
+      interiorBannerRing.removeFromParent();
+      interiorBannerRing = null;
+    }
+    for (const group of gateSeals) group.removeFromParent();
     wallMaterial.dispose();
+    innerWallMaterial.dispose();
+    gateFrameMaterial.dispose();
     cityMaterials.dispose();
     plainFloor.geometry.dispose();
     (plainFloor.material as MeshBasicMaterial).dispose();

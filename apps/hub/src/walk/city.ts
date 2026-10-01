@@ -18,12 +18,10 @@ import {
   Object3D,
   OrthographicCamera,
   PlaneGeometry,
-  PointLight,
   RingGeometry,
   Scene,
   ShaderMaterial,
   SphereGeometry,
-  SpotLight,
   SRGBColorSpace,
   TextureLoader,
   TorusGeometry,
@@ -115,20 +113,231 @@ export function applySkyTheme(sky: Mesh<SphereGeometry, ShaderMaterial>, light: 
 }
 
 /**
- * A shaft of light landing on the hall's centre, where a visitor appears.
- * The streaks are the Paper Design god-ray shader (Apache-2.0), mapped so
- * they fan down the column from the open roof. The noise texture is replaced
- * with the same package's hash, and the colours stay white.
+ * Paper Design god-rays (Apache-2.0): a noisy shaft along local Y. Spawn uses a
+ * tall vertical volume; doors use a short one rotated to spill into the hall.
  */
-function glowNoise(t: number): number {
-  const i = Math.floor(t);
-  const f = t - i;
-  const u = f * f * (3 - 2 * f);
-  const hash = (n: number) => {
-    const x = Math.sin(n * 127.1) * 43758.5453;
-    return x - Math.floor(x);
-  };
-  return hash(i) * (1 - u) + hash(i + 1) * u;
+export function createGodRayMaterial(options: {
+  length: number;
+  gain: number;
+  time: { value: number };
+  theme: { value: number };
+  presence: { value: number };
+  tint?: Color;
+  /** Rectangular shaft in local XYZ (X/Y the opening, Z the spill). Omit for a vertical column. */
+  square?: { width: number; height: number };
+}): ShaderMaterial {
+  const height = options.length.toFixed(1);
+  const tint = options.tint ?? new Color(1, 1, 1);
+  const square = options.square;
+  const halfW = ((square?.width ?? 1) / 2).toFixed(4);
+  const halfH = ((square?.height ?? 1) / 2).toFixed(4);
+  const squareMain = /* glsl */ `
+        vec2 p = vec2(vLocal.x / ${halfW}, vLocal.y / ${halfH});
+        float along = clamp(vLocal.z / ${height} + 0.5, 0.0, 1.0);
+        float t = 0.2 * uTime * 4.5;
+        vec2 warp = vec2(
+          valueNoise(vec2(p.x * 2.2 + t * 0.85, p.y * 1.6 - t * 0.4)) - 0.5,
+          valueNoise(vec2(p.y * 2.0 + t * 0.55, along * 3.4 + t * 0.7)) - 0.5
+        );
+        vec2 warpFine = vec2(
+          valueNoise(vec2(p.x * 5.5 - t * 1.1, along * 6.0 + t)) - 0.5,
+          valueNoise(vec2(p.y * 5.0 + t * 0.9, p.x * 4.2 - along * 2.0)) - 0.5
+        );
+        float warpAmt = mix(0.04, 0.28, along * along);
+        vec2 shapeUV = p + warp * warpAmt * 2.0 + warpFine * warpAmt * 0.7;
+        float rayIntensity = 2.05;
+        float middleShape = pow(1.0 - along, 3.0) * 0.32;
+
+        vec3 accumColor = vec3(0.0);
+        float accumAlpha = 0.0;
+        vec3 tint0 = uTint;
+        vec3 tint1 = uTint * vec3(0.92, 0.96, 1.05);
+        vec3 tint2 = uTint * vec3(1.06, 0.97, 0.88);
+        vec3 tint3 = uTint * 0.78;
+        float tintA0 = 0.9;
+        float tintA1 = 0.75;
+        float tintA2 = 1.0;
+        float tintA3 = 0.7;
+        for (int i = 0; i < 4; i++) {
+          vec3 rayTint = i == 0 ? tint0 : i == 1 ? tint1 : i == 2 ? tint2 : tint3;
+          float tintA = i == 0 ? tintA0 : i == 1 ? tintA1 : i == 2 ? tintA2 : tintA3;
+          float r1 = along * (1.0 + 0.4 * float(i)) - 3.0 * t;
+          float r2 = 0.5 * along - 2.0 * t;
+          float density = 8.0 * 0.45;
+          float f = mix(1.4, 3.6 + 0.6 * float(i), hash11(float(i) * 15.0)) * density;
+          vec2 shifted = shapeUV + vec2(hash11(float(i) * 3.1) - 0.5, hash11(float(i) * 7.7) - 0.5) * 0.12;
+          float ray = raysShapeSquare(shifted, r1, 5.0 * f, rayIntensity);
+          ray *= mix(0.5, 1.0, raysShapeSquare(shifted, r2, 3.6 * f, rayIntensity));
+          ray += (0.35 + 1.2 * ray) * middleShape;
+          ray = clamp(ray, 0.0, 1.0);
+          float srcAlpha = tintA * ray;
+          vec3 srcColor = rayTint * srcAlpha;
+          float bloom = 0.4;
+          vec3 alphaBlendColor = accumColor + (1.0 - accumAlpha) * srcColor;
+          float alphaBlendAlpha = accumAlpha + (1.0 - accumAlpha) * srcAlpha;
+          accumColor = mix(alphaBlendColor, accumColor + srcColor, bloom);
+          accumAlpha = mix(alphaBlendAlpha, accumAlpha + srcAlpha, bloom);
+        }
+        vec3 bloomTint = uTint;
+        accumColor = mix(accumColor, accumColor + accumAlpha * bloomTint, 0.25);
+
+        float fall = (1.0 - along) * (1.0 - along);
+        float mouth = smoothstep(0.0, 0.06, along);
+        float intensity = accumAlpha * fall * mouth * uGain * uPresence * mix(0.9, 0.5, uLight);
+        vec3 color = uTint * intensity;
+        gl_FragColor = vec4(color, 1.0);
+        #include <colorspace_fragment>
+  `;
+  const columnMain = /* glsl */ `
+        vec3 axis = normalize(vec3(vLocal.x, 0.0, vLocal.z));
+        vec3 viewDir = normalize(cameraPosition - vWorld);
+        float ndot = abs(dot(axis, viewDir));
+        float facing = smoothstep(0.0, 0.78, ndot);
+        facing *= facing;
+        float height = ${height};
+        float down = 1.0 - clamp(vLocal.y / height + 0.5, 0.0, 1.0);
+        float ang = atan(vLocal.x, vLocal.z);
+        vec2 shapeUV = vec2(ang / PI * 0.42, down * 1.35 - 0.15);
+
+        float t = 0.2 * uTime * 4.5;
+        float radius = length(shapeUV);
+        float spots = 6.5 * 0.3;
+        float rayIntensity = 4.0 - 3.0 * 0.8;
+        float midSize = 10.0 * 0.2;
+        float middleShape = pow(0.4, 0.3) * (1.0 - smoothstep(0.02 * midSize, max(midSize, 0.000001), 3.0 * radius));
+        middleShape = pow(middleShape, 5.0);
+
+        vec3 accumColor = vec3(0.0);
+        float accumAlpha = 0.0;
+        vec3 tint0 = vec3(1.0, 1.0, 1.0);
+        vec3 tint1 = vec3(0.9, 0.95, 1.0);
+        vec3 tint2 = vec3(1.0, 0.98, 0.94);
+        vec3 tint3 = vec3(0.85, 0.96, 1.0);
+        float tintA0 = 0.9;
+        float tintA1 = 0.75;
+        float tintA2 = 1.0;
+        float tintA3 = 0.7;
+        for (int i = 0; i < 4; i++) {
+          vec3 rayTint = i == 0 ? tint0 : i == 1 ? tint1 : i == 2 ? tint2 : tint3;
+          float tintA = i == 0 ? tintA0 : i == 1 ? tintA1 : i == 2 ? tintA2 : tintA3;
+          vec2 rotatedUV = rotate(shapeUV, float(i) + 1.0);
+          float r1 = radius * (1.0 + 0.4 * float(i)) - 3.0 * t;
+          float r2 = 0.5 * radius * (1.0 + spots) - 2.0 * t;
+          float density = 6.0 * 0.3;
+          float f = mix(1.0, 3.0 + 0.5 * float(i), hash11(float(i) * 15.0)) * density;
+          float ray = raysShape(rotatedUV, r1, 5.0 * f, rayIntensity);
+          ray *= raysShape(rotatedUV, r2, 4.0 * f, rayIntensity);
+          ray += (1.0 + 4.0 * ray) * middleShape;
+          ray = clamp(ray, 0.0, 1.0);
+          float srcAlpha = tintA * ray;
+          vec3 srcColor = rayTint * srcAlpha;
+          float bloom = 0.4;
+          vec3 alphaBlendColor = accumColor + (1.0 - accumAlpha) * srcColor;
+          float alphaBlendAlpha = accumAlpha + (1.0 - accumAlpha) * srcAlpha;
+          accumColor = mix(alphaBlendColor, accumColor + srcColor, bloom);
+          accumAlpha = mix(alphaBlendAlpha, accumAlpha + srcAlpha, bloom);
+        }
+        vec3 bloomTint = vec3(0.75, 0.82, 1.0);
+        accumColor = mix(accumColor, accumColor + accumAlpha * bloomTint, 0.4);
+
+        float y01 = clamp(vLocal.y / height + 0.5, 0.0, 1.0);
+        float base = pow(smoothstep(0.08, 0.65, y01 * height), 2.2);
+        float tip = 1.0 - smoothstep(0.62, 1.0, y01);
+        float alpha = facing * accumAlpha * base * tip * uGain * uPresence * mix(1.0, 0.55, uLight);
+        vec3 color = accumColor * mix(vec3(6.0), vec3(4.2, 4.0, 3.6), uLight) * uTint;
+        float ca = 0.045 * sin(ang * 2.0 + uTime * 0.15);
+        color.r *= 1.0 + ca;
+        color.b *= 1.0 - ca;
+        gl_FragColor = vec4(color, alpha);
+        #include <colorspace_fragment>
+  `;
+  return new ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    depthTest: true,
+    toneMapped: !square,
+    blending: AdditiveBlending,
+    side: DoubleSide,
+    fog: false,
+    uniforms: {
+      uTime: options.time,
+      uLight: options.theme,
+      uGain: { value: options.gain },
+      uPresence: options.presence,
+      uTint: { value: tint },
+    },
+    vertexShader: /* glsl */ `
+      varying vec3 vLocal;
+      varying vec3 vWorld;
+      varying vec3 vViewLocal;
+      void main() {
+        vLocal = position;
+        vec4 world = modelMatrix * vec4(position, 1.0);
+        vWorld = world.xyz;
+        vec3 worldView = cameraPosition - world.xyz;
+        vec3 vx = normalize(modelMatrix[0].xyz);
+        vec3 vy = normalize(modelMatrix[1].xyz);
+        vec3 vz = normalize(modelMatrix[2].xyz);
+        vViewLocal = vec3(dot(worldView, vx), dot(worldView, vy), dot(worldView, vz));
+        gl_Position = projectionMatrix * viewMatrix * world;
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform float uTime;
+      uniform float uLight;
+      uniform float uGain;
+      uniform float uPresence;
+      uniform vec3 uTint;
+      #define TWO_PI 6.28318530718
+      #define PI 3.14159265359
+      varying vec3 vLocal;
+      varying vec3 vWorld;
+      varying vec3 vViewLocal;
+
+      vec2 rotate(vec2 uv, float th) {
+        return mat2(cos(th), sin(th), -sin(th), cos(th)) * uv;
+      }
+      float hash11(float p) {
+        p = fract(p * 0.3183099) + 0.1;
+        p *= p + 19.19;
+        return fract(p * p);
+      }
+      float hash21(vec2 p) {
+        p = fract(p * vec2(0.3183099, 0.3678794)) + 0.1;
+        p += dot(p, p + 19.19);
+        return fract(p.x * p.y);
+      }
+      float valueNoise(vec2 st) {
+        vec2 i = floor(st);
+        vec2 f = fract(st);
+        float a = hash21(i);
+        float b = hash21(i + vec2(1.0, 0.0));
+        float c = hash21(i + vec2(0.0, 1.0));
+        float d = hash21(i + vec2(1.0, 1.0));
+        vec2 u = f * f * (3.0 - 2.0 * f);
+        return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+      }
+      float raysShape(vec2 uv, float r, float freq, float intensity) {
+        float a = atan(uv.y, uv.x);
+        vec2 left = vec2(a * freq, r);
+        vec2 right = vec2(fract(a / TWO_PI) * TWO_PI * freq, r);
+        float nLeft = pow(valueNoise(left), intensity);
+        float nRight = pow(valueNoise(right), intensity);
+        return mix(nRight, nLeft, smoothstep(-0.15, 0.15, uv.x));
+      }
+      float raysShapeSquare(vec2 uv, float r, float freq, float intensity) {
+        float nx = pow(valueNoise(vec2(uv.x * freq, r)), intensity);
+        float ny = pow(valueNoise(vec2(uv.y * freq * 0.8, r * 1.2)), intensity);
+        float holes = pow(valueNoise(vec2(uv.x * freq * 1.7 + r * 0.55, uv.y * freq * 1.5 - r)), intensity + 0.7);
+        return nx * ny * mix(0.22, 1.0, holes);
+      }
+
+      void main() {
+        if (uPresence < 0.001) discard;
+        ${square ? squareMain : columnMain}
+      }
+    `,
+  });
 }
 
 /** Metres climbed: slow for 2s, then speed eases up over the next 4s. */
@@ -164,136 +373,8 @@ export function createSpawnRay(height: number): {
   const time = { value: 0 };
   const theme = { value: 0 };
   const presence = { value: 0 };
-  const shaft = (gain: number) =>
-    new ShaderMaterial({
-      transparent: true,
-      depthWrite: false,
-      blending: AdditiveBlending,
-      side: DoubleSide,
-      fog: false,
-      uniforms: { uTime: time, uLight: theme, uGain: { value: gain }, uPresence: presence },
-      vertexShader: /* glsl */ `
-        varying vec3 vLocal;
-        varying vec3 vWorld;
-        void main() {
-          vLocal = position;
-          vec4 world = modelMatrix * vec4(position, 1.0);
-          vWorld = world.xyz;
-          gl_Position = projectionMatrix * viewMatrix * world;
-        }
-      `,
-      fragmentShader: /* glsl */ `
-        uniform float uTime;
-        uniform float uLight;
-        uniform float uGain;
-        uniform float uPresence;
-        #define TWO_PI 6.28318530718
-        #define PI 3.14159265359
-        varying vec3 vLocal;
-        varying vec3 vWorld;
-
-        vec2 rotate(vec2 uv, float th) {
-          return mat2(cos(th), sin(th), -sin(th), cos(th)) * uv;
-        }
-        float hash11(float p) {
-          p = fract(p * 0.3183099) + 0.1;
-          p *= p + 19.19;
-          return fract(p * p);
-        }
-        float hash21(vec2 p) {
-          p = fract(p * vec2(0.3183099, 0.3678794)) + 0.1;
-          p += dot(p, p + 19.19);
-          return fract(p.x * p.y);
-        }
-        float valueNoise(vec2 st) {
-          vec2 i = floor(st);
-          vec2 f = fract(st);
-          float a = hash21(i);
-          float b = hash21(i + vec2(1.0, 0.0));
-          float c = hash21(i + vec2(0.0, 1.0));
-          float d = hash21(i + vec2(1.0, 1.0));
-          vec2 u = f * f * (3.0 - 2.0 * f);
-          return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
-        }
-        float raysShape(vec2 uv, float r, float freq, float intensity) {
-          float a = atan(uv.y, uv.x);
-          vec2 left = vec2(a * freq, r);
-          vec2 right = vec2(fract(a / TWO_PI) * TWO_PI * freq, r);
-          float nLeft = pow(valueNoise(left), intensity);
-          float nRight = pow(valueNoise(right), intensity);
-          return mix(nRight, nLeft, smoothstep(-0.15, 0.15, uv.x));
-        }
-
-        void main() {
-          if (uPresence < 0.001) discard;
-          vec3 axis = normalize(vec3(vLocal.x, 0.0, vLocal.z));
-          vec3 viewDir = normalize(cameraPosition - vWorld);
-          float ndot = abs(dot(axis, viewDir));
-          float facing = smoothstep(0.0, 0.78, ndot);
-          facing *= facing;
-          float height = ${height.toFixed(1)};
-          float down = 1.0 - clamp(vLocal.y / height + 0.5, 0.0, 1.0);
-          float ang = atan(vLocal.x, vLocal.z);
-          vec2 shapeUV = vec2(ang / PI * 0.42, down * 1.35 - 0.15);
-
-          float t = 0.2 * uTime * 4.5;
-          float radius = length(shapeUV);
-          float spots = 6.5 * 0.3;
-          float rayIntensity = 4.0 - 3.0 * 0.8;
-          float midSize = 10.0 * 0.2;
-          float middleShape = pow(0.4, 0.3) * (1.0 - smoothstep(0.02 * midSize, max(midSize, 0.000001), 3.0 * radius));
-          middleShape = pow(middleShape, 5.0);
-
-          vec3 accumColor = vec3(0.0);
-          float accumAlpha = 0.0;
-          vec3 tint0 = vec3(1.0, 1.0, 1.0);
-          vec3 tint1 = vec3(0.9, 0.95, 1.0);
-          vec3 tint2 = vec3(1.0, 0.98, 0.94);
-          vec3 tint3 = vec3(0.85, 0.96, 1.0);
-          float tintA0 = 0.9;
-          float tintA1 = 0.75;
-          float tintA2 = 1.0;
-          float tintA3 = 0.7;
-          for (int i = 0; i < 4; i++) {
-            vec3 tint = i == 0 ? tint0 : i == 1 ? tint1 : i == 2 ? tint2 : tint3;
-            float tintA = i == 0 ? tintA0 : i == 1 ? tintA1 : i == 2 ? tintA2 : tintA3;
-            vec2 rotatedUV = rotate(shapeUV, float(i) + 1.0);
-            float r1 = radius * (1.0 + 0.4 * float(i)) - 3.0 * t;
-            float r2 = 0.5 * radius * (1.0 + spots) - 2.0 * t;
-            float density = 6.0 * 0.3;
-            float f = mix(1.0, 3.0 + 0.5 * float(i), hash11(float(i) * 15.0)) * density;
-            float ray = raysShape(rotatedUV, r1, 5.0 * f, rayIntensity);
-            ray *= raysShape(rotatedUV, r2, 4.0 * f, rayIntensity);
-            ray += (1.0 + 4.0 * ray) * middleShape;
-            ray = clamp(ray, 0.0, 1.0);
-            float srcAlpha = tintA * ray;
-            vec3 srcColor = tint * srcAlpha;
-            float bloom = 0.4;
-            vec3 alphaBlendColor = accumColor + (1.0 - accumAlpha) * srcColor;
-            float alphaBlendAlpha = accumAlpha + (1.0 - accumAlpha) * srcAlpha;
-            accumColor = mix(alphaBlendColor, accumColor + srcColor, bloom);
-            accumAlpha = mix(alphaBlendAlpha, accumAlpha + srcAlpha, bloom);
-          }
-          vec3 bloomTint = vec3(0.75, 0.82, 1.0);
-          accumColor = mix(accumColor, accumColor + accumAlpha * bloomTint, 0.4);
-
-          float y01 = clamp(vLocal.y / height + 0.5, 0.0, 1.0);
-          float base = pow(smoothstep(0.08, 0.65, y01 * height), 2.2);
-          float tip = 1.0 - smoothstep(0.62, 1.0, y01);
-          float alpha = facing * accumAlpha * base * tip * uGain * uPresence * mix(1.0, 0.55, uLight);
-          vec3 color = accumColor * mix(vec3(6.0), vec3(4.2, 4.0, 3.6), uLight);
-          // Soft object-space chromatic fringe, not view-dependent.
-          float ca = 0.045 * sin(ang * 2.0 + uTime * 0.15);
-          color.r *= 1.0 + ca;
-          color.b *= 1.0 - ca;
-          gl_FragColor = vec4(color, alpha);
-          #include <colorspace_fragment>
-        }
-      `,
-    });
-
-  const haloMaterial = shaft(0.72);
-  const beamMaterial = shaft(1.15);
+  const haloMaterial = createGodRayMaterial({ length: height, gain: 0.72, time, theme, presence });
+  const beamMaterial = createGodRayMaterial({ length: height, gain: 1.15, time, theme, presence });
   const halo = new Mesh(new CylinderGeometry(1.35, 1.35, height, 128, 64, true), haloMaterial);
   const beam = new Mesh(new CylinderGeometry(0.7, 0.7, height, 160, 80, true), beamMaterial);
   halo.position.y = height / 2;
@@ -316,15 +397,6 @@ export function createSpawnRay(height: number): {
   foot.position.y = 0.012;
   foot.rotation.x = Math.PI / 2;
   group.add(base, top, lip, foot);
-
-  const spot = new SpotLight(0xffffff, 180, 48, 0.07, 0.45, 0.7);
-  spot.position.set(0, 34, 0);
-  spot.target.position.set(0, 0, 0);
-  const fill = new PointLight(0xeef3ff, 150, 56, 1.45);
-  fill.position.set(0, 8, 0);
-  group.add(spot, spot.target, fill);
-  let spotBase = 180;
-  let fillBase = 150;
 
   const pulseGlow = (seed: number) =>
     new ShaderMaterial({
@@ -464,9 +536,6 @@ export function createSpawnRay(height: number): {
     colliders: [base, top],
     setTheme(light: boolean) {
       theme.value = light ? 1 : 0;
-      spotBase = light ? 90 : 180;
-      fillBase = light ? 36 : 150;
-      spot.color.set(0xffffff);
       deckMaterial.color.set(light ? 0xf4f1ea : 0x141418);
       deckMaterial.emissive.set(light ? 0x6b707c : 0x000000);
       lipMaterial.color.set(light ? 0x3a3d44 : 0xffffff);
@@ -520,13 +589,6 @@ export function createSpawnRay(height: number): {
       const radiusScale = live ? 1 - 0.45 * dying : 0.55;
       halo.scale.set(radiusScale, 1, radiusScale);
       beam.scale.set(radiusScale, 1, radiusScale);
-
-      const a = Math.sin(now * 0.37);
-      const b = Math.sin(now * 0.91 + 1.7);
-      const flicker = 0.86 + 0.09 * a + 0.05 * b;
-      spot.intensity = spotBase * flicker * amount;
-      const shimmer = glowNoise(now * 2.8) * 0.55 + glowNoise(now * 6.4 + 4.2) * 0.3 + glowNoise(now * 11.5 + 1.7) * 0.15;
-      fill.intensity = fillBase * (0.4 + 0.85 * shimmer) * amount;
 
       if (amount > 0.15 && now >= nextPulse) {
         const pulse = pulses.find((entry) => entry.born < 0);
@@ -642,8 +704,6 @@ export function createSpawnRay(height: number): {
       for (const pulse of pulses) pulse.rimMaterial.dispose();
       sparkGeometry.dispose();
       sparkMaterial.dispose();
-      spot.dispose();
-      fill.dispose();
     },
   };
 }
