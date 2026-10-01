@@ -1022,6 +1022,11 @@ function renderCard(world: WorldEntry): HTMLLIElement {
   const item = document.createElement('li');
   item.className = 'card';
 
+  const title = document.createElement('h2');
+  title.className = 'card-title';
+  title.textContent = world.name;
+  item.appendChild(title);
+
   const link = document.createElement('a');
   link.href = world.url;
   link.addEventListener('click', () => trackClick(world.url));

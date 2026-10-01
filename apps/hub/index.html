@@ -518,6 +518,30 @@
       }
       .card-clicks svg { opacity: 0.5; }
 
+      /* Desktop: the name sits big in the top-left of the cover, the badge top-right. */
+      .card-title {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 6;
+        margin: 0;
+        padding: 14px 72px 32px 16px;
+        font-size: 24px;
+        font-weight: 700;
+        line-height: 1.15;
+        color: #fff;
+        text-shadow: 0 1px 8px rgba(0, 0, 0, 0.5);
+        background: linear-gradient(to bottom, rgba(0, 0, 0, 0.45), transparent);
+        pointer-events: none;
+        text-transform: none;
+        letter-spacing: normal;
+        font-family: inherit;
+        overflow-wrap: anywhere;
+      }
+      .card-new { left: auto; right: 12px; }
+      .card-name { display: none; }
+
       @media (max-width: 600px) {
         /* main is the scroller: a fixed-height box, so the browser toolbar
            never collapses mid-swipe and resizes the snap targets. */
@@ -576,6 +600,21 @@
           overflow: hidden;
           background: var(--card);
         }
+        .card-grid > .card { flex-direction: column; gap: 8px; }
+        .card-grid > .card > a { max-height: calc(100% - 56px); }
+        .card-title {
+          position: static;
+          align-self: stretch;
+          padding: 0 16px;
+          font-size: 20px;
+          color: var(--text);
+          text-shadow: none;
+          background: none;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .card-new { left: 12px; right: auto; }
         .card-grid > .card::before { display: none; }
         .card-grid > .card::after { border-radius: 12px; }
       }
