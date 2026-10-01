@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>About — WorldMesh</title>
+    <meta name="description" content="WorldMesh is an open network connecting independently hosted 3D worlds across the web." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      :root { color-scheme: light dark; }
+      * { box-sizing: border-box; margin: 0; }
+      body {
+        background: #000; color: #ccc;
+        font-family: "Urbanist", system-ui, sans-serif;
+        padding: 4vh 20px 80px;
+        display: flex; justify-content: center;
+        -webkit-font-smoothing: antialiased;
+      }
+      @media (prefers-color-scheme: light) {
+        body { background: #fff; color: #222; }
+        a { color: #444; }
+      }
+      main { max-width: 640px; width: 100%; }
+      h1 { font-size: 24px; font-weight: 600; margin: 0 0 8px; color: #fff; }
+      @media (prefers-color-scheme: light) { h1 { color: #111; } }
+      .back { font-size: 13px; color: #888; text-decoration: none; display: inline-block; margin-bottom: 24px; }
+      .back:hover { color: #fff; }
+      .tagline { font-size: 15px; color: #888; margin-bottom: 32px; }
+      blockquote { font-size: 15px; font-style: italic; margin: 0 0 12px; padding-left: 14px; border-left: 2px solid #444; }
+      h2 { font-size: 15px; font-weight: 600; margin: 28px 0 8px; color: #eee; }
+      @media (prefers-color-scheme: light) { h2 { color: #222; } }
+      p, ul { font-size: 14px; line-height: 1.7; margin: 0 0 12px; }
+      ul { padding-left: 20px; }
+      a { color: #999; }
+      /* Hide scrollbar on mobile across all browsers (Firefox, Chrome, Safari, Edge) */
+      @media (max-width: 600px), (pointer: coarse) {
+        html, body { scrollbar-width: none; -ms-overflow-style: none; }
+        html::-webkit-scrollbar, body::-webkit-scrollbar { display: none; width: 0; height: 0; background: transparent; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <a class="back" href="/">← Back to WorldMesh</a>
+      <h1>About WorldMesh</h1>
+      <p class="tagline">An open network of 3D worlds</p>
+
+      <p>WorldMesh connects independently hosted 3D worlds across the web.</p>
+      <p>Creators build and host their worlds wherever they want. WorldMesh connects them through a shared discovery and navigation layer, making it easier for people to move from one world to another.</p>
+      <p>The worlds remain independent. WorldMesh does not need to own or host them.</p>
+
+      <h2>Mission</h2>
+      <blockquote>Make the open web feel like one connected 3D space.</blockquote>
+      <p>WorldMesh aims to give creators a common way to publish, discover and connect interactive 3D experiences without requiring them to build on a single centralized platform.</p>
+
+      <h2>Vision</h2>
+      <p>Today, 3D experiences on the web are usually isolated websites.</p>
+      <p>WorldMesh imagines something different: thousands of independently created worlds connected through common standards, where users can discover a world, enter it, explore it and continue directly into another.</p>
+      <blockquote>A web of worlds instead of one metaverse.</blockquote>
+
+      <h2>How it works</h2>
+      <p>Creators host their own worlds.</p>
+      <p>WorldMesh provides the layer connecting them:</p>
+      <ul>
+        <li>discovery</li>
+        <li>portals between worlds</li>
+        <li>common movement and camera conventions</li>
+        <li>optional shared identity</li>
+        <li>multiplayer presence</li>
+        <li>compatibility tools for creators</li>
+      </ul>
+      <p>A world can exist completely independently from WorldMesh. Connecting it simply makes it part of the wider network.</p>
+
+      <h2>Independent by design</h2>
+      <p>WorldMesh is not a hosting platform for 3D worlds.</p>
+      <p>Creators keep control over their:</p>
+      <ul>
+        <li>hosting</li>
+        <li>code</li>
+        <li>assets</li>
+        <li>design</li>
+        <li>gameplay</li>
+        <li>monetization</li>
+        <li>infrastructure</li>
+      </ul>
+      <p>WorldMesh is the connective layer between them.</p>
+
+      <h2>Built for creators</h2>
+      <p>Adding a world should be simple.</p>
+      <p>A creator can build with Three.js, WebGL, an engine, AI tools or any other technology capable of running on the web.</p>
+      <p>WorldMesh does not dictate what a world should look like or what it should be used for.</p>
+      <p>Games, social spaces, experiments, virtual environments, portfolios and completely new types of experiences can all exist on the same network.</p>
+
+      <h2>A common way to explore</h2>
+      <p>Different worlds can look completely different while still feeling familiar to navigate.</p>
+      <p>WorldMesh is developing shared conventions for movement, cameras, interaction, portals and other basic systems so users do not have to relearn everything each time they enter a new world.</p>
+
+      <h2>An open network</h2>
+      <p>The long-term goal is not to create one giant centrally controlled virtual world.</p>
+      <p>It is to connect many independent ones.</p>
+      <p>Just as the web connects independently hosted websites, WorldMesh aims to connect independently hosted 3D spaces.</p>
+
+      <h2>Community</h2>
+      <p>WorldMesh grows through the creators building worlds and the people exploring them.</p>
+      <p>Anyone can <a href="/">submit a world</a> and help expand the network.</p>
+
+      <h2>Open source</h2>
+      <p>WorldMesh is being developed openly.</p>
+      <p>Its compatibility tools, shared runtime and technical documentation are available through the <a href="https://github.com/eliaswillnat/worldmesh" target="_blank" rel="noopener noreferrer">WorldMesh GitHub repository</a>.</p>
+
+      <h2>Created by Elias Willnat</h2>
+      <p>WorldMesh began in 2026 as an experiment around a simple question:</p>
+      <blockquote>What if 3D worlds on the web could connect to each other instead of existing as isolated experiences?</blockquote>
+      <p>That experiment became WorldMesh.</p>
+    </main>
+  </body>
+</html>
