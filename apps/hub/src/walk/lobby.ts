@@ -213,6 +213,12 @@ const PRIVATE_FADE_MS = 260;
 const GHOST_OPACITY = 0.38;
 const GHOST_SHIMMER = 0.08;
 const GHOST_GLOW = 0x5cc8ff;
+/**
+ * Someone else first seen this close to the spawn point has just entered, so
+ * the beam lights for us too. Inside the nearest door's return spot (8.6 m), so
+ * visitors walking back out of a world do not set it off.
+ */
+const ARRIVE_RADIUS = 6;
 /** How long the local figure takes to fill in from points on spawn. */
 const SPAWN_APPEAR = 1.15;
 /** Billboards further than this are not picked by the crosshair or a tap. */
@@ -440,6 +446,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         (count) => options.onPresenceCount?.(count),
         () => (alias ? null : options.playerName?.() ?? null),
         () => alias,
+        // Someone else entering lights the same beam for everyone watching.
+        // Visitors coming back out of a world appear at a door, not here.
+        (x, z) => {
+          if (Math.hypot(x - SPAWN[0], z - SPAWN[2]) < ARRIVE_RADIUS) spawnRay.trigger();
+        },
       )
     : undefined;
 

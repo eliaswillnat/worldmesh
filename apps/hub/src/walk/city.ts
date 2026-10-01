@@ -150,8 +150,9 @@ export function createSpawnRay(height: number): {
   /** The dais under the beam. Solid, so a visitor can stand on it. */
   colliders: Mesh[];
   setTheme(light: boolean): void;
-  /** Restart the fade-in → hold → fade-out when the visitor spawns.
-   *  Pass `performance.now()` from the Walk click so the beam begins then. */
+  /** Restart the fade-in → hold → fade-out when a visitor spawns (this one or
+   *  someone else). Pass `performance.now()` from the Walk click so the beam
+   *  begins then. While it is still lit, it holds again rather than restarting. */
   trigger(fromWallClock?: number): void;
   /** Drive animations. Returns 0–1 presence of the god-ray (for wobble / refraction). */
   setTime(time: number): number;
@@ -476,7 +477,16 @@ export function createSpawnRay(height: number): {
     },
     setTime(now: number) {
       time.value = now;
-      if (pendingTrigger) {
+      // Fade in (ease-in) → brief hold → fade out (ease-out).
+      const fadeIn = 0.7;
+      const hold = 0.75;
+      const fadeOut = 0.65;
+      if (pendingTrigger && presence.value > 0.02) {
+        // Already lit (someone else arrived a moment ago): carry on from the
+        // same brightness on the way up, and hold again, instead of dropping to dark.
+        pendingTrigger = false;
+        startedAt = now - Math.pow(presence.value, 1 / 5) * fadeIn;
+      } else if (pendingTrigger) {
         pendingTrigger = false;
         // Age includes time since the Walk click, not since this frame.
         const lag = Math.max(0, (performance.now() - triggerWallClock) / 1000);
@@ -490,11 +500,7 @@ export function createSpawnRay(height: number): {
         }
         for (let i = 0; i < sparkCount; i++) sparkBorn[i] = -1;
       }
-      // Fade in (ease-in) → brief hold → fade out (ease-out).
       const age = now - startedAt;
-      const fadeIn = 0.7;
-      const hold = 0.75;
-      const fadeOut = 0.65;
       let amount = 0;
       let dying = 0;
       if (age >= 0 && age < fadeIn) {
