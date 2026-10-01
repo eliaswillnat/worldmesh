@@ -37,9 +37,9 @@ database_id = "4eaef9b3-1429-4f73-b817-eb3da824e7a3"
 # The hub's world directory: the KV namespace bound as WORLDS on the
 # worldmesh-hub Pages project (Pages → worldmesh-hub → Settings → Bindings).
 # Paste its id here; until then /worlds says the binding is missing.
-# [[kv_namespaces]]
-# binding = "WORLDS"
-# id = "<WORLDS namespace id>"
+[[kv_namespaces]]
+binding = "WORLDS"
+id = "06ab6b80565e468ab20e8490152fd690"
 
 # workers/views' counters.
 [[kv_namespaces]]
