@@ -29,5 +29,14 @@
     "portfolio": "https://x.com/SumbaSurf",
     "addedAt": "2026-09-29T16:46:08Z",
     "categories": ["games"]
+  },
+  {
+    "id": "threejs-cafe-k4r7cf",
+    "name": "THREEJS café",
+    "url": "https://threejscafe.com",
+    "description": "An always-open virtual café where you can explore arcade games, prototypes and a robot arena in a rainy Three.js world.",
+    "cover": "/covers/threejs-cafe.webp",
+    "addedAt": "2026-10-01T12:00:00Z",
+    "categories": ["explore"]
   }
 ]
