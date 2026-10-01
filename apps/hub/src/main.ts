@@ -785,7 +785,12 @@ async function fetchCommunityWorlds(): Promise<void> {
   try {
     const res = await fetch('/api/worlds');
     if (!res.ok) return;
-    communityWorlds = (await res.json()) as WorldEntry[];
+    // Curated entries in community.json win over the server's copy of the
+    // same world, so a cover swapped here is the one people see.
+    const curated = new Map((communityWorldsStatic as WorldEntry[]).map((w) => [w.url, w]));
+    const remote = ((await res.json()) as WorldEntry[]).map((w) => curated.get(w.url) ?? w);
+    const remoteUrls = new Set(remote.map((w) => w.url));
+    communityWorlds = [...remote, ...[...curated.values()].filter((w) => !remoteUrls.has(w.url))];
     ALL_WORLDS.length = 0;
     ALL_WORLDS.push(...communityWorlds, ...DEMO_WORLDS);
     render();
