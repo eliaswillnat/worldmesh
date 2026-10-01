@@ -146,8 +146,10 @@ export class Presence implements NetworkAdapter {
         if (remote.bubbleLeft <= 0) dropBubble(remote);
       }
 
+      // The frame that crosses the end of the fade lands on fully opaque, however long it was.
+      const fading = remote.appear < APPEAR_FADE;
       remote.appear += dt;
-      if (remote.appear < APPEAR_FADE + 0.05) {
+      if (fading) {
         const t = Math.min(1, remote.appear / APPEAR_FADE);
         setFigureOpacity(remote.root, t * t * (3 - 2 * t));
       }
@@ -335,14 +337,20 @@ const GUEST = 'Guest';
 /** Ease every mesh on an avatar toward a shared opacity. */
 function setFigureOpacity(root: Object3D, amount: number): void {
   const solid = amount >= 0.999;
+  let outlined = false;
+  root.traverse((child) => {
+    if (child instanceof Mesh && child.userData.stroke === true) outlined = true;
+  });
   root.traverse((child) => {
     if (!(child instanceof Mesh)) return;
     for (const material of Array.isArray(child.material) ? child.material : [child.material]) {
-      // An outline shell fades like the body; the drawn-on face stays see-through.
-      const face = material instanceof MeshBasicMaterial && material.userData.stroke !== true;
+      const stroke = material.userData.stroke === true;
+      const face = material instanceof MeshBasicMaterial && !stroke;
       material.transparent = face || !solid;
       material.opacity = amount;
-      material.depthWrite = !face && solid;
+      // An outline sits behind the body, so a fading body still writes depth
+      // to keep the outline's far side from showing through it as a black blob.
+      material.depthWrite = stroke ? solid : !face && (solid || outlined);
       material.needsUpdate = true;
     }
   });
