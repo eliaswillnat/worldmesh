@@ -97,7 +97,7 @@ export class CityDebug {
   /** Fill the city with made-up worlds, a few of them with a preview loop. */
   private async synthetic(count: number): Promise<void> {
     this.previewUrl ??= await recordPreview().catch(() => null);
-    const covers = ['/covers/forest.webp', '/covers/mars.webp', '/covers/city.webp', '/covers/medieval.webp', '/covers/space.webp', '/covers/sumbasurf.webp', '/covers/skydex-3x4.webp'];
+    const covers = ['/covers/forest.webp', '/covers/mars.webp', '/covers/city.webp', '/covers/medieval.webp', '/covers/space.webp', '/covers/sumbasurf-wave.webp', '/covers/skydex-3x4.webp'];
     const categories = ['explore', 'games', 'space'];
     const creators = ['Ada', 'Bo', 'Chen', 'Dani', 'Eli', 'Fen', 'Gus', 'Hana', 'Ines', 'Jo', 'Kai', 'Lu'];
     const records: WorldRecordInput[] = [...this.city.repository.all()].map((listing) => ({
