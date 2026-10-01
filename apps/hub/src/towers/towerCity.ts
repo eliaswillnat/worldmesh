@@ -35,7 +35,7 @@ import { createCityMaterials, type CityMaterials } from './materials';
 import { planCity, type BridgePlan, type CityData, type CityPlan, type TowerPlan, type WallPosition } from './plan';
 import { DoorPreviewManager } from './previews';
 import { DoorRotationManager } from './rotationManager';
-import { createTowerShell, type TowerShell } from './shell';
+import { createTowerShell, type TowerBanner, type TowerShell } from './shell';
 import { SILENT_SHUTTERS } from './shutter';
 import { DetailGeometry, TowerDetail, floorSurface } from './towerDetail';
 
@@ -66,6 +66,8 @@ export interface TowerCityOptions {
   data?: CityData;
   /** Someone walked into (or picked) a world. The lobby takes it from here. */
   onEnterWorld(listing: WorldListing, returnTo: WalkSpot): void;
+  /** Pictures hung around the outside of every tower. */
+  banners?: TowerBanner[];
 }
 
 interface TowerState {
@@ -365,6 +367,7 @@ export class TowerCity {
     this.updateColliders([x, y, z]);
 
     for (const tower of this.towers.values()) {
+      tower.shell.update(dt);
       tower.platform?.sync(dt);
       tower.detail?.sync();
     }
@@ -533,8 +536,9 @@ export class TowerCity {
     const elevators = new Map([...this.towers].map(([id, tower]) => [id, tower.elevator]));
     this.teardown();
     this.plan = plan;
-    for (const tower of plan.towers) {
-      const shell = createTowerShell(tower, this.config, this.materials, this.options.interiorLayer);
+    const banners = this.options.banners ?? [];
+    plan.towers.forEach((tower, index) => {
+      const shell = createTowerShell(tower, this.config, this.materials, this.options.interiorLayer, banners, index);
       shell.setTheme(this.light);
       shell.setInteriorVisible(false);
       this.group.add(shell.group);
@@ -542,7 +546,7 @@ export class TowerCity {
       const previous = elevators.get(tower.id);
       const elevator = previous && previous.tower.floorCount === tower.floorCount ? previous : new DiscoveryElevator(tower, this.config, { arrived: () => {} });
       this.towers.set(tower.id, { plan: tower, shell, elevator, detail: null, platform: null });
-    }
+    });
     this.bridges = new BridgeManager(plan, this.config, this.materials, this.categories);
     this.group.add(this.bridges.group);
     this.paths = new PathManager(plan, this.config, this.citadelOuter, this.light);

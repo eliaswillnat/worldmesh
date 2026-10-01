@@ -150,8 +150,9 @@ export interface UiOptions {
    */
   deferLockPanel?: boolean;
   /**
-   * Keyboard movement works before the first click. Mouse look still waits
-   * for pointer lock.
+   * Walking starts immediately. The keyboard and the on-screen joysticks work
+   * before any click, and Esc holds them until Continue. Mouse look still
+   * waits for pointer lock.
    */
   moveBeforeLock?: boolean;
 }

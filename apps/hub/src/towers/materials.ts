@@ -6,7 +6,7 @@ import { Color, DoubleSide, MeshBasicMaterial, MeshStandardMaterial, type Object
  * however many floors are loaded.
  */
 export interface CityMaterials {
-  /** Slabs, decks, platforms: dark or warm-grey structure. */
+  /** Slabs, decks, platforms. In daylight this is the citadel's white. */
   structure: MeshStandardMaterial;
   /** Door frames, lift doors, jambs: a shade apart from the structure. */
   frame: MeshStandardMaterial;
@@ -52,15 +52,16 @@ export const PALETTES: Record<'dark' | 'light', CityPalette> = {
     night: 1,
   },
   light: {
-    structure: 0xb9b6ae,
-    structureGlow: 0x2a2a28,
-    frame: 0x8f8d88,
+    // The citadel wall: near-white, with the same emissive lift so the shade stays white.
+    structure: 0xf5f6fa,
+    structureGlow: 0x6b707c,
+    frame: 0xf5f6fa,
     trim: 0x2b2d33,
     glass: 0x5d7188,
-    shell: 0xc4c1b9,
-    shellLine: 0x8a877f,
-    shellGlow: 0x2e3440,
-    interior: 0xcfccc4,
+    shell: 0xf5f6fa,
+    shellLine: 0xd5d9e2,
+    shellGlow: 0x9aa3b2,
+    interior: 0xf5f6fa,
     shutter: 0x7c7f86,
     night: 0,
   },
@@ -93,7 +94,12 @@ export function createCityMaterials(light: boolean): CityMaterials {
       const palette = PALETTES[next ? 'light' : 'dark'];
       structure.color.set(palette.structure);
       structure.emissive.set(palette.structureGlow);
+      structure.roughness = next ? 0.7 : 0.82;
+      structure.metalness = 0;
       frame.color.set(palette.frame);
+      frame.emissive.set(next ? palette.structureGlow : 0x000000);
+      frame.roughness = next ? 0.7 : 0.55;
+      frame.metalness = next ? 0 : 0.25;
       trim.color.set(palette.trim);
       glass.color.set(palette.glass);
       glass.opacity = next ? 0.22 : 0.14;

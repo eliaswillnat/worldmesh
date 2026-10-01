@@ -28,6 +28,7 @@ import {
 import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { CITY_GLOW_WHITE, applyCityTheme, applySkyTheme, createBeamRefraction, createCityMaterials, createSky, createSpawnRay, flipInside, skyHorizon } from './city';
+import { isStrokeMaterial, setFigureStroke, setStrokeOpacity } from './stroke';
 import { Presence } from './presence';
 import { DOOR_HALF_SPAN, DOOR_TOP, Door, type DoorWorld } from './door';
 import { ImageCropper } from '../cropper';
@@ -402,6 +403,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     light,
     touch: isTouch,
     interiorLayer: FLOOR_LAYER,
+    banners: Object.values(cityMaterials.banners),
     signals: options.signals,
     onEnterWorld: (listing, returnTo) =>
       travel({ name: listing.name, url: listing.url, cover: listing.cover, color: listing.color, creator: listing.creator.name }, returnTo, null),
@@ -592,6 +594,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       placeChatBubble();
     },
   });
+  setFigureStroke(world.avatar, light);
+  presence?.setStroke(light);
   if (alias) ghost = makeGhost(world.avatar);
 
   // Chat is a bubble over your head. Enter opens it, Enter sends it, then it
@@ -821,6 +825,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     const press = pressAt;
     pressAt = null;
     if (!press || document.pointerLockElement === renderer.domElement || adModal || claimModal) return;
+    // A mouse click while the cursor is free captures it for looking. It is not a tap on a door.
+    if (event.pointerType === 'mouse') return;
     // A tap, not a drag to look around or a push on the joystick.
     const moved = Math.hypot(event.clientX - press.x, event.clientY - press.y);
     if (moved > 10 || performance.now() - press.time > 400) return;
@@ -1067,6 +1073,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     applyTheme();
     for (const door of [...doors.values(), ...emptyDoors, randomDoor]) door.setTheme(light);
     towerCity.setTheme(light);
+    setFigureStroke(world.avatar, light);
+    presence?.setStroke(light);
   }
 
   function applyTheme(): void {
@@ -1791,9 +1799,22 @@ function makeGhost(root: Object3D | null): Ghost | null {
   const shimmer = (time: number, appear = 1) => {
     const opacity = (GHOST_OPACITY + Math.sin(time * 3.1) * Math.sin(time * 7.3) * GHOST_SHIMMER) * appear;
     for (const material of saved.keys()) {
-      // The drawn-on face stays a little clearer than the body.
-      material.opacity = material instanceof MeshBasicMaterial ? Math.min(1, opacity * 1.8) : opacity;
+      // The drawn-on face stays a little clearer than the body. The outline fades with the body.
+      material.opacity = isStrokeMaterial(material)
+        ? opacity
+        : material instanceof MeshBasicMaterial
+          ? Math.min(1, opacity * 1.8)
+          : opacity;
     }
+    // A stroke added after the ghost was made (the light theme turning on) is not in `saved`.
+    root.traverse((child) => {
+      if (!(child instanceof Mesh) || !isStrokeMaterial(child.material as Material)) return;
+      const material = child.material as Material;
+      if (saved.has(material)) return;
+      material.transparent = true;
+      material.depthWrite = false;
+      material.opacity = opacity;
+    });
   };
   shimmer(0);
   return {
@@ -1807,13 +1828,23 @@ function makeGhost(root: Object3D | null): Ghost | null {
         material.needsUpdate = true;
       }
       saved.clear();
+      root.traverse((child) => {
+        if (!(child instanceof Mesh) || !isStrokeMaterial(child.material as Material)) return;
+        const material = child.material as Material;
+        material.opacity = 1;
+        material.transparent = false;
+        material.depthWrite = true;
+        material.needsUpdate = true;
+      });
     },
   };
 }
 
 /** Fill the local figure in from scattered points. Custom avatars fade instead. */
 function setLocalAppear(root: Object3D | null, amount: number): void {
-  if (!root || setAvatarAppear(root, amount)) return;
+  if (!root) return;
+  setStrokeOpacity(root, amount);
+  if (setAvatarAppear(root, amount)) return;
   const solid = amount >= 0.999;
   root.traverse((child) => {
     if (!(child instanceof Mesh)) return;
