@@ -672,6 +672,7 @@ function askWalk(title: string, body: string, okLabel: string): Promise<boolean>
     const onClose = () => finish();
     walkConfirm.addEventListener('close', onClose);
     walkConfirm.showModal();
+    (document.activeElement as HTMLElement | null)?.blur();
   });
 }
 

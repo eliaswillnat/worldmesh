@@ -1803,6 +1803,8 @@
         background: var(--bg);
         box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
       }
+      .walk-confirm form { display: block; margin: 0; }
+      .walk-confirm button:focus:not(:focus-visible) { outline: none; box-shadow: none; }
       .walk-confirm::backdrop { background: rgba(0, 0, 0, 0.55); }
       .walk-confirm h2 {
         margin: 0 0 8px;
@@ -1854,7 +1856,7 @@
     </button>
     <dialog class="walk-confirm" id="walk-confirm" aria-labelledby="walk-confirm-title">
       <form method="dialog">
-        <h2 id="walk-confirm-title"></h2>
+        <h2 id="walk-confirm-title" tabindex="-1" autofocus></h2>
         <p id="walk-confirm-body"></p>
         <div class="walk-confirm-actions">
           <button type="submit" value="cancel">Cancel</button>
