@@ -608,8 +608,14 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   chatField.autocomplete = 'off';
   chatField.placeholder = 'say something';
   chatField.setAttribute('aria-label', 'Say something');
+  chatField.enterKeyHint = 'send';
+  const chatClose = document.createElement('button');
+  chatClose.type = 'button';
+  chatClose.className = 'walk-bubble-close';
+  chatClose.textContent = '×';
+  chatClose.setAttribute('aria-label', 'Close chat');
   const chatSaid = document.createElement('p');
-  chatBubble.append(chatField, chatSaid);
+  chatBubble.append(chatField, chatClose, chatSaid);
   container.appendChild(chatBubble);
   for (const type of ['pointerdown', 'pointermove', 'pointerup', 'keydown', 'keyup']) {
     chatBubble.addEventListener(type, (event) => event.stopPropagation());
@@ -623,6 +629,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     // Do not preventDefault: that cancels the browser leaving pointer lock.
     closeChat();
   });
+
+  chatClose.addEventListener('click', () => closeChat());
 
   chatBubble.addEventListener('submit', (event) => {
     event.preventDefault();
@@ -642,22 +650,49 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     presence?.say(line);
   });
 
+  function openChat(): void {
+    if (chatting) return;
+    if (claimModal || adModal || warping) return;
+    if (document.querySelector('.wm-overlay')?.getAttribute('data-locked') !== 'true') return;
+    chatting = true;
+    chatSaid.textContent = '';
+    chatBubble.classList.add('saying');
+    document.documentElement.classList.add('chatting');
+    chatField.focus();
+  }
+
   const handleChatKey = (event: KeyboardEvent) => {
     if (event.key !== 'Enter' || event.repeat || chatting) return;
     const target = event.target as HTMLElement | null;
     if (target?.closest('input, textarea, select, [contenteditable="true"]')) return;
-    if (claimModal || adModal || warping) return;
-    // The pause screen goes away by clicking Continue, not by pressing Enter.
-    if (document.querySelector('.wm-overlay')?.getAttribute('data-locked') !== 'true') return;
     event.preventDefault();
-    chatting = true;
-    chatSaid.textContent = '';
-    chatBubble.classList.add('saying');
-    // Keep the mouse captured. Releasing it is what brings up the click-to-enter overlay.
-    document.documentElement.classList.add('chatting');
-    chatField.focus();
+    openChat();
   };
   window.addEventListener('keydown', handleChatKey);
+
+  // On touch devices, a chat button replaces the Enter key for opening chat,
+  // and tapping outside the bubble dismisses it (replaces Escape).
+  let chatBtn: HTMLButtonElement | null = null;
+  if (isTouch) {
+    chatBtn = document.createElement('button');
+    chatBtn.type = 'button';
+    chatBtn.className = 'walk-chat-btn';
+    chatBtn.textContent = '💬';
+    chatBtn.title = 'Chat';
+    chatBtn.setAttribute('aria-label', 'Open chat');
+    chatBtn.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      openChat();
+    });
+    container.appendChild(chatBtn);
+
+    container.addEventListener('pointerdown', (e) => {
+      if (!chatting) return;
+      if ((e.target as HTMLElement)?.closest('.walk-bubble, .walk-chat-btn')) return;
+      closeChat();
+    });
+  }
 
   /** Mouse look stays put while the bubble is open, without unlocking the cursor. */
   const holdLook = (event: Event) => {
@@ -1412,6 +1447,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     document.removeEventListener('wheel', holdLook, true);
     document.documentElement.classList.remove('chatting');
     chatBubble.remove();
+    chatBtn?.remove();
     for (const mesh of [...wall, ...trim]) mesh.geometry.dispose();
     wallMaterial.dispose();
     cityMaterials.dispose();
