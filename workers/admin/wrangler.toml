@@ -1,0 +1,59 @@
+name = "worldmesh-admin"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+# The admin dashboard. One Worker, two routes:
+#   admin.worldmesh.net        the dashboard (a Custom Domain: Cloudflare creates
+#                              the DNS record and certificate on deploy)
+#   worldmesh.net/api/dashboard/*   the sign-in hand-off, which has to run on the
+#                              hub's hostname to see its host-only session cookie
+# See docs/admin.md.
+routes = [
+  { pattern = "admin.worldmesh.net", custom_domain = true },
+  { pattern = "worldmesh.net/api/dashboard/*", zone_name = "worldmesh.net" },
+]
+workers_dev = false
+
+[vars]
+HUB_ORIGIN = "https://worldmesh.net"
+ADMIN_ORIGIN = "https://admin.worldmesh.net"
+# WorldMesh accounts allowed in, comma-separated. Each must be the verified
+# email of an account signed in through workers/auth.
+ADMIN_EMAILS = "elias.willnat@gmail.com"
+# Health checks for Workers that live on workers.dev rather than the hub's host.
+PRESENCE_URL = "https://worldmesh-presence.elias-willnat.workers.dev/"
+SCREENSHOT_URL = "https://worldmesh-screenshot.elias-willnat.workers.dev/"
+# Optional, for /traffic: the worldmesh.net zone id and the account id
+# (Cloudflare dashboard → worldmesh.net → Overview, right-hand column).
+CF_ZONE_ID = ""
+CF_ACCOUNT_ID = ""
+
+# Users, sessions, ads, fediverse, avatars. Read-only from here.
+[[d1_databases]]
+binding = "DB"
+database_name = "worldmesh"
+database_id = "4eaef9b3-1429-4f73-b817-eb3da824e7a3"
+
+# The hub's world directory: the KV namespace bound as WORLDS on the
+# worldmesh-hub Pages project (Pages → worldmesh-hub → Settings → Bindings).
+# Paste its id here; until then /worlds says the binding is missing.
+# [[kv_namespaces]]
+# binding = "WORLDS"
+# id = "<WORLDS namespace id>"
+
+# workers/views' counters.
+[[kv_namespaces]]
+binding = "VIEWS"
+id = "f0816126ec6b4790ae02b0c258f8ff3d"
+
+# workers/presence's rooms, read through Room.stats() (deploy presence first).
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+script_name = "worldmesh-presence"
+
+# Secrets (npx wrangler secret put <NAME> --config workers/admin/wrangler.toml):
+#   ADMIN_SECRET    random, at least 32 bytes (openssl rand -base64 32); signs
+#                   the hand-off ticket and the dashboard cookie
+#   CF_API_TOKEN    optional; Zone Analytics Read (+ Account Analytics Read)
+# Local development reads them from .dev.vars (see .dev.vars.example).

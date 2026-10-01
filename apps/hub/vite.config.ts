@@ -19,6 +19,8 @@ export default defineConfig({
       // Billboard ads: npm run dev:ads (Stripe test keys in workers/ads/.dev.vars).
       '/api/ads': 'http://localhost:8790',
       '/api/account': 'http://localhost:8788',
+      // Admin dashboard sign-in hand-off: npm run dev:admin (dashboard on localhost:8791).
+      '/api/dashboard': 'http://localhost:8791',
       '/.well-known/webfinger': 'http://localhost:8789',
       '/.well-known/nodeinfo': 'http://localhost:8789',
       '/nodeinfo': 'http://localhost:8789',

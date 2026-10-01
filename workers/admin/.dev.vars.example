@@ -1,0 +1,9 @@
+# Copy to .dev.vars for `npm run dev:admin`. Never commit .dev.vars.
+# The hub dev server (localhost:5170) proxies /api/dashboard here, so the
+# hand-off sees the hub's local session cookie (npm run dev:auth).
+HUB_ORIGIN=http://localhost:5170
+ADMIN_ORIGIN=http://localhost:8791
+ADMIN_SECRET=dev-only-admin-secret-change-me-dev-only
+# Your local account's email; it must be verified in the local D1.
+# ADMIN_EMAILS=you@example.com
+# CF_API_TOKEN=
