@@ -1,6 +1,6 @@
 {
   "name": "@worldmesh/runtime",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "The shared WorldMesh navigation runtime: controls, movement, camera, player, abilities and portals.",
   "keywords": [
     "worldmesh",
