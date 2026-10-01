@@ -265,11 +265,21 @@ export class Input {
     this.requestPointerLock();
   };
 
+  /**
+   * Captured: every movement turns the camera. Before the first click, with
+   * moveBeforeLock, the visible cursor turns it too, so looking works from the start.
+   */
   private handleMouseMove = (event: MouseEvent): void => {
-    if (!this.locked) return;
+    if (!this.locked && !this.hoverLook(event)) return;
     this.mouseDeltaX += event.movementX;
     this.mouseDeltaY += event.movementY;
   };
+
+  private hoverLook(event: MouseEvent): boolean {
+    if (!this.moveBeforeLock || this.disposed || isTouchDevice()) return false;
+    // A held button is a drag on something else, not a look.
+    return event.buttons === 0;
+  }
 
   private handleWheel = (event: WheelEvent): void => {
     if (!this.locked) return;
