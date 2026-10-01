@@ -183,7 +183,7 @@ function distribute(count: number, total: number): number[] {
 const MIN_DOORS = 24;
 const SPARE_DOORS = 6;
 /** Stand this close in front of an empty door to be offered it. */
-const EMPTY_DOOR_REACH = 2.4;
+const EMPTY_DOOR_REACH = 4.8;
 /** A tap on an empty door this far away still counts. */
 const WARP_MS = 450;
 /** Someone back from a world ends up this far out in front of the door they took. */
@@ -231,7 +231,7 @@ const FOCUS_INTERVAL = 0.1;
 /** Billboard bookings are refreshed this often while walking. */
 const BILLBOARD_REFRESH_MS = 60_000;
 /** The random door stands on the citadel's outer wall, this far along it from the gate. */
-const RANDOM_DOOR_ARC = 4.1;
+const RANDOM_DOOR_ARC = 8.2;
 /** How far the random door stands out from the outer wall. */
 const RANDOM_DOOR_OUT = 0.3;
 
@@ -1333,7 +1333,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     const gateInner = (GATE_WIDTH / 2 + 0.3) / radius;
     const gateStep = (Math.PI * 2) / GATE_COUNT;
     for (const angle of gateAngles()) {
-      band(radius - 0.03, DOOR_TOP + 1.7, angle + gateInner, gateStep - gateInner * 2);
+      band(radius - 0.03, DOOR_TOP + 2.8, angle + gateInner, gateStep - gateInner * 2);
     }
     band(radius - 0.03, CITADEL_HEIGHT - 1);
 
@@ -1391,7 +1391,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       const height = width / platform.aspect;
       const arc = width / radius;
       const start = center - arc / 2;
-      const y = 5.4 + height / 2;
+      const y = DOOR_TOP + 3.4 + height / 2;
       const segments = Math.max(12, Math.ceil(arc * 28));
       const bezel = new Mesh(
         flipInside(new CylinderGeometry(radius - 0.05, radius - 0.05, height + 0.45, segments, 1, true, start - 0.22 / radius, arc + 0.44 / radius)),
@@ -1411,11 +1411,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     const doorAngle = RANDOM_DOOR_ARC / outer;
     const around = (r: number) => [Math.sin(doorAngle) * r, Math.cos(doorAngle) * r] as const;
     const [backX, backZ] = around(outer - 0.05);
-    solid.push(place(new BoxGeometry(2.8, DOOR_TOP + 2.2, 0.5), backX, (DOOR_TOP + 2.2) / 2, backZ, doorAngle));
+    solid.push(place(new BoxGeometry(5.6, DOOR_TOP + 2.2, 0.5), backX, (DOOR_TOP + 2.2) / 2, backZ, doorAngle));
     const [porchX, porchZ] = around(outer + 0.55);
-    solid.push(place(new BoxGeometry(2.8, 0.16, 0.9), porchX, DOOR_TOP + 0.75, porchZ, doorAngle));
+    solid.push(place(new BoxGeometry(5.6, 0.16, 0.9), porchX, DOOR_TOP + 0.75, porchZ, doorAngle));
     const [lineX, lineZ] = around(outer + 1.0);
-    glow.push(place(new BoxGeometry(2.8, 0.04, 0.04), lineX, DOOR_TOP + 0.67, lineZ, doorAngle));
+    glow.push(place(new BoxGeometry(5.6, 0.04, 0.04), lineX, DOOR_TOP + 0.67, lineZ, doorAngle));
 
     const add = (geometries: BufferGeometry[], material: MeshStandardMaterial | typeof cityMaterials.glow) => {
       const mesh = new Mesh(mergeGeometries(geometries), material);
