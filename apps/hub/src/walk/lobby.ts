@@ -449,6 +449,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         onArrive: (x, z) => {
           if (Math.hypot(x - SPAWN[0], z - SPAWN[2]) < ARRIVE_RADIUS) spawnRay.trigger();
         },
+        // Other people get the same ink outline as your own figure in the light theme.
+        onFigure: (root) => setFigureStroke(root, light),
       })
     : undefined;
 
@@ -1116,6 +1118,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     for (const door of [...doors.values(), ...emptyDoors, randomDoor]) door.setTheme(light);
     towerCity.setTheme(light);
     setFigureStroke(world.avatar, light);
+    presence?.forEachFigure((root) => setFigureStroke(root, light));
   }
 
   function applyTheme(): void {

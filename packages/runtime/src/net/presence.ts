@@ -19,6 +19,8 @@ export interface PresenceOptions {
    * for the people already in the room when this visitor joins.
    */
   onArrive?: (x: number, z: number) => void;
+  /** Called with each remote figure as it is made, e.g. to add a theme's outline. */
+  onFigure?: (root: Object3D) => void;
 }
 
 /** How often the local position goes out, per second. */
@@ -75,6 +77,7 @@ export class Presence implements NetworkAdapter {
   private getName: () => string | null;
   private getAlias: () => string | null;
   private onArrive: (x: number, z: number) => void;
+  private onFigure: (root: Object3D) => void;
 
   constructor(options: PresenceOptions) {
     this.url = options.url;
@@ -82,6 +85,7 @@ export class Presence implements NetworkAdapter {
     this.getName = options.getName ?? (() => null);
     this.getAlias = options.getAlias ?? (() => null);
     this.onArrive = options.onArrive ?? (() => {});
+    this.onFigure = options.onFigure ?? (() => {});
     this.group.name = 'worldmesh:remote-players';
     options.scene.add(this.group);
   }
@@ -148,6 +152,11 @@ export class Presence implements NetworkAdapter {
         setFigureOpacity(remote.root, t * t * (3 - 2 * t));
       }
     }
+  }
+
+  /** Every remote figure currently shown, e.g. to restyle them when the theme changes. */
+  forEachFigure(callback: (root: Object3D) => void): void {
+    for (const remote of this.remotes.values()) callback(remote.root);
   }
 
   /**
@@ -264,6 +273,7 @@ export class Presence implements NetworkAdapter {
       const tag = createNameTag(GUEST);
       tag.position.y = TAG_HEIGHT;
       root.add(tag);
+      this.onFigure(root);
       this.group.add(root);
       remote = { root, target: new Vector3(), targetYaw: yaw, yaw, speed: 0, label: GUEST, tag, appear: 0, bubble: null, bubbleLeft: 0 };
       this.remotes.set(id, remote);
@@ -328,7 +338,8 @@ function setFigureOpacity(root: Object3D, amount: number): void {
   root.traverse((child) => {
     if (!(child instanceof Mesh)) return;
     for (const material of Array.isArray(child.material) ? child.material : [child.material]) {
-      const face = material instanceof MeshBasicMaterial;
+      // An outline shell fades like the body; the drawn-on face stays see-through.
+      const face = material instanceof MeshBasicMaterial && material.userData.stroke !== true;
       material.transparent = face || !solid;
       material.opacity = amount;
       material.depthWrite = !face && solid;
