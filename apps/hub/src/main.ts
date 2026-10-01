@@ -510,8 +510,10 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
       },
       onAddWorld: openAddFormFromWalk,
       onClaimWorld: (world) => {
+        const id = world.id || `${slugify(world.name) || 'world'}-${Math.random().toString(36).substring(2, 8)}`;
+        world.id = id;
         const entry: WorldEntry = {
-          id: `${slugify(world.name) || 'world'}-${Math.random().toString(36).substring(2, 8)}`,
+          id,
           name: world.name,
           url: world.url,
           email: world.email,
