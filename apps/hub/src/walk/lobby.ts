@@ -699,6 +699,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
   /** Walking through a lobby door: flash, then travel to the world's own URL. */
   function enter(door: Door): void {
+    if (door.pending) return;
     const target = door.random ? pickRandomWorld() : door.world;
     if (!target) return;
     door.surge();
@@ -769,7 +770,10 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         if (doorTaken(world.url)) return;
         if (slot) {
           if (!towerCity.placeClaim(slot.slotId, { name: world.name, url: world.url, cover: world.cover })) return;
-        } else if (door) placeClaim(door, world);
+        } else if (door) {
+          if (!world.id) world.id = `${world.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase() || 'world'}-${Math.random().toString(36).substring(2, 8)}`;
+          placeClaim(door, world);
+        }
         else return;
         options.onClaimWorld?.(world);
       },
@@ -787,13 +791,44 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       addPrompt.classList.remove('visible');
     }
     empty.dispose();
-    saveClaim({ angle, name: world.name, url: world.url, cover: world.cover });
-    const door = new Door({ name: world.name, url: world.url, cover: world.cover }, light);
+    saveClaim({ angle, name: world.name, url: world.url, cover: world.cover, id: world.id, pending: true });
+    const door = new Door({ name: world.name, url: world.url, cover: world.cover, pending: true }, light);
     scene.add(door.group);
     door.place(x, z, 0, 0);
     door.group.userData.angle = angle;
-    known.set(world.url, { name: world.name, url: world.url, cover: world.cover });
+    known.set(world.url, { name: world.name, url: world.url, cover: world.cover, pending: true });
     doors.set(world.url, door);
+    schedulePendingCheck();
+  }
+
+  let pendingCheckTimer: ReturnType<typeof setTimeout> | null = null;
+  function schedulePendingCheck(): void {
+    if (pendingCheckTimer) return;
+    pendingCheckTimer = setTimeout(async () => {
+      pendingCheckTimer = null;
+      const claims = loadClaims().filter((c) => c.pending && c.id);
+      if (claims.length === 0) return;
+      const ids = claims.map((c) => c.id!);
+      try {
+        const res = await fetch(`/api/check-approved?ids=${ids.map(encodeURIComponent).join(',')}`);
+        if (!res.ok) { schedulePendingCheck(); return; }
+        const data = (await res.json()) as { approved: string[] };
+        for (const id of data.approved) {
+          const claim = claims.find((c) => c.id === id);
+          if (!claim) continue;
+          const door = doors.get(claim.url);
+          if (door?.pending) {
+            door.approve();
+            const saved = loadClaims();
+            const entry = saved.find((c) => c.id === id);
+            if (entry) { entry.pending = false; saveClaims(saved); }
+          }
+        }
+        if (loadClaims().some((c) => c.pending)) schedulePendingCheck();
+      } catch {
+        schedulePendingCheck();
+      }
+    }, 30_000);
   }
 
   // Keyboard: E at a tower door, lift or elevator, or next to an empty door.
@@ -1141,10 +1176,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       if (claim) {
         let door = doors.get(claim.url);
         if (!door) {
-          door = new Door({ name: claim.name, url: claim.url, cover: claim.cover }, light);
+          door = new Door({ name: claim.name, url: claim.url, cover: claim.cover, pending: claim.pending }, light);
           scene.add(door.group);
-          known.set(claim.url, { name: claim.name, url: claim.url, cover: claim.cover });
+          known.set(claim.url, { name: claim.name, url: claim.url, cover: claim.cover, pending: claim.pending });
           doors.set(claim.url, door);
+          if (claim.pending) schedulePendingCheck();
         }
         at(door, slot);
         door.group.userData.angle = angle;
@@ -1474,6 +1510,8 @@ interface ClaimedWorld {
   email: string;
   /** Picture shown in the doorway. */
   cover?: string;
+  /** Submission ID for approval tracking. */
+  id?: string;
 }
 
 interface DoorClaim {
@@ -1481,6 +1519,9 @@ interface DoorClaim {
   name: string;
   url: string;
   cover?: string;
+  /** Submission ID for approval tracking. */
+  id?: string;
+  pending?: boolean;
 }
 
 function angleDelta(a: number, b: number): number {
@@ -1511,15 +1552,17 @@ function loadClaims(): DoorClaim[] {
 
 function saveClaim(claim: DoorClaim): void {
   const rest = loadClaims().filter((entry) => angleDelta(entry.angle, claim.angle) >= 0.08 && entry.url !== claim.url);
-  const next = [...rest, claim];
+  saveClaims([...rest, claim]);
+}
+
+function saveClaims(claims: DoorClaim[]): void {
   try {
-    localStorage.setItem(CLAIMS_KEY, JSON.stringify(next));
+    localStorage.setItem(CLAIMS_KEY, JSON.stringify(claims));
   } catch {
-    // A large graphic can overflow storage. Keep the door without the picture.
     try {
-      localStorage.setItem(CLAIMS_KEY, JSON.stringify(next.map(({ cover: _cover, ...entry }) => entry)));
+      localStorage.setItem(CLAIMS_KEY, JSON.stringify(claims.map(({ cover: _cover, ...entry }) => entry)));
     } catch {
-      // Storage blocked: the door still shows the world until the page is left.
+      // Storage blocked.
     }
   }
 }
@@ -1549,7 +1592,7 @@ function openClaimModal(
   title.id = 'world-claim-title';
   title.textContent = 'Put your world in this door';
   const note = document.createElement('p');
-  note.textContent = options.note ?? 'You are the first one at this door, so you can place your world here. It opens in the lobby right away and is sent to the gallery for review.';
+  note.textContent = options.note ?? 'You are the first one at this door, so you can place your world here. It will appear once approved by the WorldMesh team.';
   const status = document.createElement('p');
   status.className = 'world-claim-status';
 

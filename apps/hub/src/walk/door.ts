@@ -25,6 +25,7 @@ export interface DoorWorld {
   cover?: string;
   color?: string;
   creator?: string;
+  pending?: boolean;
 }
 
 /** Size of the doorway opening, in metres. */
@@ -64,10 +65,25 @@ const portalFragment = /* glsl */ `
   uniform float uOpen;
   uniform float uGlow;
   uniform float uEmpty;
+  uniform float uPending;
   uniform float uLight;
   uniform float uHover;
   uniform float uRandom;
   varying vec2 vUv;
+
+  vec3 pendingDoor(vec2 p) {
+    vec3 base = mix(vec3(0.06, 0.06, 0.08), vec3(0.88, 0.89, 0.92), uLight);
+    vec3 ink = mix(vec3(0.9, 0.7, 0.3), vec3(0.7, 0.5, 0.1), uLight);
+    float edge = max(abs(p.x) * 2.0, abs(p.y) * 2.0);
+    vec3 color = base * (1.0 - 0.18 * smoothstep(0.4, 1.0, edge));
+    vec2 q = vec2(p.x * 0.54, p.y);
+    float top = step(abs(q.x), 0.06 - abs(q.y - 0.06) * 0.5) * step(q.y, 0.12) * step(0.0, q.y);
+    float bot = step(abs(q.x), abs(q.y + 0.06) * 0.5) * step(q.y, 0.0) * step(-0.12, q.y);
+    float neck = step(abs(q.x), 0.008) * step(abs(q.y), 0.02);
+    float hourglass = max(max(top, bot), neck);
+    float breathe = 0.55 + 0.25 * sin(uTime * 1.2);
+    return mix(color, ink, hourglass * breathe);
+  }
 
   // An empty doorway: a plain recess with a soft "+" asking to be filled.
   vec3 emptyDoor(vec2 p) {
@@ -110,6 +126,11 @@ const portalFragment = /* glsl */ `
       color = mix(color, vec3(0.55, 0.85, 1.0), smoothstep(0.8, 1.0, edge) * 0.6);
       color += uGlow * 0.6;
       gl_FragColor = vec4(min(color, vec3(1.0)), 1.0);
+      #include <colorspace_fragment>
+      return;
+    }
+    if (uPending > 0.5) {
+      gl_FragColor = vec4(pendingDoor(p) + uGlow * 0.3, 1.0);
       #include <colorspace_fragment>
       return;
     }
@@ -170,7 +191,8 @@ export class Door {
   constructor(world: DoorWorld | null, light: boolean, random = false) {
     this.world = world;
     this.random = random;
-    this.group.name = random ? 'door:random' : world ? `door:${world.name}` : 'door:empty';
+    const pending = !!world?.pending;
+    this.group.name = random ? 'door:random' : world ? (pending ? `door:pending:${world.name}` : `door:${world.name}`) : 'door:empty';
 
     const tint = new Color(world?.color ?? '#ffffff');
     // Keep the lobby monochrome-ish: only a hint of the world's colour.
@@ -178,10 +200,11 @@ export class Door {
     const shared = {
       uTint: { value: tint },
       uTime: { value: 0 },
-      uOpen: { value: 1 },
+      uOpen: { value: pending ? 0 : 1 },
       uGlow: { value: 0 },
       uLight: { value: light ? 1 : 0 },
       uEmpty: { value: world ? 0 : 1 },
+      uPending: { value: pending ? 1 : 0 },
       uHover: { value: 0 },
       uRandom: { value: random ? 1 : 0 },
     };
@@ -232,9 +255,11 @@ export class Door {
 
     const label = random
       ? createLabel('Random Door', undefined, false, 'Somewhere new every time')
-      : world
-        ? createLabel(world.name, world.creator)
-        : createLabel('Your world here', undefined, true);
+      : pending
+        ? createLabel('Pending review', undefined, true)
+        : world
+          ? createLabel(world.name, world.creator)
+          : createLabel('Your world here', undefined, true);
     this.label = label.mesh;
     this.drawLabel = label.draw;
     // Painted on the wall above the doorway; far enough out that long names
@@ -245,11 +270,34 @@ export class Door {
     this.group.add(this.label);
 
     this.setTheme(light);
-    if (world?.cover) this.loadCover(world.cover);
+    if (world?.cover && !pending) this.loadCover(world.cover);
   }
 
   get empty(): boolean {
     return this.world === null && !this.random;
+  }
+
+  get pending(): boolean {
+    return !!this.world?.pending;
+  }
+
+  approve(): void {
+    if (!this.world?.pending) return;
+    (this.world as { pending?: boolean }).pending = false;
+    this.group.name = `door:${this.world.name}`;
+    this.portal.material.uniforms.uPending.value = 0;
+    this.portal.material.uniforms.uOpen.value = 1;
+    const label = createLabel(this.world.name, this.world.creator);
+    this.label.material.map?.dispose();
+    this.label.geometry.dispose();
+    this.label.material.dispose();
+    this.label.removeFromParent();
+    this.label = label.mesh;
+    this.drawLabel = label.draw;
+    this.label.position.set(0, DOOR_HEIGHT + FRAME + 0.6, 0.25);
+    this.group.add(this.label);
+    this.drawLabel(this.portal.material.uniforms.uLight.value > 0.5);
+    if (this.world.cover) this.loadCover(this.world.cover);
   }
 
   /**
