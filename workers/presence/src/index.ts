@@ -67,10 +67,29 @@ const EXPRESSION = /^[a-z]{1,16}$/;
 const USERNAME = /^[a-z][a-z0-9_]{2,29}$/;
 /** Two capitalised words; cannot be mistaken for a username, which is lower case. */
 const ALIAS = /^[A-Z][a-z]{1,11} [A-Z][a-z]{1,11}$/;
+/** Public occupancy reads are counts only; never peer names. */
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+};
+/** How many world origins one occupancy request may ask about. */
+const MAX_OCCUPANCY_ORIGINS = 50;
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { status: 204, headers: CORS });
+    }
+
+    // Public read: how full each world's presence room is (count + cap, no names).
+    // The hub polls this to blur door covers before someone walks into a full world.
+    if (request.method === 'GET' && url.pathname === '/occupancy') {
+      return occupancy(url, env);
+    }
+
     let name: string;
     let kind: 'room' | 'world';
     const match = url.pathname.match(/^\/room\/([a-z0-9-]{1,64})$/i);
@@ -97,6 +116,37 @@ export default {
     return room.fetch(forwarded);
   },
 };
+
+/**
+ * GET /occupancy?origins=https://a.example,https://b.example
+ * → { "https://a.example": { count, cap }, ... }
+ *
+ * Cap is the live world room limit. Counts are open sockets; peer names stay private.
+ */
+async function occupancy(url: URL, env: Env): Promise<Response> {
+  const raw = url.searchParams.get('origins') ?? url.searchParams.get('origin') ?? '';
+  const origins = [
+    ...new Set(
+      raw
+        .split(',')
+        .map((value) => worldOrigin(value.trim()))
+        .filter((origin): origin is string => !!origin),
+    ),
+  ].slice(0, MAX_OCCUPANCY_ORIGINS);
+
+  const rooms: Record<string, { count: number; cap: number }> = {};
+  await Promise.all(
+    origins.map(async (origin) => {
+      const stub = env.ROOMS.get(env.ROOMS.idFromName(`world:${origin}`));
+      const { count } = await stub.occupancy();
+      rooms[origin] = { count, cap: MAX_WORLD_PEERS };
+    }),
+  );
+  return new Response(JSON.stringify(rooms), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json', ...CORS },
+  });
+}
 
 /** 'https://forest.example' (scheme + host + port), or null for opaque/odd origins. */
 function worldOrigin(header: string | null): string | null {
@@ -197,6 +247,14 @@ export class Room extends DurableObject<Env> {
       .filter((peer): peer is Peer => !!peer?.seen)
       .map((peer) => ({ id: peer.id, name: peer.n ?? '', alias: peer.a ?? '', position: peer.p }));
     return { connections: sockets.length, peers };
+  }
+
+  /**
+   * Open socket count only. Served publicly via GET /occupancy so the hub can
+   * mark full world doors without reading peer names or positions.
+   */
+  async occupancy(): Promise<{ count: number }> {
+    return { count: this.ctx.getWebSockets().length };
   }
 
   /** Tell the owner on Telegram that someone started walking in this room. */

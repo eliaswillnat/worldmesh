@@ -127,6 +127,7 @@ const portalFragment = /* glsl */ `
   uniform float uLight;
   uniform float uHover;
   uniform float uRandom;
+  uniform float uFull;
   varying vec2 vUv;
 
   // An empty doorway: a plain recess with a soft "+" asking to be filled.
@@ -181,6 +182,22 @@ const portalFragment = /* glsl */ `
     // The world on the other side, gently breathing.
     vec2 q = p * uFit * (1.0 - 0.05 * uOpen - 0.02 * sin(uTime * 0.7)) + 0.5;
     vec3 far = texture2D(uMap, q).rgb;
+    // Full room: soft blur so the cover still reads as that world, just closed.
+    if (uFull > 0.5) {
+      vec2 px = vec2(0.018, 0.012);
+      far = (
+        far +
+        texture2D(uMap, q + vec2( px.x, 0.0)).rgb +
+        texture2D(uMap, q + vec2(-px.x, 0.0)).rgb +
+        texture2D(uMap, q + vec2(0.0,  px.y)).rgb +
+        texture2D(uMap, q + vec2(0.0, -px.y)).rgb +
+        texture2D(uMap, q + vec2( px.x,  px.y)).rgb +
+        texture2D(uMap, q + vec2(-px.x,  px.y)).rgb +
+        texture2D(uMap, q + vec2( px.x, -px.y)).rgb +
+        texture2D(uMap, q + vec2(-px.x, -px.y)).rgb
+      ) / 9.0;
+      far *= 0.68;
+    }
 
     // No preview image: light receding down a corridor in the world's tint.
     float depth = max(abs(p.x) * 2.0 / 0.54, abs(p.y) * 2.0);
@@ -193,6 +210,7 @@ const portalFragment = /* glsl */ `
     color = mix(color, uTint * 0.55, smoothstep(0.88, 1.0, edge) * 0.22 * uOpen);
     color *= 0.6 + 0.4 * uOpen;
     color += uTint * uGlow * 0.6;
+    if (uFull > 0.5) color *= 0.85;
 
     gl_FragColor = vec4(min(color, vec3(1.0)), 1.0);
     #include <colorspace_fragment>
@@ -223,6 +241,7 @@ export class Door {
   private label: Mesh<PlaneGeometry, MeshBasicMaterial>;
   private drawLabel: (light: boolean) => void;
   private chips: { mesh: Mesh<PlaneGeometry, MeshBasicMaterial>; draw: (light: boolean) => void } | null = null;
+  private fullBanner: Mesh<PlaneGeometry, MeshBasicMaterial> | null = null;
   private cover: Texture | null = null;
   private placeholder: Texture;
   private halo: Mesh<PlaneGeometry, MeshBasicMaterial> | null = null;
@@ -232,6 +251,7 @@ export class Door {
   private rayTint: Color | null = null;
   private light: boolean;
   private entries: number | undefined;
+  private full = false;
   private disposed = false;
 
   constructor(world: DoorWorld | null, light: boolean, random = false) {
@@ -252,6 +272,7 @@ export class Door {
       uEmpty: { value: world ? 0 : 1 },
       uHover: { value: 0 },
       uRandom: { value: random ? 1 : 0 },
+      uFull: { value: 0 },
     };
 
     this.frameMaterial = new MeshStandardMaterial({ roughness: 0.4, metalness: 0.05 });
@@ -350,6 +371,13 @@ export class Door {
       this.group.add(this.chips.mesh);
     }
 
+    // Capacity warning sits on the cover itself (top), only for real world doors.
+    if (world && !random) {
+      this.fullBanner = createFullBanner();
+      this.fullBanner.visible = false;
+      this.group.add(this.fullBanner);
+    }
+
     this.setTheme(light);
     if (world?.cover) this.loadCover(world.cover);
   }
@@ -374,6 +402,18 @@ export class Door {
     if (shown === this.entries) return;
     this.entries = shown;
     this.drawLabel(this.light);
+  }
+
+  /**
+   * Presence room at capacity: blur the cover and show a red "World is full"
+   * banner on it so visitors see the state before they walk through.
+   */
+  setFull(full: boolean): void {
+    if (!this.world || this.random) return;
+    if (this.full === full) return;
+    this.full = full;
+    this.portal.material.uniforms.uFull.value = full ? 1 : 0;
+    if (this.fullBanner) this.fullBanner.visible = full;
   }
 
   /** Brighten the "+" while someone is close enough to use it. */
@@ -483,6 +523,11 @@ export class Door {
       this.chips.mesh.geometry.dispose();
       this.chips.mesh.material.dispose();
     }
+    if (this.fullBanner) {
+      this.fullBanner.material.map?.dispose();
+      this.fullBanner.geometry.dispose();
+      this.fullBanner.material.dispose();
+    }
     this.cover?.dispose();
     this.placeholder.dispose();
     this.group.removeFromParent();
@@ -586,6 +631,58 @@ async function loadCoverTexture(src: string): Promise<Texture | null> {
     }
   }
   return null;
+}
+
+/** True when a world's presence room reports count at or over its live cap. */
+export function worldIsFull(count: number, cap: number): boolean {
+  return Number.isFinite(count) && Number.isFinite(cap) && cap > 0 && count >= cap;
+}
+
+/** Red "World is full" strip across the top of the cover. */
+function createFullBanner(): Mesh<PlaneGeometry, MeshBasicMaterial> {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 96;
+  const ctx = canvas.getContext('2d')!;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = 'rgba(160, 12, 18, 0.92)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.font = '700 44px Urbanist, ui-sans-serif, system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText('World is full', canvas.width / 2, canvas.height / 2 + 2);
+  const texture = new CanvasTexture(canvas);
+  texture.colorSpace = SRGBColorSpace;
+  texture.generateMipmaps = false;
+  texture.minFilter = LinearFilter;
+  texture.magFilter = LinearFilter;
+  const material = new MeshBasicMaterial({
+    map: texture,
+    transparent: true,
+    depthWrite: false,
+    side: DoubleSide,
+  });
+  const height = 0.55;
+  const width = DOOR_WIDTH * 0.92;
+  const mesh = new Mesh(new PlaneGeometry(width, height), material);
+  // Just under the lintel, on the cover face.
+  mesh.position.set(0, DOOR_HEIGHT - height / 2 - 0.12, 0.01);
+  mesh.renderOrder = 3;
+  if (document.fonts && !document.fonts.check('700 44px Urbanist')) {
+    document.fonts.load('700 44px Urbanist').then(() => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = 'rgba(160, 12, 18, 0.92)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.font = '700 44px Urbanist, ui-sans-serif, system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText('World is full', canvas.width / 2, canvas.height / 2 + 2);
+      texture.needsUpdate = true;
+    }, () => {});
+  }
+  return mesh;
 }
 
 /** A soft rounded glow a little larger than the doorway, drawn additively. */
