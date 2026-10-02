@@ -39,6 +39,7 @@ export const DOOR_FEATURES: ReadonlyArray<{ tags: readonly string[]; label: stri
   { tags: ['ar'], label: 'AR supported' },
   { tags: ['gamepad', 'controller'], label: 'Gamepad' },
   { tags: ['voice', 'voice-chat'], label: 'Voice chat' },
+  { tags: ['desktop-only', 'desktop'], label: 'Desktop only' },
 ];
 /** More chips than this would crowd the wall between doors. */
 const MAX_FEATURES = 3;
