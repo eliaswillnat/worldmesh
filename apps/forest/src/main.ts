@@ -31,7 +31,7 @@ const world = createWorldMesh({
     // No click-to-enter panel: WASD works from the first frame, Esc brings up the menu.
     deferLockPanel: true,
     moveBeforeLock: true,
-    title: 'Forest',
+    title: 'Forest - Demo',
     badge: false,
     hubUrl:
       import.meta.env.VITE_WORLDMESH_HUB ??
@@ -43,8 +43,8 @@ const world = createWorldMesh({
   },
   // Portals disabled for now — URL-paste in the hub is the primary navigation.
   // portals: [
-  //   { url: 'http://localhost:5172/', label: 'Mars', position: [6, 0, -6], color: 0xff8a5c },
-  //   { url: 'http://localhost:5175/', label: 'Space Station', position: [-4, 0, -12], color: 0xb08cff },
+  //   { url: 'http://localhost:5172/', label: 'Mars - Demo', position: [6, 0, -6], color: 0xff8a5c },
+  //   { url: 'http://localhost:5175/', label: 'Space Station - Demo', position: [-4, 0, -12], color: 0xb08cff },
   // ],
 });
 
