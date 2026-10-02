@@ -57,7 +57,7 @@ const NOTIFY_WEBHOOK = import.meta.env.VITE_NOTIFY_WEBHOOK as string | undefined
 /** WebSocket base of workers/presence. Walk mode is single-player without it. */
 const PRESENCE_ENDPOINT =
   (import.meta.env.VITE_PRESENCE_ENDPOINT as string | undefined) ||
-  (import.meta.env.DEV ? 'ws://localhost:8787' : 'wss://worldmesh-presence.elias-willnat.workers.dev');
+  (import.meta.env.DEV ? 'ws://localhost:8787' : 'wss://relay.worldmesh.net');
 const SCREENSHOT_ENDPOINT =
   (import.meta.env.VITE_SCREENSHOT_ENDPOINT as string | undefined) ||
   'https://worldmesh-screenshot.elias-willnat.workers.dev';

@@ -39,7 +39,7 @@ export { deserializePlayerState, serializePlayerState } from './net/adapter.js';
 export { DEFAULT_PRESENCE_SERVER, Presence } from './net/presence.js';
 export type { PresenceOptions } from './net/presence.js';
 
-export const WORLDMESH_VERSION = '0.2.0';
+export const WORLDMESH_VERSION = '0.2.1';
 /** Bumped when the world-facing contract changes in an incompatible way. */
 export const WORLDMESH_PROTOCOL = 1;
 
