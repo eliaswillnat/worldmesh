@@ -40,7 +40,7 @@ import {
 import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { CITY_GLOW_WHITE, applyCityTheme, applySkyTheme, createCityMaterials, createSky, createSpawnRay, flipInside, skyHorizon, type BillboardSlot } from './city';
-import { DOOR_HALF_SPAN, DOOR_HEIGHT, DOOR_TOP, DOOR_WIDTH, FRAME, Door, createLabel, type DoorWorld } from './door';
+import { DOOR_HALF_SPAN, DOOR_HEIGHT, DOOR_TOP, DOOR_WIDTH, FRAME, Door, createLabel, worldIsFull, type DoorWorld } from './door';
 import { doorFrameGeometry, frameOuterCorner, roundedOpeningGeometry } from './doorShape';
 import { ImageCropper } from '../cropper';
 import { describeBillboard } from './layout';
@@ -147,7 +147,24 @@ export interface Lobby {
   dispose(): void;
 }
 
-/** Objects on this layer are drawn by the main camera but not seen in the floor mirror. */
+/** How often walk-mode doors ask presence how full each world room is. */
+const OCCUPANCY_MS = 15_000;
+
+/** Presence WebSocket base → HTTP base for the public occupancy read. */
+function presenceHttpBase(endpoint: string): string {
+  return endpoint.replace(/\/$/, '').replace(/^ws/i, 'http');
+}
+
+/** Origin of a world URL, lower-cased, or null if it is not http(s). */
+function worldRoomOrigin(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null;
+    return parsed.origin.toLowerCase();
+  } catch {
+    return null;
+  }
+}
 const FLOOR_LAYER = 1;
 const FLOOR_SIZE = 600;
 /** The citadel: never narrower than this, and grows so doors keep this much wall between them. */
@@ -690,6 +707,10 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   let adModal: { close(): void } | null = null;
   let claimModal: { close(): void } | null = null;
   let billboardFetch: AbortController | null = null;
+  let occupancyTimer = 0;
+  let occupancyFetch: AbortController | null = null;
+  /** Last count/cap by world origin, so newly laid doors can show full immediately. */
+  const occupancyByOrigin = new Map<string, { count: number; cap: number }>();
 
   const world = createWorldMesh({
     scene,
@@ -1028,6 +1049,9 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     saveClaim({ angle, level, name: world.name, url: world.url, cover: world.cover });
     const door = new Door({ name: world.name, url: world.url, cover: world.cover }, light);
     door.setEntries(options.entries?.(world.url));
+    const origin = worldRoomOrigin(world.url);
+    const info = origin ? occupancyByOrigin.get(origin) : undefined;
+    door.setFull(info ? worldIsFull(info.count, info.cap) : false);
     scene.add(door.group);
     door.place(x, z, 0, 0);
     door.group.position.y = y;
@@ -1042,6 +1066,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       flights = [...flights, { name: world.name, gate: slot + 1, cover: world.cover }].sort((a, b) => a.gate - b.gate);
       departures.setFlights(flights);
     }
+    void refreshOccupancy();
   }
 
   // Keyboard: E at a tower door, lift or elevator, or next to an empty door.
@@ -1212,6 +1237,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   // Stored coordinates rather than a door to look up: community worlds arrive
   // a moment later and shift every door, and these already match the full list.
   if (options.start) emerge(options.start);
+  startOccupancyPolling();
 
   if (import.meta.env.DEV) Object.assign(window, { lobby: world, spawnFx: () => triggerSpawnFx() });
 
@@ -1398,6 +1424,56 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     for (const [url, door] of doors) door.setEntries(options.entries?.(url));
   }
 
+  function applyOccupancy(): void {
+    for (const [url, door] of doors) {
+      const origin = worldRoomOrigin(url);
+      const info = origin ? occupancyByOrigin.get(origin) : undefined;
+      door.setFull(info ? worldIsFull(info.count, info.cap) : false);
+    }
+  }
+
+  async function refreshOccupancy(): Promise<void> {
+    if (!options.presenceEndpoint || disposed) return;
+    const origins = [...new Set([...doors.keys()].map(worldRoomOrigin).filter((o): o is string => !!o))];
+    if (!origins.length) {
+      occupancyByOrigin.clear();
+      applyOccupancy();
+      return;
+    }
+    occupancyFetch?.abort();
+    const controller = new AbortController();
+    occupancyFetch = controller;
+    try {
+      const base = presenceHttpBase(options.presenceEndpoint);
+      const res = await fetch(`${base}/occupancy?origins=${encodeURIComponent(origins.join(','))}`, {
+        signal: controller.signal,
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as Record<string, { count?: unknown; cap?: unknown }>;
+      occupancyByOrigin.clear();
+      for (const [origin, value] of Object.entries(data)) {
+        const count = Number(value?.count);
+        const cap = Number(value?.cap);
+        if (!Number.isFinite(count) || !Number.isFinite(cap)) continue;
+        occupancyByOrigin.set(origin.toLowerCase(), { count, cap });
+      }
+      if (!disposed) applyOccupancy();
+    } catch {
+      // Network or abort — leave the last known full/not-full state.
+    } finally {
+      if (occupancyFetch === controller) occupancyFetch = null;
+    }
+  }
+
+  function startOccupancyPolling(): void {
+    if (!options.presenceEndpoint) return;
+    void refreshOccupancy();
+    if (occupancyTimer) window.clearInterval(occupancyTimer);
+    occupancyTimer = window.setInterval(() => {
+      void refreshOccupancy();
+    }, OCCUPANCY_MS);
+  }
+
   function setWorlds(worlds: LobbyWorld[]): void {
     for (const entry of worlds) {
       if (!known.has(entry.url)) known.set(entry.url, entry);
@@ -1475,6 +1551,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     flights.sort((a, b) => a.gate - b.gate);
     departures.setFlights(flights);
     buildWall(radius, angles);
+    applyOccupancy();
+    void refreshOccupancy();
   }
 
   /**
@@ -1825,6 +1903,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     window.clearTimeout(warpTimer);
     window.clearTimeout(privateTimer);
     if (billboardTimer) window.clearInterval(billboardTimer);
+    if (occupancyTimer) window.clearInterval(occupancyTimer);
+    occupancyFetch?.abort();
     billboardFetch?.abort();
     adModal?.close();
     claimModal?.close();
