@@ -7,7 +7,8 @@
     "creator": "Yevgen",
     "portfolio": "https://esso.dev",
     "addedAt": "2026-09-27T23:46:14Z",
-    "categories": ["explore"]
+    "categories": ["explore"],
+    "tags": ["multiplayer", "vr"]
   },
   {
     "id": "sky-reach-0l39gz",
@@ -28,7 +29,8 @@
     "creator": "@SumbaSurf",
     "portfolio": "https://x.com/SumbaSurf",
     "addedAt": "2026-09-29T16:46:08Z",
-    "categories": ["games"]
+    "categories": ["games"],
+    "tags": ["multiplayer"]
   },
   {
     "id": "threejs-cafe-k4r7cf",

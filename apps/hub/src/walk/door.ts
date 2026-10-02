@@ -28,6 +28,27 @@ export interface DoorWorld {
   cover?: string;
   color?: string;
   creator?: string;
+  /** Listing tags; the ones in DOOR_FEATURES show as chips under the name. */
+  tags?: string[];
+}
+
+/** Tags worth calling out above a door, in the order they are shown. */
+export const DOOR_FEATURES: ReadonlyArray<{ tags: readonly string[]; label: string }> = [
+  { tags: ['multiplayer', 'mmo', 'coop', 'co-op'], label: 'Multiplayer' },
+  { tags: ['vr', 'webxr', 'xr'], label: 'VR supported' },
+  { tags: ['ar'], label: 'AR supported' },
+  { tags: ['gamepad', 'controller'], label: 'Gamepad' },
+  { tags: ['voice', 'voice-chat'], label: 'Voice chat' },
+];
+/** More chips than this would crowd the wall between doors. */
+const MAX_FEATURES = 3;
+
+/** The feature chips a world's tags earn, at most MAX_FEATURES. */
+export function doorFeatures(tags: readonly string[] | undefined): string[] {
+  const own = new Set((tags ?? []).map((tag) => tag.trim().toLowerCase()));
+  return DOOR_FEATURES.filter((feature) => feature.tags.some((tag) => own.has(tag)))
+    .map((feature) => feature.label)
+    .slice(0, MAX_FEATURES);
 }
 
 /** Size of the doorway opening, in metres: 3:4 portrait, like the covers. */
@@ -200,6 +221,7 @@ export class Door {
   private geometries: BufferGeometry[] = [];
   private label: Mesh<PlaneGeometry, MeshBasicMaterial>;
   private drawLabel: (light: boolean) => void;
+  private chips: { mesh: Mesh<PlaneGeometry, MeshBasicMaterial>; draw: (light: boolean) => void } | null = null;
   private cover: Texture | null = null;
   private placeholder: Texture;
   private halo: Mesh<PlaneGeometry, MeshBasicMaterial> | null = null;
@@ -319,6 +341,14 @@ export class Door {
     if (random) this.label.position.set(0, DOOR_HEIGHT + FRAME + 3.1, 0.3);
     this.group.add(this.label);
 
+    // What the world offers (multiplayer, VR, ...), as chips between its name and the doorway.
+    const features = world && !random ? doorFeatures(world.tags) : [];
+    if (features.length) {
+      this.chips = createChips(features);
+      this.chips.mesh.position.z = 0.25;
+      this.group.add(this.chips.mesh);
+    }
+
     this.setTheme(light);
     if (world?.cover) this.loadCover(world.cover);
   }
@@ -390,6 +420,7 @@ export class Door {
   }
 
   update(time: number): void {
+    this.stackLabel();
     this.portal.material.uniforms.uTime.value = time;
     if (this.rayTime) this.rayTime.value = time;
   }
@@ -407,6 +438,18 @@ export class Door {
       this.halo!.material.opacity = light ? 0.55 : 0.9;
     }
     this.drawLabel(light);
+    this.chips?.draw(light);
+    this.stackLabel();
+  }
+
+  /**
+   * With chips under the name, lift the name to sit just above them. Run
+   * every frame because a late font load redraws (and resizes) either one.
+   */
+  private stackLabel(): void {
+    if (!this.chips) return;
+    const chipTop = CHIP_BOTTOM + this.chips.mesh.scale.y;
+    this.label.position.y = chipTop + LABEL_GAP + this.label.scale.y / 2;
   }
 
   /** Flare the light while we travel through it. */
@@ -434,6 +477,11 @@ export class Door {
     this.label.material.map?.dispose();
     this.label.geometry.dispose();
     this.label.material.dispose();
+    if (this.chips) {
+      this.chips.mesh.material.map?.dispose();
+      this.chips.mesh.geometry.dispose();
+      this.chips.mesh.material.dispose();
+    }
     this.cover?.dispose();
     this.placeholder.dispose();
     this.group.removeFromParent();
@@ -656,6 +704,88 @@ export function createLabel(
   // The page font may still be loading the first time walk mode opens.
   if (document.fonts && !document.fonts.check('600 88px Urbanist')) {
     document.fonts.load('600 88px Urbanist').then(() => draw(light), () => {});
+  }
+  return { mesh, draw };
+}
+
+/** Height of one row of chips on the wall, in metres. */
+const CHIP_HEIGHT = 0.46;
+/** Where the chips start: just over the door frame, under the name. */
+const CHIP_BOTTOM = DOOR_TOP + 0.18;
+/** Space between the top row of chips and the name's canvas. */
+const LABEL_GAP = -0.12;
+
+/**
+ * Outlined pills naming what a world supports, e.g. "Multiplayer", "VR supported".
+ * They wrap onto a second row rather than shrink past reading.
+ */
+function createChips(labels: string[]): { mesh: Mesh<PlaneGeometry, MeshBasicMaterial>; draw: (light: boolean) => void } {
+  const canvas = document.createElement('canvas');
+  const texture = new CanvasTexture(canvas);
+  texture.colorSpace = SRGBColorSpace;
+  texture.generateMipmaps = false;
+  texture.minFilter = LinearFilter;
+  texture.magFilter = LinearFilter;
+  const material = new MeshBasicMaterial({ map: texture, transparent: true, depthWrite: false });
+  const geometry = new PlaneGeometry(1, 1);
+  // Grow upward from the bottom edge, however many rows there are.
+  geometry.translate(0, 0.5, 0);
+  const mesh = new Mesh(geometry, material);
+  mesh.position.y = CHIP_BOTTOM;
+  let light = false;
+
+  const draw = (isLight: boolean) => {
+    light = isLight;
+    const ctx = canvas.getContext('2d')!;
+    const font = '600 40px Urbanist, ui-sans-serif, system-ui, sans-serif';
+    const pill = 64;
+    const padX = 28;
+    const gap = 16;
+    const margin = 6;
+    const rowStep = pill + gap;
+    const maxWidth = (MAX_LABEL_WIDTH * rowStep) / CHIP_HEIGHT;
+    ctx.font = font;
+    const widths = labels.map((label) => Math.ceil(ctx.measureText(label).width) + padX * 2);
+    const rows: number[][] = [];
+    widths.forEach((w, i) => {
+      const row = rows[rows.length - 1];
+      const used = row ? row.reduce((sum, j) => sum + widths[j] + gap, 0) : 0;
+      if (row && used + w <= maxWidth) row.push(i);
+      else rows.push([i]);
+    });
+    const rowWidth = (row: number[]) => row.reduce((sum, j) => sum + widths[j], 0) + gap * (row.length - 1);
+    canvas.width = Math.max(...rows.map(rowWidth)) + margin * 2;
+    canvas.height = rows.length * rowStep - gap + margin * 2;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.font = font;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 3;
+    rows.forEach((row, r) => {
+      let x = (canvas.width - rowWidth(row)) / 2;
+      const y = margin + r * rowStep;
+      for (const i of row) {
+        const w = widths[i];
+        ctx.beginPath();
+        ctx.roundRect(x, y, w, pill, pill / 2);
+        ctx.fillStyle = light ? 'rgba(255, 255, 255, 0.85)' : 'rgba(0, 0, 0, 0.55)';
+        ctx.fill();
+        ctx.strokeStyle = light ? 'rgba(0, 0, 0, 0.35)' : 'rgba(255, 255, 255, 0.45)';
+        ctx.stroke();
+        ctx.fillStyle = light ? '#111111' : '#ffffff';
+        ctx.fillText(labels[i], x + w / 2, y + pill / 2 + 2);
+        x += w + gap;
+      }
+    });
+
+    texture.needsUpdate = true;
+    const metresPerPixel = Math.min(CHIP_HEIGHT / rowStep, MAX_LABEL_WIDTH / canvas.width);
+    mesh.scale.set(canvas.width * metresPerPixel, canvas.height * metresPerPixel, 1);
+  };
+
+  if (document.fonts && !document.fonts.check('600 40px Urbanist')) {
+    document.fonts.load('600 40px Urbanist').then(() => draw(light), () => {});
   }
   return { mesh, draw };
 }
