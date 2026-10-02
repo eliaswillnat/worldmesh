@@ -18,6 +18,12 @@ const world = createWorldMesh({
   spawn: [0, 2, 12],
   colliders,
   view: { mode: 'third' },
+  // Visitors arriving from the hub with a character picked in their Avatar
+  // Wallet walk around as it; everyone else keeps the default body.
+  avatar: {
+    source: 'worldmesh',
+    hubUrl: import.meta.env.VITE_WORLDMESH_HUB ?? (import.meta.env.DEV ? 'http://localhost:5170/' : 'https://worldmesh.net/'),
+  },
   ui: {
     // No click-to-enter panel: WASD works from the first frame, Esc brings up the menu.
     deferLockPanel: true,
