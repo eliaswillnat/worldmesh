@@ -36,7 +36,7 @@ map so both resolve to the same Three.js:
 {
   "imports": {
     "three": "https://esm.sh/three@0.169.0",
-    "@worldmesh/runtime": "https://esm.sh/@worldmesh/runtime@0.1.0?external=three"
+    "@worldmesh/runtime": "https://esm.sh/@worldmesh/runtime@0.2?external=three"
   }
 }
 </script>

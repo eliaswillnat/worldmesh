@@ -114,12 +114,16 @@ default server (`DEFAULT_PRESENCE_SERVER`) points at this Worker.
    cd workers/presence
    npx wrangler deploy
    ```
-2. The hub connects to `wss://worldmesh-presence.elias-willnat.workers.dev` by
-   default. If the Worker lives elsewhere (e.g. a custom domain), set on
-   **`worldmesh-hub`**:
+2. Give the Worker the custom domain `relay.worldmesh.net` (Worker →
+   Settings → Domains & Routes). The hub and the runtime's
+   `DEFAULT_PRESENCE_SERVER` both connect to `wss://relay.worldmesh.net`. To
+   point the hub somewhere else, set on **`worldmesh-hub`**:
    ```env
-   VITE_PRESENCE_ENDPOINT=wss://presence.worldmesh.net
+   VITE_PRESENCE_ENDPOINT=wss://relay.example.com
    ```
+3. Keep the Worker's `workers.dev` address switched on.
+   `@worldmesh/runtime@0.2.0` has `wss://worldmesh-presence.elias-willnat.workers.dev`
+   built in, so worlds still on that version lose multiplayer without it.
 
 If the presence Worker is unreachable, walk mode still works single-player.
 

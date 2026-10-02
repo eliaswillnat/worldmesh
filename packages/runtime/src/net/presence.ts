@@ -3,7 +3,7 @@ import { animateDefaultAvatar, createDefaultAvatar, setAvatarExpression } from '
 import type { NetworkAdapter, PeerBody, PlayerState, WorldMeshHandle } from '../types.js';
 
 /** The relay WorldMesh hosts (workers/presence). Worlds can point at their own. */
-export const DEFAULT_PRESENCE_SERVER = 'wss://worldmesh-presence.elias-willnat.workers.dev';
+export const DEFAULT_PRESENCE_SERVER = 'wss://relay.worldmesh.net';
 
 export interface PresenceOptions {
   /** Full WebSocket URL of the room, e.g. `wss://relay.example/world`. */
