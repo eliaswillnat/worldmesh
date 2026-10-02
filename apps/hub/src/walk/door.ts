@@ -37,7 +37,6 @@ export const DOOR_FEATURES: ReadonlyArray<{ tags: readonly string[]; label: stri
   { tags: ['multiplayer', 'mmo', 'coop', 'co-op'], label: 'Multiplayer' },
   { tags: ['vr', 'webxr', 'xr'], label: 'VR supported' },
   { tags: ['ar'], label: 'AR supported' },
-  { tags: ['mobile', 'touch'], label: 'Mobile friendly' },
   { tags: ['gamepad', 'controller'], label: 'Gamepad' },
   { tags: ['voice', 'voice-chat'], label: 'Voice chat' },
 ];

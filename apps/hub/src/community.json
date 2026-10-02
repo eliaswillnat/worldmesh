@@ -7,7 +7,8 @@
     "creator": "Yevgen",
     "portfolio": "https://esso.dev",
     "addedAt": "2026-09-27T23:46:14Z",
-    "categories": ["explore"]
+    "categories": ["explore"],
+    "tags": ["multiplayer", "vr"]
   },
   {
     "id": "sky-reach-0l39gz",
@@ -17,7 +18,8 @@
     "creator": "@Rubzem",
     "portfolio": "https://x.com/Rubzem",
     "addedAt": "2026-09-28T19:35:27Z",
-    "categories": ["games"]
+    "categories": ["games"],
+    "tags": ["multiplayer"]
   },
   {
     "id": "sumbasurf-208eyx",
@@ -39,6 +41,7 @@
     "creator": "Murat",
     "portfolio": "https://x.com/mkcuriosity",
     "addedAt": "2026-10-01T12:00:00Z",
-    "categories": ["explore"]
+    "categories": ["explore"],
+    "tags": ["multiplayer", "vr"]
   }
 ]
