@@ -28,7 +28,7 @@ export interface DoorWorld {
   cover?: string;
   color?: string;
   creator?: string;
-  /** Listing tags; the ones in DOOR_FEATURES show as chips above the name. */
+  /** Listing tags; the ones in DOOR_FEATURES show as chips under the name. */
   tags?: string[];
 }
 
@@ -342,7 +342,7 @@ export class Door {
     if (random) this.label.position.set(0, DOOR_HEIGHT + FRAME + 3.1, 0.3);
     this.group.add(this.label);
 
-    // What the world offers (multiplayer, VR, ...), as chips above its name.
+    // What the world offers (multiplayer, VR, ...), as chips between its name and the doorway.
     const features = world && !random ? doorFeatures(world.tags) : [];
     if (features.length) {
       this.chips = createChips(features);
@@ -421,6 +421,7 @@ export class Door {
   }
 
   update(time: number): void {
+    this.stackLabel();
     this.portal.material.uniforms.uTime.value = time;
     if (this.rayTime) this.rayTime.value = time;
   }
@@ -439,6 +440,17 @@ export class Door {
     }
     this.drawLabel(light);
     this.chips?.draw(light);
+    this.stackLabel();
+  }
+
+  /**
+   * With chips under the name, lift the name to sit just above them. Run
+   * every frame because a late font load redraws (and resizes) either one.
+   */
+  private stackLabel(): void {
+    if (!this.chips) return;
+    const chipTop = CHIP_BOTTOM + this.chips.mesh.scale.y;
+    this.label.position.y = chipTop + LABEL_GAP + this.label.scale.y / 2;
   }
 
   /** Flare the light while we travel through it. */
@@ -699,8 +711,10 @@ export function createLabel(
 
 /** Height of one row of chips on the wall, in metres. */
 const CHIP_HEIGHT = 0.46;
-/** Where the chips start: just above the name and creator line. */
-const CHIP_BOTTOM = DOOR_TOP + 1.82;
+/** Where the chips start: just over the door frame, under the name. */
+const CHIP_BOTTOM = DOOR_TOP + 0.18;
+/** Space between the top row of chips and the name's canvas. */
+const LABEL_GAP = -0.12;
 
 /**
  * Outlined pills naming what a world supports, e.g. "Multiplayer", "VR supported".
