@@ -136,9 +136,9 @@ const DEMO_WORLDS: WorldEntry[] = [
 let communityWorlds: WorldEntry[] = communityWorldsStatic as WorldEntry[];
 const ALL_WORLDS: WorldEntry[] = [...communityWorlds, ...DEMO_WORLDS];
 
-/** The 3D lobby only gets doors for worlds people added; the demos stay in the gallery. */
+/** Lobby doors: community worlds plus the five demos (demos stay in the gallery too). */
 function lobbyWorlds(): WorldEntry[] {
-  return ALL_WORLDS.filter((world) => world.source !== 'demo');
+  return ALL_WORLDS;
 }
 
 import { ImageCropper } from './cropper';
