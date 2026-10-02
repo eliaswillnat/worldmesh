@@ -22,7 +22,7 @@ const world = createWorldMesh({
     // No click-to-enter panel: WASD works from the first frame, Esc brings up the menu.
     deferLockPanel: true,
     moveBeforeLock: true,
-    title: 'Medieval Village',
+    title: 'Medieval Village - Demo',
     badge: false,
     hubUrl:
       import.meta.env.VITE_WORLDMESH_HUB ??
@@ -34,8 +34,8 @@ const world = createWorldMesh({
   },
   // Portals disabled for now — URL-paste in the hub is the primary navigation.
   // portals: [
-  //   { url: 'http://localhost:5175/', label: 'Space Station', position: [-8, 0, 4], color: 0xb08cff },
-  //   { url: 'http://localhost:5173/', label: 'Neon City', position: [8, 0, 4], color: 0xff4fd8 },
+  //   { url: 'http://localhost:5175/', label: 'Space Station - Demo', position: [-8, 0, 4], color: 0xb08cff },
+  //   { url: 'http://localhost:5173/', label: 'Neon City - Demo', position: [8, 0, 4], color: 0xff4fd8 },
   // ],
 });
 

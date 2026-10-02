@@ -77,7 +77,7 @@ function getDemoWorldUrl(envKey: string, localPort: number, defaultSubdomain: st
 
 const DEMO_WORLDS: WorldEntry[] = [
   {
-    name: 'Forest',
+    name: 'Forest - Demo',
     url: getDemoWorldUrl('VITE_WORLD_FOREST_URL', 5171, 'forest'),
     description: 'Demo world. Pine clearing. Double jump enabled.',
     color: '#8cff9e',
@@ -88,7 +88,7 @@ const DEMO_WORLDS: WorldEntry[] = [
     source: 'demo',
   },
   {
-    name: 'Mars',
+    name: 'Mars - Demo',
     url: getDemoWorldUrl('VITE_WORLD_MARS_URL', 5172, 'mars'),
     description: 'Demo world. Low gravity, long jumps, dash enabled.',
     color: '#ff8a5c',
@@ -99,7 +99,7 @@ const DEMO_WORLDS: WorldEntry[] = [
     source: 'demo',
   },
   {
-    name: 'Neon City',
+    name: 'Neon City - Demo',
     url: getDemoWorldUrl('VITE_WORLD_CITY_URL', 5173, 'city'),
     description: 'Demo world. Night streets. Dash, double jump, crouch.',
     color: '#ff4fd8',
@@ -110,7 +110,7 @@ const DEMO_WORLDS: WorldEntry[] = [
     source: 'demo',
   },
   {
-    name: 'Medieval Village',
+    name: 'Medieval Village - Demo',
     url: getDemoWorldUrl('VITE_WORLD_MEDIEVAL_URL', 5174, 'medieval'),
     description: 'Demo world. Baseline movement only. Starts in third person.',
     color: '#ffd36b',
@@ -121,7 +121,7 @@ const DEMO_WORLDS: WorldEntry[] = [
     source: 'demo',
   },
   {
-    name: 'Space Station',
+    name: 'Space Station - Demo',
     url: getDemoWorldUrl('VITE_WORLD_SPACE_URL', 5175, 'space'),
     description: 'Demo world. Open deck in orbit. Flying enabled.',
     color: '#b08cff',
