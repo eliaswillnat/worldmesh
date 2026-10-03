@@ -17,6 +17,7 @@ const world = createWorldMesh({
   renderer,
   spawn: [0, 2, 12],
   colliders,
+  multiplayer: true,
   view: { mode: 'third' },
   ui: {
     // No click-to-enter panel: WASD works from the first frame, Esc brings up the menu.

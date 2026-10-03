@@ -16,6 +16,7 @@ const world = createWorldMesh({
   renderer,
   spawn: [0, 2, 14],
   colliders,
+  multiplayer: true,
   abilities: {
     flying: true,
     crouching: true,
