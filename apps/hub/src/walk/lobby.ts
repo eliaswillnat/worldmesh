@@ -1,4 +1,14 @@
-import { AVATAR_TICKET_PARAM, buildTravelUrl, createWorldMesh, Presence, setAvatarAppear, setAvatarColor, type Vec3Tuple } from '@worldmesh/runtime';
+import {
+  AVATAR_TICKET_PARAM,
+  buildTravelUrl,
+  createWorldMesh,
+  isStrokeMaterial,
+  Presence,
+  setAvatarAppear,
+  setAvatarColor,
+  setStrokeOpacity,
+  type Vec3Tuple,
+} from '@worldmesh/runtime';
 import {
   BoxGeometry,
   CircleGeometry,
@@ -28,7 +38,6 @@ import {
 import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { CITY_GLOW_WHITE, applyCityTheme, applySkyTheme, createBeamRefraction, createCityMaterials, createSky, createSpawnRay, flipInside, skyHorizon } from './city';
-import { isStrokeMaterial, setFigureStroke, setStrokeOpacity } from './stroke';
 import { DOOR_HALF_SPAN, DOOR_HEIGHT, DOOR_TOP, DOOR_WIDTH, FRAME, Door, createLabel, type DoorWorld } from './door';
 import { ImageCropper } from '../cropper';
 import { describeBillboard } from './layout';
@@ -450,8 +459,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         onArrive: (x, z) => {
           if (Math.hypot(x - SPAWN[0], z - SPAWN[2]) < ARRIVE_RADIUS) spawnRay.trigger();
         },
-        // Other people get the same ink outline as your own figure.
-        onFigure: (root) => setFigureStroke(root, true),
       })
     : undefined;
 
@@ -613,7 +620,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       placeChatBubble();
     },
   });
-  setFigureStroke(world.avatar, true);
   if (alias) ghost = makeGhost(world.avatar);
 
   // Chat is a bubble over your head. Enter opens it, Enter sends it, then it
@@ -788,7 +794,10 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     if (!alias) return url;
     try {
       const parsed = new URL(url);
-      if (parsed.hash.startsWith(`#${AVATAR_TICKET_PARAM}=`)) parsed.hash = '';
+      const params = new URLSearchParams(parsed.hash.slice(1));
+      if (!params.has(AVATAR_TICKET_PARAM)) return url;
+      params.delete(AVATAR_TICKET_PARAM);
+      parsed.hash = params.toString();
       return parsed.toString();
     } catch {
       return url;

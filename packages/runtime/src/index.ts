@@ -7,6 +7,7 @@ export { DEFAULT_ABILITIES, resolveAbilities } from './abilities/abilities.js';
 export { CollisionWorld } from './movement/collision.js';
 export { DEFAULT_TUNING, MovementController } from './movement/controller.js';
 export { CameraRig } from './camera/cameraRig.js';
+export { VIEW_PARAM, VIEW_STORAGE_KEY, getRememberedView, rememberView, takeViewHandoff, withView } from './camera/viewHandoff.js';
 export { Player } from './player/player.js';
 export {
   AVATAR_EXPRESSIONS,
@@ -20,6 +21,7 @@ export {
   setAvatarColor,
 } from './player/avatar.js';
 export type { AvatarExpression, AvatarMotion } from './player/avatar.js';
+export { isStrokeMaterial, setFigureStroke, setStrokeOpacity } from './player/stroke.js';
 export { PortalManager, buildTravelUrl, getReferringWorld } from './portals/portals.js';
 export { isLoadableUrl, parseAvatarDescriptor } from './avatar/descriptor.js';
 export type { AvatarDescriptor, AvatarFormat } from './avatar/descriptor.js';
