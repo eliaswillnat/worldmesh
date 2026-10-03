@@ -134,7 +134,7 @@ export interface PortalOptions {
 }
 
 export interface UiOptions {
-  /** Crosshair dot in first person. */
+  /** Crosshair dot in the middle of the screen. Off unless set to true. */
   crosshair?: boolean;
   /** Bottom-left WorldMesh badge linking back to the hub. */
   badge?: boolean;

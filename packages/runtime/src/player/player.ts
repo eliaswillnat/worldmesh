@@ -1,6 +1,7 @@
 import { Group, Mesh, Object3D, type Vector3 } from 'three';
 import type { LoadedAvatar } from '../avatar/loader.js';
 import type { PlayerOptions } from '../types.js';
+import { setFigureStroke } from './stroke.js';
 import {
   animateDefaultAvatar,
   createDefaultAvatar,
@@ -51,6 +52,8 @@ export class Player {
     this.isDefaultAvatar = !options.avatar;
 
     const body = options.avatar ?? createDefaultAvatar(options.height);
+    // The default figure always wears its ink outline, in the hub and every world alike.
+    if (this.isDefaultAvatar) setFigureStroke(body, true);
     this.root.add(body as Object3D);
     this.baseBody = body;
   }

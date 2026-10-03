@@ -299,7 +299,7 @@ export class Overlay {
     this.root.dataset.locked = options.moveBeforeLock ? 'true' : 'false';
     if (this.deferLockPanel) this.root.dataset.deferLock = 'true';
 
-    if (options.crosshair !== false) {
+    if (options.crosshair === true) {
       const crosshair = document.createElement('div');
       crosshair.className = 'wm-crosshair';
       this.root.appendChild(crosshair);

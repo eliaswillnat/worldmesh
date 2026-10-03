@@ -2,6 +2,7 @@ import { Vector3 } from 'three';
 import { resolveAbilities } from '../abilities/abilities.js';
 import { parseAvatarDescriptor, type AvatarDescriptor } from '../avatar/descriptor.js';
 import { resolveWorldMeshAvatar, takeAvatarTicket } from '../avatar/handoff.js';
+import { rememberView, takeViewHandoff } from '../camera/viewHandoff.js';
 import { loadAvatarModel } from '../avatar/loader.js';
 import { CameraRig } from '../camera/cameraRig.js';
 import { Input } from '../controls/input.js';
@@ -41,6 +42,8 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   // Always take an avatar handoff ticket out of the address bar, even if this
   // world shows no avatars: portals still carry it on to the next world.
   const avatarTicket = takeAvatarTicket();
+  // A view the visitor picked here or in the world they came from wins over this world's default.
+  const rememberedView = takeViewHandoff();
   const spawn = new Vector3(...(options.spawn ?? [0, 2, 0]));
   const abilities = resolveAbilities(options.abilities);
 
@@ -80,7 +83,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     },
   });
 
-  const cameraRig = new CameraRig({ ...options.view, camera, collision });
+  const cameraRig = new CameraRig({ ...options.view, mode: rememberedView ?? options.view?.mode, camera, collision });
   const player = new Player({ ...options.player, height, radius });
   if (player.root) scene.add(player.root);
 
@@ -328,6 +331,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   function setViewMode(mode: ViewMode): void {
     if (cameraRig.mode === mode) return;
     cameraRig.setMode(mode);
+    rememberView(mode);
     applyViewVisibility();
     events.emit('view:change', { mode });
   }

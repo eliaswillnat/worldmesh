@@ -12,6 +12,7 @@ import {
   Vector3,
 } from 'three';
 import { withAvatarTicket } from '../avatar/handoff.js';
+import { withView } from '../camera/viewHandoff.js';
 import type { PortalMode, PortalOptions } from '../types.js';
 
 export interface ResolvedPortal extends PortalOptions {
@@ -110,7 +111,7 @@ export class PortalManager {
 
 /**
  * Build the destination URL, carrying a back-reference to this world, and the
- * visitor's avatar handoff ticket (in the fragment) if they arrived with one.
+ * visitor's avatar handoff ticket and camera view (in the fragment) if any.
  */
 export function buildTravelUrl(target: string): string {
   try {
@@ -118,7 +119,9 @@ export function buildTravelUrl(target: string): string {
     if (!url.searchParams.has('from')) {
       url.searchParams.set('from', window.location.origin + window.location.pathname);
     }
-    return withAvatarTicket(url).toString();
+    // A world's own fragment (e.g. a hash route) is left alone.
+    if (url.hash) return url.toString();
+    return withView(withAvatarTicket(url)).toString();
   } catch {
     return target;
   }

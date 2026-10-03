@@ -1,5 +1,6 @@
 import { CanvasTexture, Group, Mesh, MeshBasicMaterial, Sprite, SpriteMaterial, Vector3, type Object3D, type Scene } from 'three';
 import { animateDefaultAvatar, createDefaultAvatar, setAvatarExpression } from '../player/avatar.js';
+import { setFigureStroke } from '../player/stroke.js';
 import type { NetworkAdapter, PeerBody, PlayerState, WorldMeshHandle } from '../types.js';
 
 /** The relay WorldMesh hosts (workers/presence). Worlds can point at their own. */
@@ -19,7 +20,7 @@ export interface PresenceOptions {
    * for the people already in the room when this visitor joins.
    */
   onArrive?: (x: number, z: number) => void;
-  /** Called with each remote figure as it is made, e.g. to add an outline. */
+  /** Called with each remote figure as it is made, already outlined. */
   onFigure?: (root: Object3D) => void;
 }
 
@@ -297,6 +298,7 @@ export class Presence implements NetworkAdapter {
       const tag = createNameTag(GUEST);
       tag.position.y = TAG_HEIGHT;
       root.add(tag);
+      setFigureStroke(root, true);
       this.onFigure(root);
       this.group.add(root);
       remote = { root, target: new Vector3(p[0], p[1], p[2]), targetYaw: yaw, yaw, speed: 0, grounded: true, label: GUEST, tag, appear: 0, bubble: null, bubbleLeft: 0 };
