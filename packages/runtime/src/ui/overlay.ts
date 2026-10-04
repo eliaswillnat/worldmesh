@@ -108,7 +108,7 @@ const CSS = `
   transform: translateX(-50%);
   pointer-events: auto;
   font-size: 13px;
-  letter-spacing: .12em;
+  letter-spacing: .06em;
   text-transform: uppercase;
   padding: 10px 22px;
   border: 1px solid rgba(255,255,255,0.4);
@@ -132,7 +132,7 @@ const CSS = `
 }
 .wm-vr-menu {
   font-size: 13px;
-  letter-spacing: .12em;
+  letter-spacing: .06em;
   text-transform: uppercase;
   padding: 10px 22px;
   border: 1px solid rgba(255,255,255,0.35);
