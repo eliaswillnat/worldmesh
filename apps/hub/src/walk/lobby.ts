@@ -27,6 +27,7 @@ import {
   PerspectiveCamera,
   PlaneGeometry,
   Raycaster,
+  RingGeometry,
   Scene,
   ShaderMaterial,
   Vector2,
@@ -37,10 +38,26 @@ import {
 } from 'three';
 import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { CITY_GLOW_WHITE, applyCityTheme, applySkyTheme, createBeamRefraction, createCityMaterials, createSky, createSpawnRay, flipInside, skyHorizon, type BillboardSlot } from './city';
+import { CITY_GLOW_WHITE, applyCityTheme, applySkyTheme, createCityMaterials, createSky, createSpawnRay, flipInside, skyHorizon, type BillboardSlot } from './city';
 import { DOOR_HALF_SPAN, DOOR_HEIGHT, DOOR_TOP, DOOR_WIDTH, FRAME, Door, createLabel, type DoorWorld } from './door';
 import { ImageCropper } from '../cropper';
 import { describeBillboard } from './layout';
+import { Assembly } from './assemble';
+import { FLOOR_NAMES, Lifts, buildShafts, createColliderMaterial, mergeInto, planLifts } from './elevators';
+import {
+  DRUM_HEIGHT,
+  GALLERY_LEVELS,
+  MEDIA_BOTTOM,
+  MEDIA_MAX_HEIGHT,
+  OCULUS_RADIUS,
+  buildDome,
+  buildGalleries,
+  createConcourseSign,
+  createDepartureBoard,
+  domeShape,
+  rod,
+  type Flight,
+} from './rotunda';
 import { fetchBillboards } from '../ads/api';
 import { AdBillboards, type BillboardHit } from '../ads/billboards';
 import { AD_CONFIG, normalizeDestinationUrl } from '../ads/config';
@@ -136,8 +153,8 @@ const WALL_MIN_RADIUS = 11;
 /** How far the walkable plaza reaches around the lobby. */
 const PLAZA_RADIUS = 120;
 const DOOR_SPACING = 4.2;
-/** A tall closed drum, with the doors around the inside of its base. */
-const CITADEL_HEIGHT = 30;
+/** A tall drum under a glass dome, with the doors around the inside of its base. */
+const CITADEL_HEIGHT = DRUM_HEIGHT;
 const WALL_THICKNESS = 1.2;
 /** Ways out to the city, evenly around the drum. Sealed for now. Angle 0 faces +Z, behind you on arrival. */
 const GATE_COUNT = 4;
@@ -181,8 +198,12 @@ function distribute(count: number, total: number): number[] {
   return Array.from({ length: Math.min(count, total) }, (_, i) => i);
 }
 
+/** Doors round each gallery: smaller, to fit under the floor above, and this far apart. */
+const GALLERY_DOOR_SCALE = 0.62;
+const GALLERY_DOOR_PITCH = 5.2;
+
 /** The hall always has at least this many doors, and always a few empty ones. */
-const MIN_DOORS = 24;
+const MIN_DOORS = 32;
 const SPARE_DOORS = 6;
 /** Stand this close in front of an empty door to be offered it. */
 const EMPTY_DOOR_REACH = 4.8;
@@ -224,8 +245,6 @@ const GHOST_GLOW = 0x5cc8ff;
  * visitors walking back out of a world do not set it off.
  */
 const ARRIVE_RADIUS = 6;
-/** How long the local figure takes to fill in from points on spawn. */
-const SPAWN_APPEAR = 1.15;
 /** Billboards further than this are not picked by the crosshair or a tap. */
 const BILLBOARD_RANGE = 95;
 /** How often the billboard under the crosshair is looked up, in seconds. */
@@ -236,6 +255,10 @@ const BILLBOARD_REFRESH_MS = 60_000;
 const RANDOM_DOOR_ARC = 8.2;
 /** How far the random door stands out from the outer wall. */
 const RANDOM_DOOR_OUT = 0.3;
+
+/** The ring of light that runs across the floor on each arrival: metres per second, and seconds it lasts. */
+const WAVE_SPEED = 14;
+const WAVE_TIME = 2.4;
 
 /** How rough the floor is: 0 is a perfect mirror, 1 a softly blurred, uneven stone. */
 const FLOOR_ROUGHNESS = 1;
@@ -256,6 +279,8 @@ const floorShader = {
     uBackground: { value: new Color() },
     uHaze: { value: new Color() },
     uRough: { value: FLOOR_ROUGHNESS },
+    uHall: { value: 0 },
+    uWave: { value: -1 },
   },
   vertexShader: /* glsl */ `
     uniform mat4 textureMatrix;
@@ -279,6 +304,8 @@ const floorShader = {
     uniform vec3 uBackground;
     uniform vec3 uHaze;
     uniform float uRough;
+    uniform float uHall;
+    uniform float uWave;
     varying vec4 vUv;
     varying vec3 vWorld;
 
@@ -287,6 +314,18 @@ const floorShader = {
     float gridLine(vec2 coord) {
       vec2 g = abs(fract(coord - 0.5) - 0.5) / max(fwidth(coord), vec2(1e-4));
       return 1.0 - min(min(g.x, g.y), 1.0);
+    }
+
+    float line1(float coord, float width) {
+      return 1.0 - min(abs(fract(coord - 0.5) - 0.5) / max(width, 1e-4), 1.0);
+    }
+
+    // Spokes round the hall's centre. atan jumps at -x, so take the width
+    // from whichever of two half-turned angles is smooth there.
+    float spokes(vec2 p, float count) {
+      float a = atan(p.y, p.x) / 6.2831853 * count;
+      float b = atan(-p.y, -p.x) / 6.2831853 * count;
+      return line1(a, min(fwidth(a), fwidth(b)));
     }
 
     float hash(vec2 p) {
@@ -334,7 +373,27 @@ const floorShader = {
       float minorFade = 1.0 - smoothstep(8.0, 40.0, dist);
       // Lines light up a little around the player.
       float glow = 1.0 - smoothstep(0.0, 14.0, distance(vWorld.xz, uPlayer));
-      float lines = max(minor * 0.08 * minorFade, major * 0.2) * fade * (1.0 + glow * 1.6);
+      // Inside the rotunda the square grid gives way to an inlay round the
+      // centre: rings every 3 m, spokes, and a border band inside the wall.
+      float rr = length(vWorld.xz);
+      float inside = 1.0 - smoothstep(uHall - 0.6, uHall, rr);
+      float ringMinor = line1(rr / 3.0, fwidth(rr / 3.0));
+      float ringWidth = max(fwidth(rr), 1e-4);
+      float ringMajor = 1.0 - min(min(abs(rr - 6.0), min(abs(rr - uHall + 1.2), abs(rr - uHall + 0.9))) / ringWidth, 1.0);
+      float spokeMinor = spokes(vWorld.xz, 32.0) * smoothstep(4.0, 8.0, rr);
+      float spokeMajor = spokes(vWorld.xz, 8.0) * smoothstep(2.4, 3.0, rr);
+      float radial = max(max(ringMinor, spokeMinor) * 0.08 * minorFade, max(ringMajor, spokeMajor) * 0.2);
+      float square = max(minor * 0.08 * minorFade, major * 0.2);
+      // On each arrival a ring of light runs out from the platform along the
+      // lines, fading as it goes. uWave is seconds since the spawn, or < 0.
+      float wave = 0.0;
+      if (uWave >= 0.0) {
+        float front = uWave * ${WAVE_SPEED.toFixed(1)};
+        float ring = exp(-pow((rr - front) / 2.2, 2.0));
+        float trail = smoothstep(front + 1.0, front - 6.0, rr) * step(rr, front + 1.0) * 0.35;
+        wave = max(ring, trail) * (1.0 - smoothstep(0.0, ${WAVE_TIME.toFixed(1)}, uWave)) * (1.0 - smoothstep(0.0, uHall, rr) * 0.6);
+      }
+      float lines = mix(square, radial, inside) * fade * (1.0 + glow * 1.6 + wave * 6.0);
 
       // A mirror under a tinted glaze: glossier at grazing angles, faint
       // looking straight down. The rough patches take some of the shine off.
@@ -386,13 +445,42 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const sun = new DirectionalLight(0xffffff, 1.8);
   sun.position.set(4, 10, 6);
   scene.add(sun);
-  const spawnRay = createSpawnRay(CITADEL_HEIGHT + 170);
+  const spawnRay = createSpawnRay(CITADEL_HEIGHT + 170, FLOOR_LAYER);
   scene.add(spawnRay.object);
-  const beamRefraction = createBeamRefraction(renderer, camera);
+  // The local figure assembling out of points on arrival.
+  const assembly = new Assembly(FLOOR_LAYER);
+  /** Lobby clock when the last spawn's ring of light set off across the floor; negative = none. */
+  let waveStarted = -1;
+  /** Other visitors' figures assembling as they arrive, each with its own points. */
+  const arrivals: Array<{ assembly: Assembly; root: Object3D }> = [];
+  let newestFigure: Object3D | null = null;
+  scene.add(assembly.points);
 
   const wallMaterial = new MeshStandardMaterial({ side: DoubleSide, roughness: 0.7, metalness: 0 });
   const innerWallMaterial = new MeshBasicMaterial({ side: DoubleSide });
   const gateFrameMaterial = new MeshStandardMaterial({ roughness: 0.4, metalness: 0.05 });
+  // The dome's glazing and the gallery rails.
+  const glassMaterial = new MeshStandardMaterial({
+    transparent: true,
+    depthWrite: false,
+    side: DoubleSide,
+    roughness: 0.08,
+    metalness: 0.4,
+  });
+  // Over the middle of the hall: every world and the gate to find it at.
+  // Glass lifts up to the galleries, and the walkable galleries they reach.
+  const liftTrim = new MeshBasicMaterial({ color: 0xffffff, toneMapped: false });
+  const lifts = new Lifts({ glass: glassMaterial, trim: liftTrim, body: wallMaterial, floor: gateFrameMaterial });
+  scene.add(lifts.group);
+  const liftPoint = new Vector3();
+  const colliderMaterial = createColliderMaterial();
+  /** Gallery decks, rails and landings. Rebuilt with the hall. */
+  const upper: Mesh[] = [];
+  const departures = createDepartureBoard();
+  scene.add(departures.group);
+  let flights: Flight[] = [];
+  // Door angles round the hall, in gate-number order.
+  let hallAngles: number[] = [];
   const cityMaterials = createCityMaterials(renderer.capabilities.getMaxAnisotropy());
   let disposed = false;
   const mirror = new Reflector(new PlaneGeometry(FLOOR_SIZE, FLOOR_SIZE), {
@@ -426,8 +514,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   let pendingAlias = alias;
   let ghost: Ghost | null = null;
   let privateTimer = 0;
-  /** Lobby clock when the local figure started fading in; negative = idle. */
-  let appearStarted = Number.NEGATIVE_INFINITY;
   const presence = options.presenceEndpoint
     ? new Presence({
         url: `${options.presenceEndpoint.replace(/\/$/, '')}/room/lobby`,
@@ -437,8 +523,18 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         getAlias: () => alias,
         // Someone else entering lights the same beam for everyone watching.
         // Visitors coming back out of a world appear at a door, not here.
+        // Each new figure is handed over just before its arrival is reported.
+        onFigure: (root) => {
+          newestFigure = root;
+        },
+        // Someone arriving gets the same show as we do: the beam, their figure
+        // assembling out of three point clones, and the ring across the floor.
         onArrive: (x, z) => {
-          if (Math.hypot(x - SPAWN[0], z - SPAWN[2]) < ARRIVE_RADIUS) spawnRay.trigger();
+          if (Math.hypot(x - SPAWN[0], z - SPAWN[2]) >= ARRIVE_RADIUS) return;
+          spawnRay.trigger();
+          waveStarted = time;
+          if (newestFigure) startArrival(newestFigure);
+          newestFigure = null;
         },
       })
     : undefined;
@@ -463,6 +559,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const doors = new Map<string, Door>();
   // Doors with no world behind them yet. Re-laid out with every list change.
   const emptyDoors: Door[] = [];
+  // Empty doors round the galleries. Rebuilt with the hall.
+  const galleryDoors: Door[] = [];
   // Outside, set into the tower beside the gate: a glowing blue door to a
   // random listed world.
   const randomDoor = new Door(null, light, true);
@@ -495,6 +593,32 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   });
   container.appendChild(addPrompt);
 
+  // Inside a lift: up and down buttons (E and Q on a keyboard).
+  const liftPrompt = document.createElement('div');
+  liftPrompt.className = 'walk-add-prompt walk-lift-prompt';
+  if (!isTouch) {
+    const liftHint = document.createElement('span');
+    liftHint.textContent = 'E up · Q down';
+    liftPrompt.append(liftHint);
+  }
+  for (const [label, step, name] of [['▲', 1, 'Up'], ['▼', -1, 'Down']] as const) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'walk-lift-step';
+    button.dataset.step = String(step);
+    button.textContent = label;
+    button.setAttribute('aria-label', name);
+    // On press rather than click: the touch controls can swallow the click that would follow.
+    button.addEventListener('pointerdown', (event) => {
+      event.stopPropagation();
+      event.preventDefault();
+      lifts.move(liftPoint.fromArray(world.getState().position), step);
+    });
+    liftPrompt.append(button);
+  }
+  for (const type of ['pointerdown', 'pointerup']) liftPrompt.addEventListener(type, (event) => event.stopPropagation());
+  container.appendChild(liftPrompt);
+
   // Offered while a billboard is under the crosshair (or centred on a phone).
   const adPrompt = document.createElement('button');
   adPrompt.type = 'button';
@@ -524,30 +648,42 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       ground,
       ...wall,
       ...emptyDoors.map((door) => door.face),
+      ...galleryDoors.map((door) => door.face),
       ...(exitDoor ? [exitDoor.face] : []),
       ...spawnRay.colliders,
+      ...upper,
+      ...lifts.colliders,
     ],
     onUpdate: (dt, handle) => {
       time += dt;
       if (emerging) stepEmerging(dt);
+      departures.update(dt);
       if (interiorBannerRing) {
         interiorBannerAngle += dt * ((Math.PI * 2) / 360);
         interiorBannerRing.rotation.y = interiorBannerAngle;
       }
-      const [x, , z] = handle.getState().position;
+      // In a lift: carried with the cab, and kept inside its glass.
+      if (!emerging && !warping) {
+        const held = lifts.update(dt, liftPoint.fromArray(handle.getState().position));
+        if (held) world.setState({ position: held.toArray() });
+        updateLiftPrompt();
+      }
+      const [x, y, z] = handle.getState().position;
+      // Only doors on the floor they are standing on.
+      const level = (door: Door) => Math.abs(y - door.group.position.y) < 1;
       if (exitDoor && !emerging) {
         const { x: doorX, z: doorZ } = exitDoor.inFront(0);
         if (Math.hypot(x - doorX, z - doorZ) > EXIT_CLEAR) setExitDoor(null);
       }
       for (const door of [...doors.values(), randomDoor]) {
         door.update(time);
-        if (!warping && !emerging && door.contains(x, z)) enter(door);
+        if (level(door) && !warping && !emerging && door.contains(x, z)) enter(door);
       }
       let near: Door | null = null;
       let nearest = EMPTY_DOOR_REACH;
-      for (const door of emptyDoors) {
+      for (const door of [...emptyDoors, ...galleryDoors]) {
         door.update(time);
-        const distance = door.distanceInFront(x, z);
+        const distance = level(door) ? door.distanceInFront(x, z) : null;
         if (distance !== null && distance < nearest) {
           nearest = distance;
           near = door;
@@ -562,15 +698,16 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       updateBillboardFocus(dt, near !== null);
       billboards?.update(dt, camera);
       floorUniforms.uPlayer.value.set(x, z);
+      floorUniforms.uWave.value = waveStarted < 0 || time - waveStarted > WAVE_TIME ? -1 : time - waveStarted;
       // The sky is centred on the camera, so it stays around it however high the towers take them.
       sky.position.copy(camera.position);
       const beamPresence = spawnRay.setTime(time);
-      if (appearStarted >= 0) {
-        const t = Math.min(1, (time - appearStarted) / SPAWN_APPEAR);
-        const amount = t * t * (3 - 2 * t);
-        if (ghost) ghost.shimmer(time, amount);
-        else setLocalAppear(world.avatar, amount);
-        if (t >= 1) appearStarted = Number.NEGATIVE_INFINITY;
+      // Arriving: the figure assembles out of points, and shows through as they land.
+      updateArrivals(dt);
+      const appear = assembly.update(dt, camera, renderer.domElement.height);
+      if (appear !== null) {
+        if (ghost) ghost.shimmer(time, appear);
+        else setLocalAppear(world.avatar, appear);
       } else if (ghost) {
         ghost.shimmer(time);
       }
@@ -587,7 +724,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       camera.position.x += Math.sin(time * 46) * wobble + Math.sin(time * 71) * wobble * 0.35;
       camera.position.y += Math.sin(time * 58 + 1.1) * wobble * 0.55;
       camera.position.z += Math.sin(time * 39 + 0.6) * wobble * 0.4;
-      beamRefraction.update(dt, x, z, time, beamPresence);
       // Keep the finite floor under the player. The grid is drawn in world
       // space, so moving the plane does not move the lines.
       mirror.position.set(Math.round(x / 10) * 10, 0, Math.round(z / 10) * 10);
@@ -668,6 +804,15 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   };
   window.addEventListener('keydown', handleChatKey);
 
+  // Q inside a lift takes it down a floor (E, the interact key, takes it up).
+  const handleLiftKey = (event: KeyboardEvent) => {
+    if (event.code !== 'KeyQ' || event.repeat || chatting) return;
+    const target = event.target;
+    if (target instanceof Element && target.closest('input, textarea, select, [contenteditable="true"]')) return;
+    lifts.move(liftPoint.fromArray(world.getState().position), -1);
+  };
+  window.addEventListener('keydown', handleLiftKey);
+
   // On touch devices, a chat button replaces the Enter key for opening chat,
   // and tapping outside the bubble dismisses it (replaces Escape).
   let chatBtn: HTMLButtonElement | null = null;
@@ -738,8 +883,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     const target = door.random ? pickRandomWorld() : door.world;
     if (!target) return;
     door.surge();
-    const out = door.inFront(RETURN_STEP);
-    travel(target, { position: [out.x, 0, out.z], yaw: out.yaw }, door);
+    const out = door.inFront(RETURN_STEP * door.group.scale.x);
+    travel(target, { position: [out.x, door.group.position.y, out.z], yaw: out.yaw }, door);
   }
 
   /**
@@ -810,30 +955,60 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   /** The first person at this empty door keeps it: their world opens here. */
   function placeClaim(empty: Door, world: ClaimedWorld): void {
     const angle = typeof empty.group.userData.angle === 'number' ? empty.group.userData.angle : Math.atan2(empty.group.position.x, empty.group.position.z);
-    const { x, z } = empty.group.position;
-    const index = emptyDoors.indexOf(empty);
-    if (index >= 0) emptyDoors.splice(index, 1);
+    const { x, y, z } = empty.group.position;
+    const level = typeof empty.group.userData.level === 'number' ? empty.group.userData.level : 0;
+    const scale = empty.group.scale.x;
+    for (const list of [emptyDoors, galleryDoors]) {
+      const index = list.indexOf(empty);
+      if (index >= 0) list.splice(index, 1);
+    }
     if (nearEmpty === empty) {
       nearEmpty = null;
       addPrompt.classList.remove('visible');
     }
     empty.dispose();
-    saveClaim({ angle, name: world.name, url: world.url, cover: world.cover });
+    saveClaim({ angle, level, name: world.name, url: world.url, cover: world.cover });
     const door = new Door({ name: world.name, url: world.url, cover: world.cover }, light);
     door.setEntries(options.entries?.(world.url));
     scene.add(door.group);
     door.place(x, z, 0, 0);
+    door.group.position.y = y;
+    door.group.scale.setScalar(scale);
     door.group.userData.angle = angle;
+    door.group.userData.level = level;
     known.set(world.url, { name: world.name, url: world.url, cover: world.cover });
     doors.set(world.url, door);
+    const slot = level ? -1 : hallAngles.findIndex((candidate) => angleDelta(candidate, angle) < 0.08);
+    if (slot >= 0) {
+      door.setGate(slot + 1);
+      flights = [...flights, { name: world.name, gate: slot + 1, cover: world.cover }].sort((a, b) => a.gate - b.gate);
+      departures.setFlights(flights);
+    }
   }
 
   // Keyboard: E at a tower door, lift or elevator, or next to an empty door.
   // The runtime reports E as a plain interaction when no portal of its own is in reach.
-  world.on('respawn', () => aimSpawn());
+  world.on('respawn', () => {
+    aimSpawn();
+  });
   world.on('interact', () => {
+    if (lifts.move(liftPoint.fromArray(world.getState().position), 1)) return;
     if (nearEmpty) addWorld();
   });
+
+  /** Inside a standing lift: which floor to go to. */
+  function updateLiftPrompt(): void {
+    const inside = lifts.aboard(liftPoint.fromArray(world.getState().position));
+    const show = !!inside && !inside.moving;
+    liftPrompt.classList.toggle('visible', show);
+    if (!inside) return;
+    liftPrompt.dataset.lift = String(inside.index);
+    // No going up from the top or down from the bottom.
+    for (const button of liftPrompt.querySelectorAll<HTMLButtonElement>('button[data-step]')) {
+      const next = inside.floor + Number(button.dataset.step);
+      button.disabled = next < 0 || next >= FLOOR_NAMES.length;
+    }
+  }
 
   // Pointer: clicking or tapping a tower door or a billboard. While the mouse
   // is captured there is no cursor, so a click aims where the camera looks.
@@ -971,7 +1146,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     const aspect = window.innerWidth / window.innerHeight;
     camera.fov = aspect < 1 ? 70 + (1 - aspect) * 30 : 70;
     camera.updateProjectionMatrix();
-    beamRefraction.resize();
   };
   window.addEventListener('resize', handleResize);
   handleResize();
@@ -981,7 +1155,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   // a moment later and shift every door, and these already match the full list.
   if (options.start) emerge(options.start);
 
-  if (import.meta.env.DEV) Object.assign(window, { lobby: world });
+  if (import.meta.env.DEV) Object.assign(window, { lobby: world, spawnFx: () => triggerSpawnFx() });
 
   return {
     setWorlds,
@@ -995,10 +1169,42 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     dispose,
   };
 
+  /** Another visitor arrived: hide their figure and assemble it out of points, as ours is. */
+  function startArrival(root: Object3D): void {
+    const assembly = new Assembly(FLOOR_LAYER);
+    assembly.setTheme(light);
+    scene.add(assembly.points);
+    assembly.start(() => (root.parent ? root : null));
+    root.visible = false;
+    arrivals.push({ assembly, root });
+  }
+
+  function updateArrivals(dt: number): void {
+    for (let i = arrivals.length - 1; i >= 0; i--) {
+      const { assembly, root } = arrivals[i];
+      // They left before it finished.
+      const gone = !root.parent;
+      const appear = gone ? null : assembly.update(dt, camera, renderer.domElement.height);
+      if (appear === null) {
+        if (!gone) {
+          root.visible = true;
+          setLocalAppear(root, 1);
+        }
+        assembly.dispose();
+        arrivals.splice(i, 1);
+        continue;
+      }
+      // Hidden until the clones merge, then faded in where they meet.
+      root.visible = appear > 0;
+      if (appear > 0) setLocalAppear(root, appear);
+    }
+  }
+
   /** Beam + local figure fade-in when arriving at the spawn point. */
   function triggerSpawnFx(fromWallClock?: number): void {
     spawnRay.trigger(fromWallClock);
-    appearStarted = time;
+    assembly.start(() => world.avatar);
+    waveStarted = time;
     if (ghost) ghost.shimmer(time, 0);
     else setLocalAppear(world.avatar, 0);
     aimSpawn();
@@ -1082,7 +1288,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       world.clearAvatar();
       ghost?.restore();
       ghost = alias ? makeGhost(world.avatar) : null;
-      world.teleport(SPAWN, 0);
+        world.teleport(SPAWN, 0);
       triggerSpawnFx();
       presence?.rejoin();
       flash.classList.remove('active');
@@ -1094,7 +1300,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     if (isLight === light) return;
     light = isLight;
     applyTheme();
-    for (const door of [...doors.values(), ...emptyDoors, randomDoor]) door.setTheme(light);
+    for (const door of [...doors.values(), ...emptyDoors, ...galleryDoors, randomDoor]) door.setTheme(light);
     for (const draw of gateLabelDraw) draw(light);
   }
 
@@ -1111,6 +1317,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     hemisphere.groundColor.set(light ? 0xdde5f2 : 0x202020);
     hemisphere.intensity = light ? 2 : 1.6;
     spawnRay.setTheme(light);
+    assembly.setTheme(light);
+    for (const arrival of arrivals) arrival.assembly.setTheme(light);
     floorUniforms.uBackground.value.set(light ? 0xf1f4fa : 0x000000);
     floorUniforms.uHaze.value.copy(background);
     floorUniforms.uLight.value = light ? 1 : 0;
@@ -1118,6 +1326,10 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     // Unlit: the sky lights would otherwise wash a highlight around the drum.
     innerWallMaterial.color.set(light ? 0xc8ceda : 0x07070a);
     gateFrameMaterial.color.set(light ? 0x1c1c1c : 0xf2f2f2);
+    // Clear by day with the sky behind it; a faint smoked sheen at night.
+    glassMaterial.color.set(light ? 0xe4eef9 : 0x9aa8bf);
+    glassMaterial.opacity = light ? 0.22 : 0.1;
+    departures.setTheme(light);
     // Lift the shaded sides so white stays white, not grey.
     wallMaterial.emissive.set(light ? CITY_GLOW_WHITE : 0x000000);
     applyCityTheme(cityMaterials, light);
@@ -1137,7 +1349,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     // each other also see the same doors around them.
     // A door claimed inside the lobby stays on the opening it was given.
     // Once that world is published, it joins the ordinary ring instead.
-    const claims = loadClaims().filter((claim) => !worlds.some((entry) => entry.url === claim.url));
+    // Gallery claims are put back by hangGalleryDoors.
+    const claims = loadClaims().filter((claim) => !claim.level && !worlds.some((entry) => entry.url === claim.url));
     const claimUrls = new Set(claims.map((claim) => claim.url));
     const urls = [...known.keys()].filter((url) => !claimUrls.has(url)).sort();
     // A multiple of the gate count, so every bay — and both sides of every exit — match.
@@ -1149,9 +1362,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     const angles = doorAngles(total, radius);
     // Worlds sit next to each other; the doors after them stay empty.
     const slots = distribute(urls.length, total);
-    const at = (door: Door, slot: number) =>
-      // Set into the wall, facing the middle of the room.
+    const at = (door: Door, slot: number) => {
+      // Set into the wall, facing the middle of the room, under its gate number.
       door.place(Math.sin(angles[slot]) * radius, Math.cos(angles[slot]) * radius, 0, 0);
+      door.setGate(slot + 1);
+    };
 
     urls.forEach((url, i) => {
       let door = doors.get(url);
@@ -1191,6 +1406,16 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       door.group.userData.angle = angle;
       emptyDoors.push(door);
     }
+    // Gates are numbered round the hall from the first door after exit A.
+    hallAngles = angles;
+    flights = [];
+    urls.forEach((url, i) => flights.push({ ...pick(known.get(url)!), gate: slots[i] + 1 }));
+    for (const claim of claims) {
+      const slot = angles.findIndex((angle) => angleDelta(claim.angle, angle) < 0.08);
+      if (slot >= 0 && !taken.has(slot)) flights.push({ name: claim.name, cover: claim.cover, gate: slot + 1 });
+    }
+    flights.sort((a, b) => a.gate - b.gate);
+    departures.setFlights(flights);
     buildWall(radius, angles);
   }
 
@@ -1201,7 +1426,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
    */
   function buildWall(radius: number, angles: number[]): void {
     for (const mesh of [...wall, ...trim]) {
-      if (mesh.userData.gateLabel) {
+      if (mesh.userData.ownMaterial) {
         const material = mesh.material as MeshBasicMaterial;
         material.map?.dispose();
         material.dispose();
@@ -1271,20 +1496,73 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       gateSeals.push(sealed);
       wall.push(plug);
       for (const mesh of sealed.children) {
-        if (mesh !== plug && mesh instanceof Mesh && !mesh.userData.gateLabel) wall.push(mesh);
+        if (mesh !== plug && mesh instanceof Mesh && !mesh.userData.ownMaterial) wall.push(mesh);
       }
       const sign = createLabel('Extension\nUnder\nConstruction', undefined, true);
       sign.draw(light);
-      sign.mesh.userData.gateLabel = true;
+      sign.mesh.userData.ownMaterial = true;
       sign.mesh.position.set(0, DOOR_HEIGHT / 2, 0.14);
       sealed.add(sign.mesh);
       trim.push(sign.mesh);
       gateLabelDraw.push(sign.draw);
+      // Wayfinding over the exit, as in a terminal.
+      const concourse = createConcourseSign(String.fromCharCode(65 + gateSeals.length - 1));
+      concourse.draw(light);
+      concourse.mesh.userData.ownMaterial = true;
+      concourse.mesh.position.set(0, DOOR_TOP + 1.4, 0.25);
+      sealed.add(concourse.mesh);
+      trim.push(concourse.mesh);
+      gateLabelDraw.push(concourse.draw);
     }
+
+    floorUniforms.uHall.value = radius;
 
     buildTrim(radius, outer);
     buildCity(outer);
     world.refreshColliders();
+  }
+
+  /**
+   * A ring of doors round the wall of each gallery.
+   * They start empty; a world claimed in one stays on that gallery.
+   */
+  function hangGalleryDoors(radius: number): void {
+    for (const door of galleryDoors) door.dispose();
+    galleryDoors.length = 0;
+    nearEmpty = null;
+    addPrompt.classList.remove('visible');
+    // A claimed world that has since been published has a door in the hall instead.
+    const claims = loadClaims().filter((claim) => {
+      const existing = doors.get(claim.url);
+      return claim.level && !(existing && !existing.group.userData.level);
+    });
+    const r = radius - 0.12;
+    GALLERY_LEVELS.forEach((height, index) => {
+      const level = index + 1;
+      const count = Math.floor((Math.PI * 2 * r) / GALLERY_DOOR_PITCH);
+      for (let i = 0; i < count; i++) {
+        const angle = ((i + 0.5) / count) * Math.PI * 2;
+        const claim = claims.find((entry) => entry.level === level && angleDelta(entry.angle, angle) < 0.02);
+        let door = claim ? doors.get(claim.url) : undefined;
+        if (claim && !door) {
+          door = new Door({ name: claim.name, url: claim.url, cover: claim.cover }, light);
+          door.setEntries(options.entries?.(claim.url));
+          scene.add(door.group);
+          known.set(claim.url, { name: claim.name, url: claim.url, cover: claim.cover });
+          doors.set(claim.url, door);
+        }
+        if (!door) {
+          door = new Door(null, light);
+          scene.add(door.group);
+          galleryDoors.push(door);
+        }
+        door.place(Math.sin(angle) * r, Math.cos(angle) * r, 0, 0);
+        door.group.position.y = height;
+        door.group.scale.setScalar(GALLERY_DOOR_SCALE);
+        door.group.userData.angle = angle;
+        door.group.userData.level = level;
+      }
+    });
   }
 
   /** Ribs, light bands, the crown, the gate's portal frame and the banner. */
@@ -1312,17 +1590,44 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       solid.push(place(new BoxGeometry(0.5, CITADEL_HEIGHT, 0.4), Math.sin(angle) * r, CITADEL_HEIGHT / 2, Math.cos(angle) * r, angle));
     }
 
-    // Crown: a cornice around the top and a lid over the hall.
+    // Crown: a cornice around the top, the drum's rim, and the glass dome
+    // over the hall with the oculus the spawn beam rises through.
     solid.push(place(new CylinderGeometry(outer + 0.5, outer + 0.5, 1.2, 128, 1, true), 0, CITADEL_HEIGHT - 0.6, 0));
-    const roof = new CircleGeometry(outer + 0.5, 128);
-    roof.rotateX(-Math.PI / 2);
-    solid.push(place(roof, 0, CITADEL_HEIGHT, 0));
-    const ceiling = new CircleGeometry(radius, 128);
-    ceiling.rotateX(Math.PI / 2);
-    const soffit = new Mesh(ceiling, innerWallMaterial);
-    soffit.position.y = CITADEL_HEIGHT - 0.02;
-    scene.add(soffit);
-    trim.push(soffit);
+    const rim = new RingGeometry(radius, outer + 0.5, 128, 1);
+    rim.rotateX(-Math.PI / 2);
+    solid.push(place(rim, 0, CITADEL_HEIGHT, 0));
+    const dome = buildDome(radius);
+    solid.push(...dome.solid);
+    glow.push(...dome.glow);
+
+    // Galleries ringing the drum, one over the other.
+    const liftPlan = planLifts(radius);
+    const galleries = buildGalleries(radius, liftPlan.gaps);
+    solid.push(...galleries.solid);
+    glow.push(...galleries.glow);
+    const shafts = buildShafts(liftPlan, radius);
+    solid.push(...shafts.solid);
+    glow.push(...shafts.glow);
+    galleries.glass.push(...shafts.glass);
+    for (const mesh of upper) mesh.geometry.dispose();
+    upper.length = 0;
+    upper.push(mergeInto([...galleries.colliders.map((g) => (g.index ? g.toNonIndexed() : g)), ...shafts.colliders], colliderMaterial));
+    lifts.setLifts(liftPlan);
+    const glazing = new Mesh(mergeGeometries([dome.glass, ...galleries.glass].map((g) => (g.index ? g.toNonIndexed() : g))), glassMaterial);
+    for (const geometry of [dome.glass, ...galleries.glass]) geometry.dispose();
+    // Drawn after the opaque hall, so the rails and the dome stay see-through.
+    glazing.renderOrder = 3;
+    scene.add(glazing);
+    trim.push(glazing);
+    hangGalleryDoors(radius);
+
+    // The departures board hangs from the oculus ring on four cables.
+    const { oculusY } = domeShape(radius);
+    for (const corner of departures.hangers) {
+      const anchor = corner.clone().setY(oculusY - 0.2);
+      anchor.multiplyScalar(OCULUS_RADIUS / Math.hypot(anchor.x, anchor.z)).setY(oculusY - 0.2);
+      glow.push(rod(corner, anchor, 0.02));
+    }
 
     // Light bands: outside above the gate and under the crown, inside above
     // the doors (one unbroken line under the banners) and near the top.
@@ -1401,9 +1706,10 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   }
 
   /**
-   * Every citadel banner, curved onto the inside wall above the doors. Explore
-   * sits with the wide brand on one side of the hall; Discover is opposite,
-   * behind you. The ring still drifts slowly.
+   * Every citadel banner, curved onto the inside wall above the
+   * galleries: a band of screens under the dome. The set repeats as often as it
+   * takes to keep the band no taller than MEDIA_MAX_HEIGHT. The ring still
+   * drifts slowly.
    */
   function hangInteriorBanners(radius: number): void {
     if (interiorBannerRing) {
@@ -1416,9 +1722,10 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     const { platform, explore, discover } = cityMaterials.banners;
     const portraits = [explore, discover];
     // Native aspects, packed edge to edge so the band fills the drum with no gutters.
-    const totalAspect = portraits.reduce((sum, art) => sum + art.aspect, 0) + platform.aspect * portraits.length;
-    const height = (Math.PI * 2 * radius) / totalAspect;
-    const bottom = DOOR_TOP + 2.9;
+    const setAspect = portraits.reduce((sum, art) => sum + art.aspect, 0) + platform.aspect * portraits.length;
+    const repeats = Math.ceil((Math.PI * 2 * radius) / (setAspect * MEDIA_MAX_HEIGHT));
+    const height = (Math.PI * 2 * radius) / (setAspect * repeats);
+    const bottom = MEDIA_BOTTOM;
     const ringGroup = new Group();
     ringGroup.name = 'interior-banners';
     ringGroup.rotation.y = interiorBannerAngle;
@@ -1442,14 +1749,16 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     };
 
     let theta = 0;
-    portraits.forEach((portrait) => {
-      const portraitW = height * portrait.aspect;
-      addPanel(portrait, theta, portraitW, height, bottom);
-      theta += portraitW / radius;
-      const landscapeW = height * platform.aspect;
-      addPanel(platform, theta, landscapeW, height, bottom);
-      theta += landscapeW / radius;
-    });
+    for (let i = 0; i < repeats; i++) {
+      portraits.forEach((portrait) => {
+        const portraitW = height * portrait.aspect;
+        addPanel(portrait, theta, portraitW, height, bottom);
+        theta += portraitW / radius;
+        const landscapeW = height * platform.aspect;
+        addPanel(platform, theta, landscapeW, height, bottom);
+        theta += landscapeW / radius;
+      });
+    }
     scene.add(ringGroup);
     interiorBannerRing = ringGroup;
   }
@@ -1479,18 +1788,19 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     renderer.domElement.removeEventListener('pointerdown', handlePointerDown);
     renderer.domElement.removeEventListener('pointerup', handlePointerUp);
     world.dispose();
-    for (const door of [...doors.values(), ...emptyDoors, randomDoor]) door.dispose();
+    for (const door of [...doors.values(), ...emptyDoors, ...galleryDoors, randomDoor]) door.dispose();
     doors.clear();
     emptyDoors.length = 0;
     addPrompt.remove();
     window.removeEventListener('keydown', handleChatKey);
+    window.removeEventListener('keydown', handleLiftKey);
     document.removeEventListener('mousemove', holdLook, true);
     document.removeEventListener('wheel', holdLook, true);
     document.documentElement.classList.remove('chatting');
     chatBubble.remove();
     chatBtn?.remove();
     for (const mesh of [...wall, ...trim]) {
-      if (mesh.userData.gateLabel) {
+      if (mesh.userData.ownMaterial) {
         const material = mesh.material as MeshBasicMaterial;
         material.map?.dispose();
         material.dispose();
@@ -1508,11 +1818,19 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     wallMaterial.dispose();
     innerWallMaterial.dispose();
     gateFrameMaterial.dispose();
+    glassMaterial.dispose();
+    colliderMaterial.dispose();
+    for (const mesh of upper) mesh.geometry.dispose();
+    lifts.dispose();
+    liftTrim.dispose();
+    liftPrompt.remove();
+    departures.dispose();
     cityMaterials.dispose();
     sky.geometry.dispose();
     sky.material.dispose();
     spawnRay.dispose();
-    beamRefraction.dispose();
+    assembly.dispose();
+    for (const arrival of arrivals) arrival.assembly.dispose();
     ground.geometry.dispose();
     (ground.material as MeshStandardMaterial).dispose();
     mirror.dispose();
@@ -1578,9 +1896,16 @@ interface ClaimedWorld {
 
 interface DoorClaim {
   angle: number;
+  /** 0 (or missing) on the hall floor, 1 and 2 on the galleries. */
+  level?: number;
   name: string;
   url: string;
   cover?: string;
+}
+
+/** What the departures board shows of a world. */
+function pick(world: DoorWorld): Omit<Flight, 'gate'> {
+  return { name: world.name, cover: world.cover, color: world.color };
 }
 
 function angleDelta(a: number, b: number): number {
@@ -1602,7 +1927,8 @@ function loadClaims(): DoorClaim[] {
         typeof (entry as DoorClaim).angle === 'number' &&
         typeof (entry as DoorClaim).name === 'string' &&
         typeof (entry as DoorClaim).url === 'string' &&
-        ((entry as DoorClaim).cover === undefined || typeof (entry as DoorClaim).cover === 'string'),
+        ((entry as DoorClaim).cover === undefined || typeof (entry as DoorClaim).cover === 'string') &&
+        ((entry as DoorClaim).level === undefined || typeof (entry as DoorClaim).level === 'number'),
     );
   } catch {
     return [];
@@ -1610,7 +1936,9 @@ function loadClaims(): DoorClaim[] {
 }
 
 function saveClaim(claim: DoorClaim): void {
-  const rest = loadClaims().filter((entry) => angleDelta(entry.angle, claim.angle) >= 0.08 && entry.url !== claim.url);
+  const rest = loadClaims().filter(
+    (entry) => (angleDelta(entry.angle, claim.angle) >= 0.08 || (entry.level ?? 0) !== (claim.level ?? 0)) && entry.url !== claim.url,
+  );
   const next = [...rest, claim];
   try {
     localStorage.setItem(CLAIMS_KEY, JSON.stringify(next));

@@ -223,6 +223,8 @@ export class Door {
   private label: Mesh<PlaneGeometry, MeshBasicMaterial>;
   private drawLabel: (light: boolean) => void;
   private chips: { mesh: Mesh<PlaneGeometry, MeshBasicMaterial>; draw: (light: boolean) => void } | null = null;
+  /** The gate number over the name, for doors in the hall. */
+  private gate: { number: number; mesh: Mesh<PlaneGeometry, MeshBasicMaterial> } | null = null;
   private cover: Texture | null = null;
   private placeholder: Texture;
   private halo: Mesh<PlaneGeometry, MeshBasicMaterial> | null = null;
@@ -376,6 +378,24 @@ export class Door {
     this.drawLabel(this.light);
   }
 
+  /** Show this door's gate number above its name; null takes it down. */
+  setGate(gate: number | null): void {
+    if (this.gate?.number === gate) return;
+    if (this.gate) {
+      this.gate.mesh.material.map?.dispose();
+      this.gate.mesh.material.dispose();
+      this.gate.mesh.geometry.dispose();
+      this.gate.mesh.removeFromParent();
+      this.gate = null;
+    }
+    if (gate === null) return;
+    const mesh = createGateBadge(gate);
+    mesh.position.z = 0.26;
+    this.group.add(mesh);
+    this.gate = { number: gate, mesh };
+    this.stackLabel();
+  }
+
   /** Brighten the "+" while someone is close enough to use it. */
   setHover(hover: boolean): void {
     this.portal.material.uniforms.uHover.value = hover ? 1 : 0;
@@ -448,9 +468,17 @@ export class Door {
    * every frame because a late font load redraws (and resizes) either one.
    */
   private stackLabel(): void {
-    if (!this.chips) return;
-    const chipTop = CHIP_BOTTOM + this.chips.mesh.scale.y;
-    this.label.position.y = chipTop + LABEL_GAP + this.label.scale.y / 2;
+    const chipTop = this.chips ? CHIP_BOTTOM + this.chips.mesh.scale.y : 0;
+    if (this.gate) {
+      // In the hall, gate numbers and names line up along the wall: every
+      // name hangs from the same height under its gate, with any chips in
+      // the space below it. Only an unusually tall stack pushes them higher.
+      const nameTop = Math.max(NAME_TOP, chipTop + LABEL_GAP + this.label.scale.y);
+      this.label.position.y = nameTop - this.label.scale.y / 2;
+      this.gate.mesh.position.y = Math.max(GATE_Y, nameTop + GATE_GAP + this.gate.mesh.scale.y / 2);
+    } else if (this.chips) {
+      this.label.position.y = chipTop + LABEL_GAP + this.label.scale.y / 2;
+    }
   }
 
   /** Flare the light while we travel through it. */
@@ -478,6 +506,7 @@ export class Door {
     this.label.material.map?.dispose();
     this.label.geometry.dispose();
     this.label.material.dispose();
+    this.setGate(null);
     if (this.chips) {
       this.chips.mesh.material.map?.dispose();
       this.chips.mesh.geometry.dispose();
@@ -558,7 +587,7 @@ function colorFromCover(image: unknown): Color | null {
  * same-origin cover proxy first, then the image directly. If neither works
  * the door shows a procedural corridor instead.
  */
-async function loadCoverTexture(src: string): Promise<Texture | null> {
+export async function loadCoverTexture(src: string): Promise<Texture | null> {
   const candidates: string[] = [];
   if (src.startsWith('data:')) {
     candidates.push(src);
@@ -707,6 +736,55 @@ export function createLabel(
     document.fonts.load('600 88px Urbanist').then(() => draw(light), () => {});
   }
   return { mesh, draw };
+}
+
+/** The gate badge's height, and the space between it and the name below. */
+const GATE_HEIGHT = 0.4;
+const GATE_GAP = 0.02;
+/** Where every gate number's centre sits, and the top of every name under it. */
+const GATE_Y = DOOR_TOP + 2.1;
+const NAME_TOP = GATE_Y - GATE_HEIGHT / 2 - GATE_GAP;
+
+/**
+ * "GATE 12" as a small sign: amber on a dark pill, like the departures board
+ * and the concourse signs, in either theme.
+ */
+function createGateBadge(gate: number): Mesh<PlaneGeometry, MeshBasicMaterial> {
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d')!;
+  const font = '700 64px Urbanist, ui-sans-serif, system-ui, sans-serif';
+  const height = 104;
+  const draw = () => {
+    ctx.font = font;
+    const text = `GATE ${gate}`;
+    const width = Math.ceil(ctx.measureText(text).width) + 76;
+    canvas.width = width;
+    canvas.height = height;
+    ctx.font = font;
+    ctx.fillStyle = '#0d0d10';
+    ctx.beginPath();
+    ctx.roundRect(2, 2, width - 4, height - 4, (height - 4) / 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255, 194, 61, 0.55)';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.fillStyle = '#ffc23d';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, width / 2, height / 2 + 3);
+    texture.needsUpdate = true;
+    mesh.scale.set((GATE_HEIGHT * width) / height, GATE_HEIGHT, 1);
+  };
+  const texture = new CanvasTexture(canvas);
+  texture.colorSpace = SRGBColorSpace;
+  texture.generateMipmaps = false;
+  texture.minFilter = LinearFilter;
+  texture.magFilter = LinearFilter;
+  const material = new MeshBasicMaterial({ map: texture, transparent: true, depthWrite: false, toneMapped: false });
+  const mesh = new Mesh(new PlaneGeometry(1, 1), material);
+  draw();
+  if (document.fonts && !document.fonts.check(font)) document.fonts.load(font).then(draw, () => {});
+  return mesh;
 }
 
 /** Height of one row of chips on the wall, in metres. */
