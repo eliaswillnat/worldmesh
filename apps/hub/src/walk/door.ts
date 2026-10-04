@@ -746,8 +746,8 @@ const GATE_Y = DOOR_TOP + 2.1;
 const NAME_TOP = GATE_Y - GATE_HEIGHT / 2 - GATE_GAP;
 
 /**
- * "GATE 12" as a small sign: amber on a dark pill, like the departures board
- * and the concourse signs, in either theme.
+ * "GATE 12" as plain amber lettering, like the departures board and the
+ * concourse signs, in either theme.
  */
 function createGateBadge(gate: number): Mesh<PlaneGeometry, MeshBasicMaterial> {
   const canvas = document.createElement('canvas');
@@ -761,13 +761,6 @@ function createGateBadge(gate: number): Mesh<PlaneGeometry, MeshBasicMaterial> {
     canvas.width = width;
     canvas.height = height;
     ctx.font = font;
-    ctx.fillStyle = '#0d0d10';
-    ctx.beginPath();
-    ctx.roundRect(2, 2, width - 4, height - 4, (height - 4) / 2);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(255, 194, 61, 0.55)';
-    ctx.lineWidth = 3;
-    ctx.stroke();
     ctx.fillStyle = '#ffc23d';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -793,6 +786,12 @@ const CHIP_HEIGHT = 0.46;
 const CHIP_BOTTOM = DOOR_TOP + 0.18;
 /** Space between the top row of chips and the name's canvas. */
 const LABEL_GAP = -0.12;
+
+/** Chips with their own colour, as [light, dark]; the rest stay neutral. */
+const CHIP_COLORS: Record<string, [string, string]> = {
+  Multiplayer: ['#1d6fe0', '#4d9bff'],
+  'VR supported': ['#8a3ee0', '#b57bff'],
+};
 
 /**
  * Outlined pills naming what a world supports, e.g. "Multiplayer", "VR supported".
@@ -850,9 +849,10 @@ function createChips(labels: string[]): { mesh: Mesh<PlaneGeometry, MeshBasicMat
         ctx.roundRect(x, y, w, pill, pill / 2);
         ctx.fillStyle = light ? 'rgba(255, 255, 255, 0.85)' : 'rgba(0, 0, 0, 0.55)';
         ctx.fill();
-        ctx.strokeStyle = light ? 'rgba(0, 0, 0, 0.35)' : 'rgba(255, 255, 255, 0.45)';
+        const accent = CHIP_COLORS[labels[i]]?.[light ? 0 : 1];
+        ctx.strokeStyle = accent ?? (light ? 'rgba(0, 0, 0, 0.35)' : 'rgba(255, 255, 255, 0.45)');
         ctx.stroke();
-        ctx.fillStyle = light ? '#111111' : '#ffffff';
+        ctx.fillStyle = accent ?? (light ? '#111111' : '#ffffff');
         ctx.fillText(labels[i], x + w / 2, y + pill / 2 + 2);
         x += w + gap;
       }
