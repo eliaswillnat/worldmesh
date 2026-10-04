@@ -11,9 +11,11 @@ import {
 } from '@worldmesh/runtime';
 import {
   BoxGeometry,
+  BufferGeometry,
   CircleGeometry,
   Color,
   CylinderGeometry,
+  Float32BufferAttribute,
   DirectionalLight,
   DoubleSide,
   Matrix4,
@@ -33,13 +35,13 @@ import {
   Vector2,
   Vector3,
   WebGLRenderer,
-  type BufferGeometry,
   type Object3D,
 } from 'three';
 import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { CITY_GLOW_WHITE, applyCityTheme, applySkyTheme, createCityMaterials, createSky, createSpawnRay, flipInside, skyHorizon, type BillboardSlot } from './city';
 import { DOOR_HALF_SPAN, DOOR_HEIGHT, DOOR_TOP, DOOR_WIDTH, FRAME, Door, createLabel, type DoorWorld } from './door';
+import { doorFrameGeometry, frameOuterCorner, roundedOpeningGeometry } from './doorShape';
 import { ImageCropper } from '../cropper';
 import { describeBillboard } from './layout';
 import { Assembly } from './assemble';
@@ -156,6 +158,61 @@ const DOOR_SPACING = 4.2;
 /** A tall drum under a glass dome, with the doors around the inside of its base. */
 const CITADEL_HEIGHT = DRUM_HEIGHT;
 const WALL_THICKNESS = 1.2;
+
+/**
+ * The wall above a doorway. Its lower edge is the frame's outer top:
+ * straight across, with the same rounded corners, then up to the drum.
+ * `span` is half the frame's outer width, in metres.
+ */
+function roundedWallHead(
+  radius: number,
+  angle: number,
+  span: number,
+  holeTop: number,
+  wallTop: number,
+  cornerX: number,
+  cornerY: number,
+): BufferGeometry {
+  const rx = Math.min(cornerX, span);
+  const ry = Math.min(cornerY, holeTop);
+  const left = -span + rx;
+  const right = span - rx;
+  const arcBase = holeTop - ry;
+  const arc = 16;
+  const edge: { s: number; y: number }[] = [];
+  for (let i = 0; i <= arc; i++) {
+    const t = Math.PI - (i / arc) * (Math.PI / 2);
+    edge.push({ s: left + Math.cos(t) * rx, y: arcBase + Math.sin(t) * ry });
+  }
+  const middle = Math.max(1, Math.ceil((right - left) / 0.5));
+  for (let i = 1; i < middle; i++) edge.push({ s: left + ((right - left) * i) / middle, y: holeTop });
+  for (let i = 0; i <= arc; i++) {
+    const t = Math.PI / 2 - (i / arc) * (Math.PI / 2);
+    edge.push({ s: right + Math.cos(t) * rx, y: arcBase + Math.sin(t) * ry });
+  }
+
+  const columns = edge.length;
+  const positions: number[] = [];
+  const point = (s: number, y: number) => {
+    const theta = angle + s / radius;
+    positions.push(Math.sin(theta) * radius, y, Math.cos(theta) * radius);
+  };
+  for (const sample of edge) point(sample.s, sample.y);
+  for (const sample of edge) point(sample.s, wallTop);
+  const indices: number[] = [];
+  for (let i = 0; i < columns - 1; i++) {
+    const a = i;
+    const b = i + 1;
+    const c = columns + i;
+    const d = columns + i + 1;
+    indices.push(a, b, d, a, d, c);
+  }
+  const geometry = new BufferGeometry();
+  geometry.setAttribute('position', new Float32BufferAttribute(positions, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return flipInside(geometry);
+}
 /** Ways out to the city, evenly around the drum. Sealed for now. Angle 0 faces +Z, behind you on arrival. */
 const GATE_COUNT = 4;
 const GATE_WIDTH = 4.4;
@@ -1453,7 +1510,9 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       wall.push(section);
     };
 
-    // Inner drum: faces the hall, open at each doorway. Sealed exits use a door-sized opening.
+    // Inner drum: faces the hall, open at each doorway. The cut follows the
+    // frame's rounded top, not a rectangle. Sealed exits use the same opening.
+    const outerCorner = frameOuterCorner(DOOR_WIDTH, DOOR_HEIGHT, FRAME);
     const openings = [
       ...gateAngles().map((angle) => ({ angle, half: DOOR_HALF_SPAN / radius, top: DOOR_TOP })),
       ...angles.map((angle) => ({ angle, half: DOOR_HALF_SPAN / radius, top: DOOR_TOP })),
@@ -1462,8 +1521,12 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       const next = openings[i + 1] ?? { ...openings[0], angle: openings[0].angle + Math.PI * 2 };
       const start = opening.angle + opening.half;
       shell(radius, start, next.angle - next.half - start, 0, true);
-      // Close the wall over the opening.
-      shell(radius, opening.angle - opening.half, opening.half * 2, opening.top, true);
+      const head = new Mesh(
+        roundedWallHead(radius, opening.angle, DOOR_HALF_SPAN, opening.top, CITADEL_HEIGHT, outerCorner.rx, outerCorner.ry),
+        innerWallMaterial,
+      );
+      scene.add(head);
+      wall.push(head);
     });
 
     // Outer drum: faces the city, sealed at each gate for now.
@@ -1474,25 +1537,15 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       shell(outer, angle - gateOuter, gateOuter * 2, 0, false);
     }
 
-    // Each sealed exit is a normal door. The old passage between the drums
-    // would show as a second frame behind it, so it stays closed.
+    // Each sealed exit is a normal door, closed. Same rounded top as the others.
     for (const angle of gateAngles()) {
-      const plug = new Mesh(new BoxGeometry(DOOR_WIDTH, DOOR_HEIGHT, 0.08), innerWallMaterial);
+      const plug = new Mesh(roundedOpeningGeometry(DOOR_WIDTH, DOOR_HEIGHT, 0.08), innerWallMaterial);
+      const frame = new Mesh(doorFrameGeometry(DOOR_WIDTH, DOOR_HEIGHT, FRAME, 0.32), gateFrameMaterial);
       const sealed = new Group();
       sealed.position.set(Math.sin(angle) * radius, 0, Math.cos(angle) * radius);
       sealed.rotation.y = Math.atan2(-Math.sin(angle), -Math.cos(angle));
-      plug.position.set(0, DOOR_HEIGHT / 2, 0.04);
-      sealed.add(plug);
-      const postHeight = DOOR_HEIGHT + FRAME;
-      const depth = 0.32;
-      for (const side of [-1, 1]) {
-        const post = new Mesh(new BoxGeometry(FRAME, postHeight, depth), gateFrameMaterial);
-        post.position.set(side * (DOOR_WIDTH + FRAME) / 2, postHeight / 2, 0);
-        sealed.add(post);
-      }
-      const lintel = new Mesh(new BoxGeometry(DOOR_WIDTH + FRAME * 2, FRAME, depth), gateFrameMaterial);
-      lintel.position.set(0, DOOR_HEIGHT + FRAME / 2, 0);
-      sealed.add(lintel);
+      plug.position.z = 0.04;
+      sealed.add(plug, frame);
       scene.add(sealed);
       gateSeals.push(sealed);
       wall.push(plug);
@@ -1639,24 +1692,17 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     band(radius - 0.03, DOOR_TOP + 2.8);
     band(radius - 0.03, CITADEL_HEIGHT - 1);
 
-    // A white portal frame around each gate, outlined in light.
-    const halfGate = GATE_WIDTH / 2;
+    // The concourse mouth on the outside: the same rounded doorway, at gate size.
     const frameR = outer + 0.2;
-    const atGate = (localX: number, localZ: number, angle: number): [number, number] => [
-      Math.sin(angle) * localZ + Math.cos(angle) * localX,
-      Math.cos(angle) * localZ - Math.sin(angle) * localX,
+    const atGate = (localZ: number, angle: number): [number, number] => [
+      Math.sin(angle) * localZ,
+      Math.cos(angle) * localZ,
     ];
     for (const angle of gateAngles()) {
-      for (const side of [-1, 1]) {
-        const [x, z] = atGate(side * (halfGate + 0.3), frameR, angle);
-        const [glowX, glowZ] = atGate(side * (halfGate + 0.02), frameR + 0.2, angle);
-        solid.push(place(new BoxGeometry(0.6, GATE_HEIGHT + 0.6, 0.5), x, (GATE_HEIGHT + 0.6) / 2, z, angle));
-        glow.push(place(new BoxGeometry(0.05, GATE_HEIGHT, 0.05), glowX, GATE_HEIGHT / 2, glowZ, angle));
-      }
-      const [x, z] = atGate(0, frameR, angle);
-      const [glowX, glowZ] = atGate(0, frameR + 0.2, angle);
-      solid.push(place(new BoxGeometry(GATE_WIDTH + 1.2, 0.6, 0.5), x, GATE_HEIGHT + 0.3, z, angle));
-      glow.push(place(new BoxGeometry(GATE_WIDTH, 0.05, 0.05), glowX, GATE_HEIGHT - 0.02, glowZ, angle));
+      const [x, z] = atGate(frameR, angle);
+      const [glowX, glowZ] = atGate(frameR + 0.2, angle);
+      solid.push(place(doorFrameGeometry(GATE_WIDTH, GATE_HEIGHT, 0.6, 0.5), x, 0, z, angle));
+      glow.push(place(doorFrameGeometry(GATE_WIDTH, GATE_HEIGHT, 0.05, 0.05), glowX, 0, glowZ, angle));
     }
 
     // A tall screen over every gate, facing the plaza. Explore and Discover

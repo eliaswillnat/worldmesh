@@ -13,6 +13,7 @@ import {
 } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { flipInside } from '../walk/city';
+import { doorFrameGeometry } from '../walk/doorShape';
 import type { CityConfig } from './config';
 import type { DoorView } from './doorView';
 import { setLayer, type CityMaterials } from './materials';
@@ -78,17 +79,11 @@ export class DetailGeometry {
     this.railTop = new CylinderGeometry(railR, railR, 0.06, 96, 1, true).translate(0, 1.08, 0);
 
     // A door frame: posts, lintel and the shutter housing over the opening.
+    // The opening's top corners match the gallery cards.
     const frame = 0.16;
     const depth = 0.34;
     const sill = config.doorSill;
-    const parts = [
-      new BoxGeometry(frame, doorHeight + sill + frame, depth).translate(-(doorWidth + frame) / 2, (doorHeight + sill + frame) / 2, 0),
-      new BoxGeometry(frame, doorHeight + sill + frame, depth).translate((doorWidth + frame) / 2, (doorHeight + sill + frame) / 2, 0),
-      new BoxGeometry(doorWidth + frame * 2, 0.42, depth + 0.16).translate(0, sill + doorHeight + 0.21, 0.04),
-      new BoxGeometry(doorWidth + frame * 2, sill, depth).translate(0, sill / 2, 0),
-    ];
-    this.doorFrame = mergeGeometries(parts.map((g) => g.toNonIndexed()));
-    for (const g of parts) g.dispose();
+    this.doorFrame = doorFrameGeometry(doorWidth, doorHeight, frame, depth, sill, 0.42);
 
     const liftW = 2.6;
     const liftH = 3.6;

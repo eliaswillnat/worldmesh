@@ -1,6 +1,5 @@
 import {
   AdditiveBlending,
-  BoxGeometry,
   BufferGeometry,
   CanvasTexture,
   Color,
@@ -17,10 +16,10 @@ import {
   Texture,
   TextureLoader,
   Vector2,
-  type Material,
 } from 'three';
 import { drawEntries, measureEntries } from '../entries';
 import { createGodRayMaterial } from './city';
+import { doorFrameGeometry, GALLERY_CORNER, openingCorner, ROUNDED_TOP_GLSL } from './doorShape';
 
 export interface DoorWorld {
   name: string;
@@ -79,30 +78,66 @@ const RAY_CLEARANCE = 0.02;
 const RAY_FLARE_W = 1.18;
 const RAY_FLARE_H = 1.06;
 
+const SHAFT_ARC = 10;
+
 /**
- * Open-bottom trapezoid: door-sized at the opening, larger out in the hall.
- * The sill stays level so the far end does not dip into the floor.
+ * Open-bottom shaft: door-sized at the opening, larger out in the hall, with
+ * the doorway's rounded top corners. The sill stays level so the far end
+ * does not dip into the floor. Corner radii scale with the flare.
  */
-function openBottomTrapeze(nearW: number, nearH: number, farW: number, farH: number, depth: number): BufferGeometry {
+function roundedShaft(
+  nearW: number,
+  nearH: number,
+  farW: number,
+  farH: number,
+  depth: number,
+  nearRx: number,
+  nearRy: number,
+  farRx: number,
+  farRy: number,
+): BufferGeometry {
+  const profile = (halfW: number, bottom: number, top: number, rx: number, ry: number, z: number) => {
+    const rX = Math.min(Math.max(rx, 0), halfW);
+    const rY = Math.min(Math.max(ry, 0), top - bottom);
+    const cxL = -halfW + rX;
+    const cxR = halfW - rX;
+    const cy = top - rY;
+    const pts: number[] = [-halfW, bottom, z, -halfW, cy, z];
+    for (let i = 1; i <= SHAFT_ARC; i++) {
+      const a = Math.PI - (i / SHAFT_ARC) * (Math.PI / 2);
+      pts.push(cxL + Math.cos(a) * rX, cy + Math.sin(a) * rY, z);
+    }
+    for (let i = 0; i <= SHAFT_ARC; i++) {
+      const a = Math.PI / 2 - (i / SHAFT_ARC) * (Math.PI / 2);
+      pts.push(cxR + Math.cos(a) * rX, cy + Math.sin(a) * rY, z);
+    }
+    pts.push(halfW, bottom, z);
+    return pts;
+  };
+
   const z0 = -depth / 2;
   const z1 = depth / 2;
-  const nx = nearW / 2;
-  const ny = nearH / 2;
-  const fx = farW / 2;
-  const bottom = -ny;
-  const farTop = bottom + farH;
-  const positions = new Float32Array([
-    -nx, bottom, z0, -nx, ny, z0, nx, ny, z0, nx, bottom, z0,
-    -fx, bottom, z1, -fx, farTop, z1, fx, farTop, z1, fx, bottom, z1,
-  ]);
+  const nearBottom = -nearH / 2;
+  const farBottom = nearBottom;
+  const near = profile(nearW / 2, nearBottom, nearBottom + nearH, nearRx, nearRy, z0);
+  const far = profile(farW / 2, farBottom, farBottom + farH, farRx, farRy, z1);
+  const stride = 3;
+  const count = near.length / stride;
+  const positions = new Float32Array([...near, ...far]);
+  const indices: number[] = [];
+  for (let i = 0; i < count - 1; i++) {
+    const a = i;
+    const b = i + 1;
+    const c = count + i;
+    const d = count + i + 1;
+    indices.push(a, c, b, b, c, d);
+  }
+  // The end of the shaft, out in the hall, closes on the same rounded outline.
+  for (let i = 1; i < count - 1; i++) indices.push(count, count + i, count + i + 1);
+
   const geometry = new BufferGeometry();
   geometry.setAttribute('position', new Float32BufferAttribute(positions, 3));
-  geometry.setIndex([
-    0, 1, 5, 0, 5, 4,
-    3, 7, 6, 3, 6, 2,
-    1, 2, 6, 1, 6, 5,
-    4, 5, 6, 4, 6, 7,
-  ]);
+  geometry.setIndex(indices);
   geometry.computeVertexNormals();
   return geometry;
 }
@@ -128,6 +163,7 @@ const portalFragment = /* glsl */ `
   uniform float uHover;
   uniform float uRandom;
   varying vec2 vUv;
+  ${ROUNDED_TOP_GLSL}
 
   // An empty doorway: a plain recess with a soft "+" asking to be filled.
   vec3 emptyDoor(vec2 p) {
@@ -164,9 +200,11 @@ const portalFragment = /* glsl */ `
 
   void main() {
     vec2 p = vUv - 0.5;
+    float rim = roundedTopEdge(vUv, ${GALLERY_CORNER.toFixed(6)}, ${(DOOR_WIDTH / DOOR_HEIGHT).toFixed(6)});
+    if (rim > 1.0) discard;
     if (uRandom > 0.5) {
       vec3 color = randomDoor(p);
-      float edge = max(abs(p.x) * 2.0, abs(p.y) * 2.0);
+      float edge = rim;
       color = mix(color, vec3(0.55, 0.85, 1.0), smoothstep(0.8, 1.0, edge) * 0.6);
       color += uGlow * 0.6;
       gl_FragColor = vec4(min(color, vec3(1.0)), 1.0);
@@ -189,7 +227,7 @@ const portalFragment = /* glsl */ `
 
     vec3 color = mix(corridor, far, uHasMap);
     // Light spilling in around the edges of the opening.
-    float edge = max(abs(p.x) * 2.0, abs(p.y) * 2.0);
+    float edge = rim;
     color = mix(color, uTint * 0.55, smoothstep(0.88, 1.0, edge) * 0.22 * uOpen);
     color *= 0.6 + 0.4 * uOpen;
     color += uTint * uGlow * 0.6;
@@ -224,7 +262,7 @@ export class Door {
   private drawLabel: (light: boolean) => void;
   private chips: { mesh: Mesh<PlaneGeometry, MeshBasicMaterial>; draw: (light: boolean) => void } | null = null;
   /** The gate number over the name, for doors in the hall. */
-  private gate: { number: number; mesh: Mesh<PlaneGeometry, MeshBasicMaterial> } | null = null;
+  private gate: { number: number; mesh: Mesh<PlaneGeometry, MeshBasicMaterial>; draw: (light: boolean) => void } | null = null;
   private cover: Texture | null = null;
   private placeholder: Texture;
   private halo: Mesh<PlaneGeometry, MeshBasicMaterial> | null = null;
@@ -258,21 +296,10 @@ export class Door {
 
     this.frameMaterial = new MeshStandardMaterial({ roughness: 0.4, metalness: 0.05 });
 
-    const box = (w: number, h: number, d: number, material: Material, x: number, y: number, z: number, parent: Group) => {
-      const geometry = new BoxGeometry(w, h, d);
-      this.geometries.push(geometry);
-      const mesh = new Mesh(geometry, material);
-      mesh.position.set(x, y, z);
-      parent.add(mesh);
-      return mesh;
-    };
-
-    // Frame: two posts and a lintel around the opening.
-    const postHeight = DOOR_HEIGHT + FRAME;
-    for (const side of [-1, 1]) {
-      box(FRAME, postHeight, DEPTH, this.frameMaterial, side * (DOOR_WIDTH + FRAME) / 2, postHeight / 2, 0, this.group);
-    }
-    box(DOOR_WIDTH + FRAME * 2, FRAME, DEPTH, this.frameMaterial, 0, DOOR_HEIGHT + FRAME / 2, 0, this.group);
+    // Frame: posts and a lintel. Its top corners follow the opening, and the posts run under the floor.
+    const frame = doorFrameGeometry(DOOR_WIDTH, DOOR_HEIGHT, FRAME, DEPTH);
+    this.geometries.push(frame);
+    this.group.add(new Mesh(frame, this.frameMaterial));
 
     // The world on the other side fills the doorway.
     this.placeholder = new Texture();
@@ -304,8 +331,9 @@ export class Door {
       const rayHeight = DOOR_HEIGHT - RAY_CLEARANCE;
       const farW = DOOR_WIDTH * RAY_FLARE_W;
       const farH = rayHeight * RAY_FLARE_H;
+      const corner = openingCorner(DOOR_WIDTH, DOOR_HEIGHT);
       const ray = new Mesh(
-        openBottomTrapeze(DOOR_WIDTH, rayHeight, farW, farH, RAY_LENGTH),
+        roundedShaft(DOOR_WIDTH, rayHeight, farW, farH, RAY_LENGTH, corner.rx, corner.ry, corner.rx * RAY_FLARE_W, corner.ry * RAY_FLARE_H),
         createGodRayMaterial({
           length: RAY_LENGTH,
           gain: 0.7,
@@ -389,10 +417,10 @@ export class Door {
       this.gate = null;
     }
     if (gate === null) return;
-    const mesh = createGateBadge(gate);
-    mesh.position.z = 0.26;
-    this.group.add(mesh);
-    this.gate = { number: gate, mesh };
+    const badge = createGateBadge(gate, this.light);
+    badge.mesh.position.z = 0.26;
+    this.group.add(badge.mesh);
+    this.gate = { number: gate, ...badge };
     this.stackLabel();
   }
 
@@ -460,6 +488,7 @@ export class Door {
     }
     this.drawLabel(light);
     this.chips?.draw(light);
+    this.gate?.draw(light);
     this.stackLabel();
   }
 
@@ -746,24 +775,33 @@ const GATE_Y = DOOR_TOP + 2.1;
 const NAME_TOP = GATE_Y - GATE_HEIGHT / 2 - GATE_GAP;
 
 /**
- * "GATE 12" as plain amber lettering, like the departures board and the
- * concourse signs, in either theme.
+ * "GATE 12" in amber. On the light wall it sits on a dark plate so the
+ * yellow stays readable; on the dark wall the letters stand alone.
  */
-function createGateBadge(gate: number): Mesh<PlaneGeometry, MeshBasicMaterial> {
+function createGateBadge(gate: number, light: boolean): { mesh: Mesh<PlaneGeometry, MeshBasicMaterial>; draw: (light: boolean) => void } {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d')!;
   const font = '700 64px Urbanist, ui-sans-serif, system-ui, sans-serif';
   const height = 104;
-  const draw = () => {
+  let theme = light;
+  const draw = (isLight: boolean) => {
+    theme = isLight;
     ctx.font = font;
     const text = `GATE ${gate}`;
     const width = Math.ceil(ctx.measureText(text).width) + 76;
     canvas.width = width;
     canvas.height = height;
+    ctx.clearRect(0, 0, width, height);
     ctx.font = font;
-    ctx.fillStyle = '#ffc23d';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
+    if (isLight) {
+      ctx.fillStyle = '#141418';
+      ctx.beginPath();
+      ctx.roundRect(6, 8, width - 12, height - 16, (height - 16) / 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = '#ffc23d';
     ctx.fillText(text, width / 2, height / 2 + 3);
     texture.needsUpdate = true;
     mesh.scale.set((GATE_HEIGHT * width) / height, GATE_HEIGHT, 1);
@@ -775,9 +813,9 @@ function createGateBadge(gate: number): Mesh<PlaneGeometry, MeshBasicMaterial> {
   texture.magFilter = LinearFilter;
   const material = new MeshBasicMaterial({ map: texture, transparent: true, depthWrite: false, toneMapped: false });
   const mesh = new Mesh(new PlaneGeometry(1, 1), material);
-  draw();
-  if (document.fonts && !document.fonts.check(font)) document.fonts.load(font).then(draw, () => {});
-  return mesh;
+  draw(light);
+  if (document.fonts && !document.fonts.check(font)) document.fonts.load(font).then(() => draw(theme), () => {});
+  return { mesh, draw };
 }
 
 /** Height of one row of chips on the wall, in metres. */
