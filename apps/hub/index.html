@@ -1210,6 +1210,8 @@
       .walk-bubble-close:active { color: #333; }
       @media (pointer: coarse) {
         .walk-bubble.saying .walk-bubble-close { display: block; }
+        /* iOS Safari zooms into any focused field under 16px. */
+        .walk-bubble input { font-size: 16px; }
       }
       /* Touch chat button: bottom-left, above the joystick area. */
       .walk-chat-btn {

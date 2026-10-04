@@ -251,6 +251,7 @@ export class Input {
   private handleBlur = (): void => {
     this.pressed.clear();
     this.justPressed.clear();
+    this.touch?.reset();
   };
 
   /**

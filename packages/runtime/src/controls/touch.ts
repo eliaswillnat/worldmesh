@@ -213,7 +213,23 @@ export class TouchControls {
     window.addEventListener('pointermove', this.handlePointerMove);
     window.addEventListener('pointerup', this.handlePointerUp);
     window.addEventListener('pointercancel', this.handlePointerUp);
+    window.addEventListener('pagehide', this.handlePageLeave);
+    window.addEventListener('pageshow', this.handlePageLeave);
+    document.addEventListener('visibilitychange', this.handleVisibilityChange);
   }
+
+  /**
+   * Walking through a door while holding the stick leaves the page mid-drag, so
+   * its pointerup never arrives. Back-button restores the page as it was left,
+   * stick still held. Let go whenever the page is left or comes back.
+   */
+  private handlePageLeave = (): void => {
+    this.reset();
+  };
+
+  private handleVisibilityChange = (): void => {
+    if (document.visibilityState === 'hidden') this.reset();
+  };
 
   private createActionButton(
     label: string,
@@ -378,6 +394,9 @@ export class TouchControls {
     window.removeEventListener('pointermove', this.handlePointerMove);
     window.removeEventListener('pointerup', this.handlePointerUp);
     window.removeEventListener('pointercancel', this.handlePointerUp);
+    window.removeEventListener('pagehide', this.handlePageLeave);
+    window.removeEventListener('pageshow', this.handlePageLeave);
+    document.removeEventListener('visibilitychange', this.handleVisibilityChange);
     this.root.remove();
   }
 }
