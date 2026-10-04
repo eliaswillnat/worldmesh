@@ -48,6 +48,7 @@ overlay, gravity, jumping and respawning.
 | `movement` | see `DEFAULT_TUNING` | `gravity`, `walkSpeed`, `jumpSpeed`, `fallLimit`, … |
 | `keymap` | the convention | Add bindings; do not move the core row. |
 | `multiplayer` | off | `true` shows everyone else in your world through the relay WorldMesh hosts; `{ server: 'wss://…' }` uses your own. See below. |
+| `vr` | on | Shows **Enter VR** and calls `navigator.xr.requestSession('immersive-vr')` when the headset browser supports it. `false` hides the control. |
 | `ui` | all on | `title`, `hubUrl`, `crosshair`, `badge`, `controlsHint`. |
 | `autoStart` | `true` | `false` if you drive your own loop. |
 | `autoResize` | `true` | `false` if the canvas is not full-window. |
@@ -142,13 +143,16 @@ world.travelTo(url)
 world.loadAvatar(descriptor) // external VRM/glTF body; resolves false and keeps the default on failure
 world.clearAvatar()
 world.refreshColliders()    // after adding geometry
+world.enterVR()             // requestSession('immersive-vr'); the Enter VR button calls this
+world.exitVR()
+world.isVR()
 world.on(event, fn)         // returns an unsubscribe function
 world.dispose()
 ```
 
 Events: `update`, `portal:enter`, `portal:exit`, `portal:activate`,
 `view:change`, `pointer:lock`, `interact`, `respawn`, `avatar:load`,
-`avatar:error`, `players`.
+`avatar:error`, `players`, `vr:enter`, `vr:exit`.
 
 ## The manifest
 

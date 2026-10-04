@@ -40,7 +40,8 @@ const world = createWorldMesh({
 
 You get WASD + arrow keys, mouse look, jump, sprint, interact, first/third
 person with a consistent toggle, pointer-lock handling, touch controls on touch
-devices, the shared overlay and portals between worlds.
+devices, immersive VR through the shared Enter VR control when WebXR is
+available, the shared overlay and portals between worlds.
 
 Removing the `createWorldMesh` call leaves you with the Three.js project you
 started with.
@@ -74,6 +75,7 @@ loaders (`@pixiv/three-vrm`) are only downloaded when an avatar is shown.
 | `PortalManager`, `buildTravelUrl`, `getReferringWorld` | travel between worlds |
 | `loadAvatarModel`, `resolveWorldMeshAvatar`, `parseAvatarDescriptor`, `AvatarDescriptor` | visitors' own avatars |
 | `Overlay`, `Emitter` | the shared overlay, a tiny typed emitter |
+| `immersiveVrSupported`, `requestImmersiveVr` | the shared WebXR enter-VR path |
 | `Presence`, `DEFAULT_PRESENCE_SERVER`, `NetworkAdapter` | multiplayer (`multiplayer: true`) and the seam for your own |
 | `WORLDMESH_VERSION`, `WORLDMESH_PROTOCOL` | what your world is speaking |
 

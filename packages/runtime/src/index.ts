@@ -37,6 +37,7 @@ export {
 export { loadAvatarModel } from './avatar/loader.js';
 export type { LoadAvatarOptions, LoadedAvatar } from './avatar/loader.js';
 export { Overlay } from './ui/overlay.js';
+export { immersiveVrSupported, requestImmersiveVr, IMMERSIVE_VR } from './xr/session.js';
 export { deserializePlayerState, serializePlayerState } from './net/adapter.js';
 export { DEFAULT_PRESENCE_SERVER, Presence } from './net/presence.js';
 export type { PresenceOptions } from './net/presence.js';

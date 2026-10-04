@@ -19,6 +19,7 @@ const world = createWorldMesh({
   spawn: [0, 2, 8],
   colliders,
   multiplayer: true,
+  vr: true,
   abilities: {
     doubleJump: true,
   },

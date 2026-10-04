@@ -191,6 +191,10 @@ export interface WorldMeshEvents {
   'avatar:error': { descriptor: AvatarDescriptor | null; error: unknown };
   /** People in this world including the visitor, or null while not connected. Only with `multiplayer`. */
   players: { count: number | null };
+  /** An immersive-vr session started. */
+  'vr:enter': Record<string, never>;
+  /** The immersive-vr session ended. */
+  'vr:exit': Record<string, never>;
 }
 
 /** Someone else's body, an upright cylinder the local player cannot walk through. */
@@ -255,6 +259,11 @@ export interface WorldMeshOptions {
   multiplayer?: boolean | MultiplayerOptions;
   /** A custom network layer. Replaces `multiplayer`. */
   network?: NetworkAdapter;
+  /**
+   * Offer immersive VR through the shared Enter VR control. Defaults to true.
+   * The button only appears when the browser can start an `immersive-vr` session.
+   */
+  vr?: boolean;
 }
 
 export interface MultiplayerOptions {
@@ -300,4 +309,11 @@ export interface WorldMeshHandle {
 
   /** Refresh the collider list after the world adds geometry. */
   refreshColliders(): void;
+
+  /** Start an immersive-vr session. Resolves false if the browser refuses. */
+  enterVR(): Promise<boolean>;
+  /** End the immersive-vr session, if one is running. */
+  exitVR(): Promise<void>;
+  /** True while a WebXR immersive-vr session is presenting. */
+  isVR(): boolean;
 }

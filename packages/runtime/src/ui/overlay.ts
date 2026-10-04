@@ -101,6 +101,49 @@ const CSS = `
   border-color: rgba(255,255,255,0.6);
   transform: scale(1.02);
 }
+.wm-vr-launch {
+  position: absolute;
+  top: max(16px, env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: auto;
+  font-size: 13px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  padding: 10px 22px;
+  border: 1px solid rgba(255,255,255,0.4);
+  border-radius: 999px;
+  background: rgba(8,11,16,0.72);
+  color: #fff;
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 600;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.wm-vr-launch:hover, .wm-vr-launch:active {
+  background: rgba(8,11,16,0.9);
+  border-color: rgba(255,255,255,0.7);
+}
+.wm-overlay:not([data-locked="true"]) .wm-vr-launch,
+.wm-overlay[data-xr="true"] .wm-vr-launch,
+.wm-overlay[data-xr="true"] .wm-vr-menu {
+  display: none;
+}
+.wm-vr-menu {
+  font-size: 13px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  padding: 10px 22px;
+  border: 1px solid rgba(255,255,255,0.35);
+  border-radius: 999px;
+  background: rgba(255,255,255,0.08);
+  color: #fff;
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 500;
+  touch-action: manipulation;
+}
 .wm-keys {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -278,6 +321,8 @@ export class Overlay {
   readonly root: HTMLDivElement;
   private prompt: HTMLDivElement;
   private lock: HTMLDivElement;
+  private vrLaunch: HTMLButtonElement;
+  private vrMenu: HTMLButtonElement;
   private onEnter: (touch?: boolean) => void;
   private deferLockPanel: boolean;
 
@@ -285,6 +330,7 @@ export class Overlay {
     options: UiOptions & {
       onEnter: (touch?: boolean) => void;
       onInteract?: () => void;
+      onEnterVr?: () => void;
     },
   ) {
     injectStyles();
@@ -345,6 +391,18 @@ export class Overlay {
       handleEnter(event);
     });
 
+    const vrMenu = document.createElement('button');
+    vrMenu.type = 'button';
+    vrMenu.className = 'wm-vr-menu';
+    vrMenu.textContent = 'Enter VR';
+    vrMenu.hidden = true;
+    vrMenu.addEventListener('click', (event) => {
+      event.stopPropagation();
+      options.onEnterVr?.();
+    });
+    this.vrMenu = vrMenu;
+    content.appendChild(vrMenu);
+
     if (options.controlsHint !== false) {
       const keys = document.createElement('div');
       keys.className = 'wm-keys';
@@ -395,7 +453,31 @@ export class Overlay {
     hint.textContent = isTouch ? 'Tap ⏸ to open the menu' : 'Esc to open the menu';
     this.root.appendChild(hint);
 
+    const vrLaunch = document.createElement('button');
+    vrLaunch.type = 'button';
+    vrLaunch.className = 'wm-vr-launch';
+    vrLaunch.textContent = 'Enter VR';
+    vrLaunch.hidden = true;
+    vrLaunch.addEventListener('click', (event) => {
+      event.stopPropagation();
+      options.onEnterVr?.();
+    });
+    this.vrLaunch = vrLaunch;
+    this.root.appendChild(vrLaunch);
+
     document.body.appendChild(this.root);
+  }
+
+  /** Show Enter VR once the browser reports immersive-vr support. */
+  setVrAvailable(available: boolean): void {
+    this.vrLaunch.hidden = !available;
+    this.vrMenu.hidden = !available;
+  }
+
+  /** Hide the 2D Enter VR controls while the headset is presenting. */
+  setVrPresenting(presenting: boolean): void {
+    this.root.dataset.xr = String(presenting);
+    if (presenting) this.setLocked(true);
   }
 
   /** The pause screen, with the control list, is on screen. */
