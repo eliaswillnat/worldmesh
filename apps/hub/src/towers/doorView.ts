@@ -1,4 +1,5 @@
 import { Color, Mesh, PlaneGeometry, ShaderMaterial, UniformsLib, UniformsUtils, Vector2, Vector3, type Texture } from 'three';
+import { GALLERY_CORNER, ROUNDED_TOP_GLSL } from '../walk/doorShape';
 import type { Assignment } from '../discovery/placement';
 import { unitHash } from '../discovery/random';
 import type { WorldListing } from '../worlds/listing';
@@ -56,9 +57,12 @@ const doorFragment = /* glsl */ `
   varying vec2 vUv;
   #include <common>
   #include <fog_pars_fragment>
+  ${ROUNDED_TOP_GLSL}
 
   void main() {
     vec2 uv = vUv;
+    float rim = roundedTopEdge(uv, ${GALLERY_CORNER.toFixed(6)}, 9.0 / 16.0);
+    if (rim > 1.0) discard;
 
     // The world: its poster, slowly drifting while the door is animated.
     float t = uTime * 0.11 + uSeed * 6.2831;
@@ -96,7 +100,7 @@ const doorFragment = /* glsl */ `
     }
 
     // Focus: the frame's inner edge brightens.
-    float edge = max(abs(p.x) * 2.0, abs(p.y) * 2.0);
+    float edge = rim;
     color = mix(color, uEdge, smoothstep(0.93, 1.0, edge) * (0.25 * uFocus + 0.6 * uHighlight * (0.5 + 0.5 * sin(uTime * 5.0))));
 
     // The shutter, dropping from the top. Slats are fixed to the shutter, so they travel with it.
