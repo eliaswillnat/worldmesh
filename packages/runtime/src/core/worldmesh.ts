@@ -1,4 +1,4 @@
-import { Vector3 } from 'three';
+import { Euler, Group, Vector3 } from 'three';
 import { resolveAbilities } from '../abilities/abilities.js';
 import { parseAvatarDescriptor, type AvatarDescriptor } from '../avatar/descriptor.js';
 import { resolveWorldMeshAvatar, takeAvatarTicket } from '../avatar/handoff.js';
@@ -21,6 +21,7 @@ import type {
 } from '../types.js';
 import { Overlay } from '../ui/overlay.js';
 import { isTouchDevice } from '../controls/touch.js';
+import { immersiveVrSupported, requestImmersiveVr } from '../xr/session.js';
 import { Emitter } from './events.js';
 import { DEFAULT_PRESENCE_SERVER, Presence } from '../net/presence.js';
 
@@ -53,9 +54,13 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   const collision = new CollisionWorld(options.colliders ?? [], options.groundLevel ?? 0);
   const events = new Emitter<WorldMeshEvents>();
 
+  const vrEnabled = options.vr !== false;
   const overlay = new Overlay({
     ...options.ui,
     onEnter: (touch) => input.requestPointerLock(touch),
+    onEnterVr: () => {
+      void enterVR();
+    },
     onInteract: () => {
       if (activePortal) {
         activatePortal(activePortal);
@@ -100,13 +105,21 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   const portals = new PortalManager(scene, options.portals);
 
   let running = false;
-  let frameHandle = 0;
   let lastTime = 0;
   let elapsed = 0;
   let activePortal: ResolvedPortal | null = null;
   let disposed = false;
   let avatarDescriptor: AvatarDescriptor | null = null;
   let avatarLoad: AbortController | null = null;
+  let xrSession: XRSession | null = null;
+  const xrOrigin = new Group();
+  xrOrigin.name = 'worldmesh-xr-origin';
+  const xrHeading = new Euler(0, 0, 0, 'YXZ');
+  if (vrEnabled) {
+    renderer.xr.enabled = true;
+    renderer.xr.setReferenceSpaceType('local-floor');
+    scene.add(xrOrigin);
+  }
 
   const handle: WorldMeshHandle = {
     scene,
@@ -143,6 +156,10 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     off: (event, fn) => events.off(event, fn),
 
     refreshColliders: () => collision.refresh(),
+
+    enterVR,
+    exitVR,
+    isVR: () => renderer.xr.isPresenting,
   };
 
   applyViewVisibility();
@@ -157,6 +174,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   if (network?.bodies) controller.bodies = () => network.bodies!();
 
   startAvatar();
+  if (vrEnabled) void offerVr();
 
   return handle;
 
@@ -218,18 +236,17 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     if (running || disposed) return;
     running = true;
     lastTime = performance.now();
-    frameHandle = requestAnimationFrame(frame);
+    // setAnimationLoop is the WebXR frame pump; it also drives the flat canvas.
+    renderer.setAnimationLoop(frame);
   }
 
   function stop(): void {
     running = false;
-    if (frameHandle) cancelAnimationFrame(frameHandle);
-    frameHandle = 0;
+    renderer.setAnimationLoop(null);
   }
 
   function frame(now: number): void {
     if (!running) return;
-    frameHandle = requestAnimationFrame(frame);
     const dt = Math.min((now - lastTime) / 1000, MAX_FRAME);
     lastTime = now;
     update(dt);
@@ -237,14 +254,67 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     renderer.render(scene, camera);
   }
 
+  async function offerVr(): Promise<void> {
+    if (disposed || !(await immersiveVrSupported())) return;
+    overlay.setVrAvailable(true);
+  }
+
+  async function enterVR(): Promise<boolean> {
+    if (!vrEnabled || disposed) return false;
+    if (renderer.xr.isPresenting) return true;
+    try {
+      input.exitPointerLock();
+      const session = await requestImmersiveVr(renderer);
+      bindXrSession(session);
+      return true;
+    } catch (error) {
+      console.warn('[worldmesh] Could not start VR.', error);
+      return false;
+    }
+  }
+
+  async function exitVR(): Promise<void> {
+    if (!xrSession) return;
+    try {
+      await xrSession.end();
+    } catch {
+      unbindXrSession();
+    }
+  }
+
+  function bindXrSession(session: XRSession): void {
+    xrSession = session;
+    input.setXrSession(session);
+    if (camera.parent !== xrOrigin) xrOrigin.add(camera);
+    overlay.setVrPresenting(true);
+    applyViewVisibility();
+    session.addEventListener('end', unbindXrSession);
+    events.emit('vr:enter', {});
+  }
+
+  function unbindXrSession(): void {
+    if (!xrSession) return;
+    xrSession.removeEventListener('end', unbindXrSession);
+    xrSession = null;
+    input.setXrSession(null);
+    if (camera.parent === xrOrigin) xrOrigin.remove(camera);
+    xrOrigin.position.set(0, 0, 0);
+    xrOrigin.rotation.set(0, 0, 0);
+    overlay.setVrPresenting(false);
+    applyViewVisibility();
+    events.emit('vr:exit', {});
+  }
+
   /** Advance the simulation. Split from rendering so a fixed tick can drive it. */
   function update(dt: number): void {
     if (dt <= 0) return;
     elapsed += dt;
 
+    const presenting = renderer.xr.isPresenting;
+    if (presenting) input.pollXr(dt);
     const look = input.readLook();
     const playing = isPlaying();
-    if (playing) {
+    if (playing && !presenting) {
       if (input.locked || isTouchDevice() || options.ui?.moveBeforeLock === true) {
         cameraRig.look(look.dx, look.dy);
         if (input.locked) cameraRig.zoom(look.wheel);
@@ -253,6 +323,12 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
       const digit = input.consumeDigit();
       const expression = digit === null ? null : expressionForDigit(digit);
       if (expression) player.setExpression(expression);
+    }
+
+    if (presenting) {
+      xrOrigin.rotation.y += input.readXrTurn();
+      xrHeading.setFromQuaternion(renderer.xr.getCamera().quaternion, 'YXZ');
+      cameraRig.yaw = xrHeading.y;
     }
 
     // Fixed substeps keep movement stable regardless of frame rate.
@@ -265,7 +341,11 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
 
     if (controller.position.y < controller.tuning.fallLimit) doRespawn('fell');
 
-    cameraRig.update(dt, controller.position, player.eyeHeight * (controller.height / height));
+    if (presenting) {
+      xrOrigin.position.copy(controller.position);
+    } else {
+      cameraRig.update(dt, controller.position, player.eyeHeight * (controller.height / height));
+    }
     player.sync(controller.position, cameraRig.yaw, controller.height, {
       dt,
       speed: Math.hypot(controller.velocity.x, controller.velocity.z),
@@ -282,6 +362,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
 
   /** Walking, until Esc opens the pause screen. */
   function isPlaying(): boolean {
+    if (renderer.xr.isPresenting) return true;
     return !overlay.isPaused() && (input.locked || options.ui?.moveBeforeLock === true);
   }
 
@@ -338,7 +419,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
 
   /** In first person the avatar would fill the screen. */
   function applyViewVisibility(): void {
-    player.setVisible(cameraRig.mode === 'third');
+    player.setVisible(cameraRig.mode === 'third' || renderer.xr.isPresenting);
   }
 
   function getState(): PlayerState {
@@ -384,6 +465,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   }
 
   function handleResize(): void {
+    if (renderer.xr.isPresenting) return;
     const width = window.innerWidth;
     const viewHeight = window.innerHeight;
     // Pixel ratio first: setSize derives the drawing buffer from it, and it
@@ -407,6 +489,12 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     if (disposed) return;
     disposed = true;
     stop();
+    const session = xrSession;
+    if (session) {
+      session.removeEventListener('end', unbindXrSession);
+      unbindXrSession();
+      void session.end().catch(() => undefined);
+    }
     avatarLoad?.abort();
     window.removeEventListener('resize', handleResize);
     network?.detach?.();
@@ -414,6 +502,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     overlay.dispose();
     portals.dispose();
     player.dispose();
+    if (vrEnabled) scene.remove(xrOrigin);
     events.clear();
   }
 }

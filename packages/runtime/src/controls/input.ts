@@ -42,6 +42,13 @@ export class Input {
   private onEscape?: () => boolean | void;
   private touch?: TouchControls;
   private disposed = false;
+  private xrSession: XRSession | null = null;
+  private xrMoveX = 0;
+  private xrMoveZ = 0;
+  private xrTurn = 0;
+  private xrSprint = false;
+  private xrJumpHeld = false;
+  private xrInteractHeld = false;
 
   constructor(options: InputOptions) {
     this.element = options.element;
@@ -81,7 +88,7 @@ export class Input {
   }
 
   requestPointerLock(touchTriggered = false): void {
-    if (this.disposed || this.locked) return;
+    if (this.disposed || this.locked || this.xrSession) return;
 
     // Mobile / touch devices do not support pointer lock. Enter directly.
     if (touchTriggered || isTouchDevice()) {
@@ -139,8 +146,68 @@ export class Input {
     this.justPressed.add(action);
   }
 
+  /** WebXR controllers join the same move / jump / interact actions as the keyboard. */
+  setXrSession(session: XRSession | null): void {
+    this.xrSession = session;
+    this.xrMoveX = 0;
+    this.xrMoveZ = 0;
+    this.xrTurn = 0;
+    this.xrSprint = false;
+    this.xrJumpHeld = false;
+    this.xrInteractHeld = false;
+    if (session) this.touch?.setVisible(false);
+    else this.touch?.setVisible(this.locked && isTouchDevice());
+  }
+
+  /**
+   * Read XR gamepads for this frame. Left stick walks, right stick turns,
+   * trigger or A/X jumps, squeeze interacts.
+   */
+  pollXr(dt: number): void {
+    this.xrMoveX = 0;
+    this.xrMoveZ = 0;
+    this.xrTurn = 0;
+    this.xrSprint = false;
+    let jump = false;
+    let interact = false;
+    if (this.xrSession) {
+      for (const source of this.xrSession.inputSources) {
+        const pad = source.gamepad;
+        if (!pad) continue;
+        const stick = readThumbstick(pad);
+        if (source.handedness === 'right') {
+          this.xrTurn += stick.x * XR_TURN_SPEED * dt;
+        } else {
+          this.xrMoveX += stick.x;
+          this.xrMoveZ += stick.y;
+        }
+        if (pad.buttons[0]?.pressed || pad.buttons[4]?.pressed) jump = true;
+        if (pad.buttons[1]?.pressed) interact = true;
+        if (pad.buttons[3]?.pressed) this.xrSprint = true;
+      }
+      const length = Math.hypot(this.xrMoveX, this.xrMoveZ);
+      if (length > 1) {
+        this.xrMoveX /= length;
+        this.xrMoveZ /= length;
+      }
+    }
+    if (jump && !this.xrJumpHeld) this.justPressed.add('jump');
+    if (interact && !this.xrInteractHeld) this.justPressed.add('interact');
+    this.xrJumpHeld = jump;
+    this.xrInteractHeld = interact;
+  }
+
+  /** Radians to apply to the XR play-space this frame (right stick). */
+  readXrTurn(): number {
+    const turn = this.xrTurn;
+    this.xrTurn = 0;
+    return turn;
+  }
+
   isDown(action: InputAction): boolean {
     if (this.touch?.isDown(action)) return true;
+    if (action === 'sprint' && this.xrSprint) return true;
+    if (action === 'jump' && this.xrJumpHeld) return true;
     for (const code of this.keymap[action]) if (this.pressed.has(code)) return true;
     return false;
   }
@@ -170,6 +237,8 @@ export class Input {
       x += touchAxis.x;
       z += touchAxis.z;
     }
+    x += this.xrMoveX;
+    z += this.xrMoveZ;
 
     const length = Math.hypot(x, z);
     if (length === 0) return { x: 0, z: 0 };
@@ -303,6 +372,16 @@ export class Input {
       this.setLocked(true);
     }
   };
+}
+
+const XR_TURN_SPEED = 2.4;
+const XR_DEADZONE = 0.18;
+
+function readThumbstick(pad: Gamepad): { x: number; y: number } {
+  const x = pad.axes.length >= 4 ? pad.axes[2] : (pad.axes[0] ?? 0);
+  const y = pad.axes.length >= 4 ? pad.axes[3] : (pad.axes[1] ?? 0);
+  if (Math.hypot(x, y) < XR_DEADZONE) return { x: 0, y: 0 };
+  return { x, y };
 }
 
 function isTypingTarget(target: EventTarget | null): boolean {

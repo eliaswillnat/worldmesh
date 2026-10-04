@@ -1,5 +1,6 @@
 /*
   X-Content-Type-Options: nosniff
+  Permissions-Policy: xr-spatial-tracking=(self)
 
 /connect.md
   Content-Type: text/markdown; charset=utf-8

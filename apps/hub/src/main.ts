@@ -85,6 +85,7 @@ const DEMO_WORLDS: WorldEntry[] = [
     creator: 'Elias Willnat',
     portfolio: 'https://x.com/eliaswillnat',
     categories: ['explore'],
+    tags: ['multiplayer', 'vr'],
     source: 'demo',
   },
   {
@@ -96,6 +97,7 @@ const DEMO_WORLDS: WorldEntry[] = [
     creator: 'Elias Willnat',
     portfolio: 'https://x.com/eliaswillnat',
     categories: ['space'],
+    tags: ['multiplayer', 'vr'],
     source: 'demo',
   },
   {
@@ -107,6 +109,7 @@ const DEMO_WORLDS: WorldEntry[] = [
     creator: 'Elias Willnat',
     portfolio: 'https://x.com/eliaswillnat',
     categories: ['explore'],
+    tags: ['multiplayer', 'vr'],
     source: 'demo',
   },
   {
@@ -118,6 +121,7 @@ const DEMO_WORLDS: WorldEntry[] = [
     creator: 'Elias Willnat',
     portfolio: 'https://x.com/eliaswillnat',
     categories: ['explore'],
+    tags: ['multiplayer', 'vr'],
     source: 'demo',
   },
   {
@@ -129,6 +133,7 @@ const DEMO_WORLDS: WorldEntry[] = [
     creator: 'Elias Willnat',
     portfolio: 'https://x.com/eliaswillnat',
     categories: ['space'],
+    tags: ['multiplayer', 'vr'],
     source: 'demo',
   },
 ];

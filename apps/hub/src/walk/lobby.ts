@@ -641,6 +641,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     spawn: SPAWN,
     // Held upright, look further down so the floor fills the tall screen instead of the sky.
     view: { mode: 'third', distance: 5.5, pitch: window.innerWidth < window.innerHeight ? -0.32 : -0.15 },
+    vr: true,
     ui: { title: 'WorldMesh', badge: false, crosshair: false, deferLockPanel: true, moveBeforeLock: true },
     network: presence,
     // Empty doors are closed: their faces stop you like the wall does.

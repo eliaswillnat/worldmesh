@@ -64,5 +64,18 @@ landscape:
 
 ## VR
 
-Not implemented. When it is, it belongs in the runtime's input layer for
-exactly the same reason the keyboard bindings do.
+When the browser can start a WebXR `immersive-vr` session, every WorldMesh
+world shows an **Enter VR** button (top centre while walking, and again on the
+Esc / pause menu). That click is what requests the session.
+
+In the headset:
+
+| Input | Action |
+| --- | --- |
+| Left thumbstick | Move |
+| Right thumbstick | Turn |
+| Trigger or A / X | Jump (hold to ascend while flying) |
+| Squeeze | Interact / enter a portal |
+
+The headset looks around. WASD and the usual keys still work on PCVR. The
+system button ends the session. Worlds opt out with `vr: false`.
