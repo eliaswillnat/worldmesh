@@ -3,6 +3,7 @@ import {
   BackSide,
   BoxGeometry,
   BufferGeometry,
+  CircleGeometry,
   Color,
   CylinderGeometry,
   DoubleSide,
@@ -10,27 +11,19 @@ import {
   Group,
   InstancedBufferAttribute,
   InstancedMesh,
-  LinearSRGBColorSpace,
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
-  NoToneMapping,
+  NormalBlending,
   Object3D,
-  OrthographicCamera,
-  PlaneGeometry,
   RingGeometry,
-  Scene,
   ShaderMaterial,
   SphereGeometry,
   SRGBColorSpace,
   TextureLoader,
   TorusGeometry,
-  Vector2,
   Vector3,
-  WebGLRenderTarget,
-  type PerspectiveCamera,
   type Texture,
-  type WebGLRenderer,
 } from 'three';
 import type { ScreenPlan } from './layout';
 
@@ -243,7 +236,12 @@ export function createGodRayMaterial(options: {
         float y01 = clamp(vLocal.y / height + 0.5, 0.0, 1.0);
         float base = pow(smoothstep(0.08, 0.65, y01 * height), 2.2);
         float tip = 1.0 - smoothstep(0.62, 1.0, y01);
-        float alpha = facing * accumAlpha * base * tip * uGain * uPresence * mix(1.0, 0.55, uLight);
+        // Seen from inside (first person, or a camera swung in close) the
+        // tube would cover the whole view and wash the walls and doors out:
+        // fade it away as the camera nears the beam's axis.
+        float fromAxis = length(cameraPosition.xz - vAxis);
+        float outside = smoothstep(1.6, 3.2, fromAxis);
+        float alpha = facing * accumAlpha * base * tip * uGain * uPresence * outside * mix(1.0, 0.55, uLight);
         vec3 color = accumColor * mix(vec3(6.0), vec3(4.2, 4.0, 3.6), uLight) * uTint;
         float ca = 0.045 * sin(ang * 2.0 + uTime * 0.15);
         color.r *= 1.0 + ca;
@@ -270,8 +268,10 @@ export function createGodRayMaterial(options: {
       varying vec3 vLocal;
       varying vec3 vWorld;
       varying vec3 vViewLocal;
+      varying vec2 vAxis;
       void main() {
         vLocal = position;
+        vAxis = (modelMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xz;
         vec4 world = modelMatrix * vec4(position, 1.0);
         vWorld = world.xyz;
         vec3 worldView = cameraPosition - world.xyz;
@@ -293,6 +293,7 @@ export function createGodRayMaterial(options: {
       varying vec3 vLocal;
       varying vec3 vWorld;
       varying vec3 vViewLocal;
+      varying vec2 vAxis;
 
       vec2 rotate(vec2 uv, float th) {
         return mat2(cos(th), sin(th), -sin(th), cos(th)) * uv;
@@ -354,7 +355,261 @@ function pulseClimb(age: number): number {
   return slow * age + (fast - slow) * (ramp * 0.5 + (age - hold - ramp));
 }
 
-export function createSpawnRay(height: number): {
+/**
+ * The dressing on the spawn dais: a third, wider step, an animated dial
+ * inlaid in the top (tick marks, rings, turning arcs, a sweeping scan), two
+ * open rings of light turning in the outer step, a ring of lit dashes in it with a light
+ * running round them, and a soft glow on the floor. It all brightens while
+ * the beam is lit.
+ */
+/** Heights of the spawn dais's tiers: the outer step, the base, and the top the dial is in. */
+const DAIS_STEP = 0.02;
+const DAIS_BASE = 0.03;
+const DAIS_TOP = 0.04;
+
+function createDaisDressing(
+  time: { value: number },
+  presence: { value: number },
+  deckMaterial: MeshStandardMaterial,
+): { group: Group; step: Mesh; update(now: number): void; setTheme(light: boolean): void; dispose(): void } {
+  const group = new Group();
+  group.name = 'spawn-dais';
+  const light = { value: 0 };
+  // The beam's brightness, eased, so the dais rises and settles gently with it.
+  const boost = { value: 0 };
+  let last = Number.NaN;
+  const geometries: BufferGeometry[] = [];
+  const materials: Array<{ dispose(): void }> = [];
+  const keep = <T extends BufferGeometry>(geometry: T) => (geometries.push(geometry), geometry);
+
+  // The outer step, under the dais's own two.
+  const step = new Mesh(keep(new CylinderGeometry(2.7, 2.85, DAIS_STEP, 96)), deckMaterial);
+  step.position.y = DAIS_STEP / 2;
+  group.add(step);
+
+  const glowColor = new Color();
+  const glow = new MeshBasicMaterial({ transparent: true, depthWrite: false, toneMapped: false, fog: false });
+  materials.push(glow);
+  const stepRim = new Mesh(keep(new TorusGeometry(2.85, 0.01, 8, 128)), glow);
+  stepRim.rotation.x = Math.PI / 2;
+  stepRim.position.y = 0.012;
+  group.add(stepRim);
+
+  // The dial inlaid in the top.
+  const dialRadius = 1.55;
+  const dial = new ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    fog: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+    uniforms: { uTime: time, uBoost: boost, uLight: light, uRadius: { value: dialRadius } },
+    vertexShader: /* glsl */ `
+      varying vec2 vPos;
+      void main() {
+        vPos = position.xy;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform float uTime;
+      uniform float uBoost;
+      uniform float uLight;
+      uniform float uRadius;
+      varying vec2 vPos;
+
+      float ring(float r, float at, float width) {
+        float aa = fwidth(r) * 1.5;
+        return 1.0 - smoothstep(width, width + aa, abs(r - at));
+      }
+      float band(float r, float a, float b) {
+        float aa = fwidth(r);
+        return smoothstep(a - aa, a + aa, r) * (1.0 - smoothstep(b - aa, b + aa, r));
+      }
+      // Distance to the nearest of \`count\` evenly spaced spokes, as a 0–1 line.
+      float spokes(float angle, float count, float width) {
+        float t = angle / 6.2831853 * count;
+        float t2 = (angle + 3.14159265) / 6.2831853 * count;
+        float w = min(fwidth(t), fwidth(t2));
+        float d = abs(fract(t + 0.5) - 0.5);
+        return 1.0 - smoothstep(width, width + w * 1.5, d);
+      }
+
+      ${SRGB_DECODE}
+      void main() {
+        float r = length(vPos);
+        float a = atan(vPos.y, vPos.x);
+        float boost = uBoost;
+
+        float lines = ring(r, 1.47, 0.012) + ring(r, 1.08, 0.007) * 0.7 + ring(r, 0.64, 0.007) * 0.6 + ring(r, 0.22, 0.01) * 0.8;
+        // A bezel of tick marks, a long one every sixth.
+        lines += spokes(a, 72.0, 0.07) * band(r, 1.22, 1.38) * 0.7;
+        lines += spokes(a, 12.0, 0.04) * band(r, 1.14, 1.42);
+        // Arcs turning either way.
+        float arcsA = step(fract((a + uTime * 0.35) / 6.2831853 * 3.0), 0.62) * band(r, 0.8, 0.9);
+        float arcsB = step(fract((a - uTime * 0.6) / 6.2831853 * 5.0), 0.45) * band(r, 0.4, 0.47);
+        lines += arcsA * 0.75 + arcsB * 0.6;
+        // A scan sweeping round, and ripples running out while the beam is lit.
+        float sweep = pow(max(0.0, cos(a - uTime * 1.3)), 18.0) * band(r, 0.25, 1.45) * 0.35;
+        float ripple = pow(0.5 + 0.5 * sin((r - uTime * 2.2) * 9.0), 6.0) * band(r, 0.25, 1.45) * boost * 0.25;
+        float core = exp(-r * r * 9.0) * (0.25 + boost * 0.3);
+        float edgeFade = 1.0 - smoothstep(uRadius - 0.04, uRadius, r);
+        float amount = (lines * (0.6 + 0.15 * boost) + sweep + ripple + core) * edgeFade;
+
+        vec3 glow = vec3(1.0);
+        vec3 ink = vec3(0.16, 0.16, 0.18);
+        if (uLight > 0.5) {
+          gl_FragColor = vec4(ink, clamp(amount, 0.0, 1.0) * 0.75);
+        } else {
+          gl_FragColor = vec4(glow * amount * 1.3, clamp(amount, 0.0, 1.0));
+        }
+
+        // Same on screen as through the beam's pass: decode, then let three encode for wherever this draws.
+        gl_FragColor = srgbDecode(gl_FragColor);
+        #include <colorspace_fragment>
+      }
+    `,
+  });
+  materials.push(dial);
+  const dialMesh = new Mesh(keep(new CircleGeometry(dialRadius, 96)), dial);
+  dialMesh.rotation.x = -Math.PI / 2;
+  dialMesh.position.y = DAIS_TOP + 0.002;
+  dialMesh.renderOrder = 2;
+  group.add(dialMesh);
+
+  // Two open rings inlaid in the outer step, turning opposite ways.
+  const stepTop = DAIS_STEP;
+  const halos = [
+    { geometry: new TorusGeometry(2.3, 0.016, 6, 160, Math.PI * 1.45), y: stepTop + 0.004, speed: 0.25 },
+    { geometry: new TorusGeometry(2.5, 0.011, 6, 160, Math.PI * 0.85), y: stepTop + 0.002, speed: -0.4 },
+    { geometry: new TorusGeometry(2.5, 0.011, 6, 160, Math.PI * 0.85), y: stepTop + 0.002, speed: -0.4, offset: Math.PI },
+  ].map((spec) => {
+    const mesh = new Mesh(keep(spec.geometry), glow);
+    mesh.rotation.order = 'YXZ';
+    // Flattened, so they read as lines of light in the surface, not tubes on it.
+    mesh.scale.set(1, 1, 0.25);
+    mesh.position.y = spec.y;
+    group.add(mesh);
+    return { mesh, ...spec };
+  });
+
+  // Lit dashes inlaid round the outer step, pointing at the centre, with a light chasing round them.
+  // Short enough to sit between the outer ring (2.5 m) and the step's edge (2.7 m).
+  const postGeometry = keep(new BoxGeometry(0.05, 0.006, 0.12));
+  const posts = Array.from({ length: 8 }, (_, i) => {
+    const material = new MeshBasicMaterial({ transparent: true, depthWrite: false, toneMapped: false, fog: false });
+    materials.push(material);
+    const mesh = new Mesh(postGeometry, material);
+    const angle = (i / 8) * Math.PI * 2 + Math.PI / 8;
+    mesh.position.set(Math.sin(angle) * 2.6, stepTop + 0.003, Math.cos(angle) * 2.6);
+    mesh.rotation.y = angle;
+    group.add(mesh);
+    return { mesh, material, angle };
+  });
+
+  // A soft pool of light on the floor round the base.
+  const pool = new ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    fog: false,
+    uniforms: { uBoost: boost, uLight: light },
+    vertexShader: /* glsl */ `
+      varying float vR;
+      void main() {
+        vR = length(position.xy);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform float uBoost;
+      uniform float uLight;
+      varying float vR;
+      ${SRGB_DECODE}
+      void main() {
+        float fall = 1.0 - smoothstep(2.85, 5.0, vR);
+        // Steady: the beam lights the hall, not this pool.
+        float amount = fall * fall * (0.14 + 0.04 * uBoost);
+        vec3 color = uLight > 0.5 ? vec3(0.45, 0.45, 0.5) : vec3(1.0);
+        gl_FragColor = vec4(color * (uLight > 0.5 ? 1.0 : amount), uLight > 0.5 ? amount * 0.35 : amount);
+
+        // Same on screen as through the beam's pass: decode, then let three encode for wherever this draws.
+        gl_FragColor = srgbDecode(gl_FragColor);
+        #include <colorspace_fragment>
+      }
+    `,
+  });
+  materials.push(pool);
+  const poolMesh = new Mesh(keep(new RingGeometry(2.84, 5, 128, 1)), pool);
+  poolMesh.rotation.x = -Math.PI / 2;
+  poolMesh.position.y = 0.006;
+  group.add(poolMesh);
+
+  const setBlending = (material: { blending: number; needsUpdate: boolean }, isLight: boolean) => {
+    material.blending = isLight ? NormalBlending : AdditiveBlending;
+    material.needsUpdate = true;
+  };
+
+  return {
+    group,
+    step,
+    update(now) {
+      const dt = Number.isFinite(last) ? Math.min(0.1, Math.max(0, now - last)) : 0;
+      last = now;
+      boost.value += (presence.value - boost.value) * (1 - Math.exp(-dt * 3));
+      for (const halo of halos) halo.mesh.rotation.set(Math.PI / 2, now * halo.speed + (halo.offset ?? 0), 0);
+      glow.opacity = 0.8 + 0.1 * boost.value;
+      for (const post of posts) {
+        const chase = Math.pow(Math.max(0, Math.cos(now * 2.2 - post.angle)), 10);
+        post.material.color.copy(glowColor);
+        post.material.opacity = Math.min(1, 0.25 + 0.75 * chase + boost.value * 0.15);
+      }
+    },
+    setTheme(isLight) {
+      light.value = isLight ? 1 : 0;
+      // White light on the dark floor; plain ink on the white one.
+      glowColor.set(isLight ? 0x2a2a2e : 0xffffff);
+      glow.color.copy(glowColor);
+      for (const material of [glow, pool, ...posts.map((post) => post.material)]) setBlending(material, isLight);
+      dial.blending = isLight ? NormalBlending : AdditiveBlending;
+      dial.needsUpdate = true;
+    },
+    dispose() {
+      for (const geometry of geometries) geometry.dispose();
+      for (const material of materials) material.dispose();
+    },
+  };
+}
+
+/**
+ * sRGB to linear, for custom shaders that end in three's colour-space chunk:
+ * they look the same on screen and through the beam's off-screen pass. (This
+ * three.js only gives shaders the other direction.)
+ */
+const SRGB_DECODE = /* glsl */ `
+  vec4 srgbDecode(vec4 value) {
+    vec3 c = max(value.rgb, vec3(0.0));
+    vec3 low = c * 0.0773993808;
+    vec3 high = pow(c * 0.9478672986 + vec3(0.0521327014), vec3(2.4));
+    return vec4(mix(high, low, vec3(lessThanEqual(c, vec3(0.04045)))), value.a);
+  }
+`;
+
+/** Longest step the spawn effect takes in one frame, and most it catches up on a late start. */
+const MAX_FX_STEP = 1 / 30;
+const MAX_LAG = 0.25;
+/**
+ * Quick frames in a row before a spawn beam starts, so it is not played
+ * behind a loading stall, and the longest it waits for them after the Walk click.
+ */
+const SMOOTH_FRAMES = 3;
+const MAX_WAIT = 0.5;
+
+export function createSpawnRay(
+  height: number,
+  /** A layer the floor mirror does not draw: the dais's lights go on it so they are not reflected. */
+  unreflectedLayer?: number,
+): {
   object: Object3D;
   /** The dais under the beam. Solid, so a visitor can stand on it. */
   colliders: Mesh[];
@@ -383,20 +638,34 @@ export function createSpawnRay(height: number): {
   beam.renderOrder = 2;
   group.add(halo, beam);
 
-  const deckMaterial = new MeshStandardMaterial({ color: 0x141418, roughness: 0.42, metalness: 0.08 });
+  // Matte and the floor's own colour, so the dais reads as part of the floor.
+  const deckMaterial = new MeshStandardMaterial({ color: 0x030304, roughness: 0.95, metalness: 0 });
+  // Not drawn: the hall's own mirror floor shows through, so the dais is the
+  // same surface as the ground with only its lines of light on it. Still solid.
+  deckMaterial.visible = false;
   const lipMaterial = new MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1, depthWrite: false });
-  const base = new Mesh(new CylinderGeometry(1.85, 2.05, 0.06, 64), deckMaterial);
-  const top = new Mesh(new CylinderGeometry(1.55, 1.7, 0.05, 64), deckMaterial);
+  // Low tiers, nearly flush with the floor: 3 cm, then 4 cm at the centre.
+  const base = new Mesh(new CylinderGeometry(1.85, 2.05, DAIS_BASE, 64), deckMaterial);
+  const top = new Mesh(new CylinderGeometry(1.55, 1.7, DAIS_TOP - DAIS_BASE + 0.005, 64), deckMaterial);
   const lip = new Mesh(new TorusGeometry(1.62, 0.008, 8, 80), lipMaterial);
   // Wider ring on the lower rim of the dais, where it meets the floor.
   const foot = new Mesh(new TorusGeometry(2.05, 0.008, 8, 96), lipMaterial);
-  base.position.y = 0.03;
-  top.position.y = 0.08;
-  lip.position.y = 0.108;
+  base.position.y = DAIS_BASE / 2;
+  top.position.y = (DAIS_BASE + DAIS_TOP) / 2 - 0.0025;
+  lip.position.y = DAIS_TOP + 0.002;
   lip.rotation.x = Math.PI / 2;
-  foot.position.y = 0.012;
+  foot.position.y = DAIS_STEP + 0.004;
   foot.rotation.x = Math.PI / 2;
   group.add(base, top, lip, foot);
+  const dressing = createDaisDressing(time, presence, deckMaterial);
+  group.add(dressing.group);
+  // The dais's lines of light glow on the floor without a second copy in the mirror under them.
+  if (unreflectedLayer !== undefined) {
+    for (const mesh of [lip, foot]) mesh.layers.set(unreflectedLayer);
+    dressing.group.traverse((child) => {
+      if (child instanceof Mesh && child !== dressing.step) child.layers.set(unreflectedLayer);
+    });
+  }
 
   const pulseGlow = (seed: number) =>
     new ShaderMaterial({
@@ -427,6 +696,7 @@ export function createSpawnRay(height: number): {
           f = f * f * (3.0 - 2.0 * f);
           return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
         }
+        ${SRGB_DECODE}
         void main() {
           vec2 p = vUv * 2.0 - 1.0;
           float r = length(p);
@@ -440,6 +710,9 @@ export function createSpawnRay(height: number): {
           color.r *= 1.0 + ca;
           color.b *= 1.0 - ca;
           gl_FragColor = vec4(color, alpha);
+          // Same on screen as through the beam's pass: decode, then let three encode for wherever this draws.
+          gl_FragColor = srgbDecode(gl_FragColor);
+          #include <colorspace_fragment>
         }
       `,
     });
@@ -491,12 +764,17 @@ export function createSpawnRay(height: number): {
       uniform float uLight;
       varying float vAlpha;
       varying float vHue;
+      ${SRGB_DECODE}
       void main() {
         vec3 color = mix(vec3(1.15, 1.25, 1.5), vec3(1.1, 1.05, 0.85), uLight);
         float ca = 0.05 * sin(vHue);
         color.r *= 1.0 + ca;
         color.b *= 1.0 - ca;
         gl_FragColor = vec4(color, vAlpha * mix(0.75, 0.4, uLight));
+
+        // Same on screen as through the beam's pass: decode, then let three encode for wherever this draws.
+        gl_FragColor = srgbDecode(gl_FragColor);
+        #include <colorspace_fragment>
       }
     `,
   });
@@ -517,48 +795,57 @@ export function createSpawnRay(height: number): {
   let pendingTrigger = false;
   let startedAt = Number.NEGATIVE_INFINITY;
   let triggerWallClock = 0;
+  // The effect runs on its own clock, which moves with rendered frames and at
+  // most 1/30 s per frame. While the lobby is still loading, frames stall; on
+  // the wall clock the beam would jump through its fade in a few big steps.
+  let clock = 0;
+  let lastNow = Number.NaN;
+  /** Quick frames in a row; the beam waits for the hall to be running smoothly. */
+  let smoothFrames = 0;
 
   const clamp01 = (t: number) => Math.min(1, Math.max(0, t));
-  /** Strong slow start, fast finish. */
-  const easeInQuint = (t: number) => {
-    const x = clamp01(t);
-    return x * x * x * x * x;
-  };
-  /** Fast start, very soft landing. */
-  const easeOutQuint = (t: number) => {
-    const x = clamp01(t);
-    const u = 1 - x;
-    return 1 - u * u * u * u * u;
+  /** Up quickly from the first frame, easing into full. */
+  const easeOutCubic = (t: number) => {
+    const u = 1 - clamp01(t);
+    return 1 - u * u * u;
   };
 
   return {
     object: group,
-    colliders: [base, top],
+    colliders: [dressing.step, base, top],
     setTheme(light: boolean) {
       theme.value = light ? 1 : 0;
-      deckMaterial.color.set(light ? 0xf4f1ea : 0x141418);
+      deckMaterial.color.set(light ? 0xf1f4fa : 0x030304);
       deckMaterial.emissive.set(light ? 0x6b707c : 0x000000);
       lipMaterial.color.set(light ? 0x3a3d44 : 0xffffff);
+      dressing.setTheme(light);
     },
     trigger(fromWallClock = performance.now()) {
       pendingTrigger = true;
       triggerWallClock = fromWallClock;
     },
-    setTime(now: number) {
-      time.value = now;
-      // Fade in (ease-in) → brief hold → fade out (ease-out).
-      const fadeIn = 0.7;
-      const hold = 0.75;
-      const fadeOut = 0.65;
+    setTime(realNow: number) {
+      time.value = realNow;
+      dressing.update(realNow);
+      const real = Number.isFinite(lastNow) ? realNow - lastNow : Number.POSITIVE_INFINITY;
+      const step = Number.isFinite(real) ? Math.min(Math.max(real, 0), MAX_FX_STEP) : 0;
+      lastNow = realNow;
+      smoothFrames = real < 0.1 ? smoothFrames + 1 : 0;
+      clock += step;
+      const now = clock;
+      // A quick fade in → a hold → a slow, even fade out.
+      const fadeIn = 0.45;
+      const hold = 0.5;
+      const fadeOut = 0.9;
       if (pendingTrigger && presence.value > 0.02) {
         // Already lit (someone else arrived a moment ago): carry on from the
         // same brightness on the way up, and hold again, instead of dropping to dark.
         pendingTrigger = false;
-        startedAt = now - Math.pow(presence.value, 1 / 5) * fadeIn;
-      } else if (pendingTrigger) {
+        startedAt = now - (1 - Math.cbrt(1 - presence.value)) * fadeIn;
+      } else if (pendingTrigger && (smoothFrames >= SMOOTH_FRAMES || (performance.now() - triggerWallClock) / 1000 > MAX_WAIT)) {
         pendingTrigger = false;
-        // Age includes time since the Walk click, not since this frame.
-        const lag = Math.max(0, (performance.now() - triggerWallClock) / 1000);
+        // Catch up a little on the time since the Walk click, never so much that it starts half faded.
+        const lag = Math.min(MAX_LAG, Math.max(0, (performance.now() - triggerWallClock) / 1000));
         startedAt = now - lag;
         nextPulse = now + 0.25;
         nextSpark = now + 0.08;
@@ -573,11 +860,13 @@ export function createSpawnRay(height: number): {
       let amount = 0;
       let dying = 0;
       if (age >= 0 && age < fadeIn) {
-        amount = easeInQuint(age / fadeIn);
+        amount = easeOutCubic(age / fadeIn);
       } else if (age >= fadeIn && age < fadeIn + hold) {
         amount = 1;
       } else if (age >= fadeIn + hold && age < fadeIn + hold + fadeOut) {
-        dying = easeOutQuint((age - fadeIn - hold) / fadeOut);
+        // An even S-curve: no sudden drop at the start of the fade.
+        const t = clamp01((age - fadeIn - hold) / fadeOut);
+        dying = t * t * (3 - 2 * t);
         amount = 1 - dying;
       }
       presence.value = amount;
@@ -700,136 +989,11 @@ export function createSpawnRay(height: number): {
       foot.geometry.dispose();
       deckMaterial.dispose();
       lipMaterial.dispose();
+      dressing.dispose();
       rimGeometry.dispose();
       for (const pulse of pulses) pulse.rimMaterial.dispose();
       sparkGeometry.dispose();
       sparkMaterial.dispose();
-    },
-  };
-}
-
-/**
- * A light screen-space bend when leaving the spawn shaft: chromatic offset
- * and a soft radial warp, peaking at the rim. Cheaper than MeshTransmissionMaterial.
- * Hooks renderer.render for the final on-screen pass only; Reflector RT draws pass through.
- */
-export function createBeamRefraction(renderer: WebGLRenderer, viewCamera: PerspectiveCamera): {
-  update(dt: number, x: number, z: number, time: number, presence?: number): void;
-  resize(): void;
-  dispose(): void;
-} {
-  const target = new WebGLRenderTarget(1, 1, { depthBuffer: true });
-  target.texture.colorSpace = LinearSRGBColorSpace;
-  const uniforms = {
-    tDiffuse: { value: target.texture },
-    uStrength: { value: 0 },
-    uCenter: { value: new Vector2(0.5, 0.5) },
-    uTime: { value: 0 },
-  };
-  const material = new ShaderMaterial({
-    uniforms,
-    depthTest: false,
-    depthWrite: false,
-    toneMapped: true,
-    vertexShader: /* glsl */ `
-      varying vec2 vUv;
-      void main() {
-        vUv = uv;
-        gl_Position = vec4(position.xy, 0.0, 1.0);
-      }
-    `,
-    fragmentShader: /* glsl */ `
-      uniform sampler2D tDiffuse;
-      uniform float uStrength;
-      uniform vec2 uCenter;
-      uniform float uTime;
-      varying vec2 vUv;
-      void main() {
-        vec3 clean = texture2D(tDiffuse, vUv).rgb;
-        float strength = clamp(uStrength, 0.0, 1.0);
-        if (strength < 0.001) {
-          gl_FragColor = vec4(clean, 1.0);
-        } else {
-          vec2 delta = vUv - uCenter;
-          float dist = length(delta);
-          vec2 dir = dist > 1e-4 ? delta / dist : vec2(0.0);
-          float wobble = 0.65 + 0.35 * sin(uTime * 4.2 + dist * 28.0);
-          float amount = strength * 0.022 * wobble;
-          vec2 offset = dir * amount * (0.35 + dist * 1.4);
-          float r = texture2D(tDiffuse, clamp(vUv + offset * 1.35, 0.0, 1.0)).r;
-          float g = texture2D(tDiffuse, clamp(vUv + offset, 0.0, 1.0)).g;
-          float b = texture2D(tDiffuse, clamp(vUv + offset * 0.7, 0.0, 1.0)).b;
-          gl_FragColor = vec4(mix(clean, vec3(r, g, b), strength), 1.0);
-        }
-        #include <tonemapping_fragment>
-        #include <colorspace_fragment>
-      }
-    `,
-  });
-  const scene = new Scene();
-  scene.add(new Mesh(new PlaneGeometry(2, 2), material));
-  const cam = new OrthographicCamera(-1, 1, 1, -1, 0, 1);
-
-  let leavePulse = 0;
-  let prevDist = 0;
-  let strength = 0;
-  let strengthShown = 0;
-  const beam = new Vector3(0, 1.4, 0);
-  const projected = new Vector3();
-  const originalRender = renderer.render.bind(renderer);
-  let composing = false;
-
-  renderer.render = ((renderScene, renderCamera) => {
-    if (composing || renderer.getRenderTarget() !== null || strengthShown < 0.002) {
-      return originalRender(renderScene, renderCamera);
-    }
-    composing = true;
-    const prevTone = renderer.toneMapping;
-    const prevSpace = renderer.outputColorSpace;
-    // Keep the intermediate buffer linear so the final pass matches a normal frame.
-    renderer.toneMapping = NoToneMapping;
-    renderer.outputColorSpace = LinearSRGBColorSpace;
-    renderer.setRenderTarget(target);
-    originalRender(renderScene, renderCamera);
-    renderer.setRenderTarget(null);
-    renderer.toneMapping = prevTone;
-    renderer.outputColorSpace = prevSpace;
-    originalRender(scene, cam);
-    composing = false;
-  }) as typeof renderer.render;
-
-  const resize = () => {
-    const width = Math.max(1, renderer.domElement.width);
-    const height = Math.max(1, renderer.domElement.height);
-    target.setSize(width, height);
-  };
-  resize();
-
-  return {
-    update(dt, x, z, time, beamPresence = 1) {
-      const dist = Math.hypot(x, z);
-      const rim = 0.85;
-      if (prevDist < rim && dist >= rim) leavePulse = 1;
-      leavePulse = Math.max(0, leavePulse - dt * 1.6);
-      // Narrow shell around the rim: only while still close to the shaft.
-      const away = Math.abs(dist - rim) / 1.05;
-      const edge = away >= 1 ? 0 : 1 - away * away * (3 - 2 * away);
-      strength = Math.max(leavePulse * 0.75, edge * 0.4) * Math.max(0, beamPresence);
-      const ease = 1 - Math.exp(-dt * 3.2);
-      strengthShown += (strength - strengthShown) * ease;
-      prevDist = dist;
-
-      projected.copy(beam).project(viewCamera);
-      uniforms.uCenter.value.set(projected.x * 0.5 + 0.5, projected.y * 0.5 + 0.5);
-      uniforms.uStrength.value = strengthShown;
-      uniforms.uTime.value = time;
-    },
-    resize,
-    dispose() {
-      renderer.render = originalRender;
-      target.dispose();
-      material.dispose();
-      (scene.children[0] as Mesh).geometry.dispose();
     },
   };
 }

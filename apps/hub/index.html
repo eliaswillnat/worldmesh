@@ -1136,6 +1136,36 @@
         transition: opacity .2s ease, transform .2s ease;
       }
       .walk-add-prompt.visible { opacity: 1; pointer-events: auto; transform: translateX(-50%); }
+      /* Inside a lift: the floors, as buttons in one pill. */
+      .walk-lift-prompt {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 6px 6px 16px;
+        cursor: default;
+      }
+      .walk-lift-prompt span { opacity: 0.7; margin-right: 6px; font-size: 13px; }
+      .walk-lift-prompt button {
+        height: 32px;
+        padding: 0 14px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        background: transparent;
+        color: inherit;
+        font: 600 13px/1 "Urbanist", ui-sans-serif, system-ui, sans-serif;
+        cursor: pointer;
+      }
+      .walk-lift-prompt button[aria-pressed="true"] { background: #fff; color: #111; border-color: #fff; }
+      .walk-lift-prompt button.walk-lift-step { width: 40px; padding: 0; font-size: 14px; }
+      .walk-lift-prompt button:disabled { opacity: 0.3; cursor: default; }
+      /* On a phone, bigger targets for a thumb. */
+      @media (pointer: coarse) {
+        .walk-lift-prompt { padding: 6px; }
+        .walk-lift-prompt button { height: 40px; }
+        .walk-lift-prompt button.walk-lift-step { width: 48px; font-size: 16px; }
+      }
+      html.walking[data-walk-theme="light"] .walk-lift-prompt button { border-color: rgba(0, 0, 0, 0.2); }
+      html.walking[data-walk-theme="light"] .walk-lift-prompt button[aria-pressed="true"] { background: #111; color: #fff; border-color: #111; }
       html.walking:has(.wm-overlay[data-locked="false"]) .walk-add-prompt { display: none; }
       /* A speech bubble pinned over your head. Not a chat bar. */
       .walk-bubble {
@@ -1825,6 +1855,150 @@
         color: #111;
         background: rgba(0, 0, 0, 0.06);
         border-color: rgba(0, 0, 0, 0.3);
+      }
+      /*
+       * The pause screen as one tidy column: every control the same width and
+       * height, Continue as the one solid button, the theme as a segmented
+       * control and the colours as an even row beneath.
+       */
+      html.walking .wm-lock {
+        --pause-w: 248px;
+        --pause-h: 46px;
+        --pause-fg: #fff;
+        --pause-line: rgba(255, 255, 255, 0.22);
+        --pause-fill: rgba(255, 255, 255, 0.08);
+        --pause-hover: rgba(255, 255, 255, 0.16);
+        --pause-strong: #fff;
+        --pause-on-strong: #111;
+        --pause-gap: #1c1c1f;
+      }
+      html.walking[data-walk-theme="light"] .wm-lock {
+        --pause-fg: #111;
+        --pause-line: rgba(0, 0, 0, 0.16);
+        --pause-fill: rgba(255, 255, 255, 0.7);
+        --pause-hover: rgba(255, 255, 255, 0.95);
+        --pause-strong: #111;
+        --pause-on-strong: #fff;
+        --pause-gap: #f4f4f4;
+      }
+      html.walking .wm-lock .wm-lock-content { gap: 10px; }
+      html.walking .wm-lock .wm-lock-cta,
+      html.walking .wm-lock .walk-pause-actions .walk-gallery,
+      html.walking .wm-lock .walk-pause-actions .walk-discord,
+      html.walking .wm-lock .walk-pause-actions .walk-private {
+        box-sizing: border-box;
+        width: var(--pause-w);
+        height: var(--pause-h);
+        padding: 0 18px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        border-radius: 999px;
+        font: 600 14px/1 "Urbanist", ui-sans-serif, system-ui, sans-serif;
+        letter-spacing: 0.01em;
+        text-transform: none;
+        text-decoration: none;
+        color: var(--pause-fg);
+        background: var(--pause-fill);
+        border: 1px solid var(--pause-line);
+        box-shadow: none;
+        -webkit-backdrop-filter: blur(10px);
+        backdrop-filter: blur(10px);
+        transform: none;
+        transition: background-color .15s ease, border-color .15s ease, color .15s ease;
+        cursor: pointer;
+      }
+      html.walking .wm-lock .walk-pause-actions .walk-gallery:hover,
+      html.walking .wm-lock .walk-pause-actions .walk-discord:hover,
+      html.walking .wm-lock .walk-pause-actions .walk-private:hover {
+        background: var(--pause-hover);
+        border-color: var(--pause-fg);
+      }
+      /* Continue: the one solid button, with a gap before the rest. */
+      html.walking .wm-lock .wm-lock-cta {
+        margin-bottom: 6px;
+        color: var(--pause-on-strong);
+        background: var(--pause-strong);
+        border-color: var(--pause-strong);
+        font-weight: 700;
+      }
+      html.walking .wm-lock .wm-lock-cta:hover,
+      html.walking .wm-lock .wm-lock-cta:active {
+        color: var(--pause-on-strong);
+        background: var(--pause-strong);
+        border-color: var(--pause-strong);
+        opacity: 0.88;
+        transform: none;
+      }
+      html.walking .wm-lock .walk-pause-actions { gap: 10px; margin-top: 0; }
+      html.walking .wm-lock .walk-pause-actions .walk-private svg { width: 18px; height: 18px; }
+      html.walking .wm-lock .walk-pause-actions .walk-private[aria-pressed="true"] {
+        color: #bfe9ff;
+        border-color: rgba(92, 200, 255, 0.7);
+      }
+      html.walking[data-walk-theme="light"] .wm-lock .walk-pause-actions .walk-private[aria-pressed="true"] {
+        color: #0b6a99;
+        border-color: rgba(11, 106, 153, 0.6);
+      }
+      /* Light / Dark / Device: one pill split into three equal parts. */
+      html.walking .wm-lock .walk-pause-actions .walk-theme {
+        box-sizing: border-box;
+        width: var(--pause-w);
+        height: var(--pause-h);
+        margin-top: 6px;
+        padding: 4px;
+        gap: 4px;
+        border-radius: 999px;
+        background: var(--pause-fill);
+        border: 1px solid var(--pause-line);
+        -webkit-backdrop-filter: blur(10px);
+        backdrop-filter: blur(10px);
+      }
+      html.walking .wm-lock .walk-pause-actions .walk-theme button {
+        flex: 1;
+        height: 100%;
+        padding: 0;
+        border: 0;
+        border-radius: 999px;
+        font: 600 13px/1 "Urbanist", ui-sans-serif, system-ui, sans-serif;
+        color: var(--pause-fg);
+        background: transparent;
+        opacity: 0.7;
+        -webkit-backdrop-filter: none;
+        backdrop-filter: none;
+        cursor: pointer;
+      }
+      html.walking .wm-lock .walk-pause-actions .walk-theme button:hover { opacity: 1; }
+      html.walking .wm-lock .walk-pause-actions .walk-theme button[aria-pressed="true"] {
+        opacity: 1;
+        color: var(--pause-on-strong);
+        background: var(--pause-strong);
+      }
+      /* Character colours: an even row the same width as everything else. */
+      html.walking .wm-lock .walk-pause-actions .walk-colors {
+        box-sizing: border-box;
+        width: var(--pause-w);
+        height: var(--pause-h);
+        padding: 0 14px;
+        justify-content: space-between;
+        align-items: center;
+        border-radius: 999px;
+        background: var(--pause-fill);
+        border-color: var(--pause-line);
+      }
+      html.walking .wm-lock .walk-pause-actions .walk-colors button {
+        width: 24px;
+        height: 24px;
+        border: 2px solid transparent;
+        box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+        transition: transform .12s ease;
+      }
+      html.walking .wm-lock .walk-pause-actions .walk-colors button:hover { transform: scale(1.1); }
+      /* The chosen colour: a ring with a small gap, so it shows round white too. */
+      html.walking .wm-lock .walk-pause-actions .walk-colors button[aria-pressed="true"] {
+        border-color: transparent;
+        box-shadow: 0 0 0 2px var(--pause-gap), 0 0 0 4px var(--pause-strong);
       }
       .walk-confirm {
         position: fixed;
