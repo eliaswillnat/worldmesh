@@ -87,5 +87,16 @@
     "portfolio": "https://x.com/alex_vainshtein",
     "addedAt": "2026-10-05T20:00:00Z",
     "categories": ["games"]
+  },
+  {
+    "id": "hollowmere-r2c7mj",
+    "name": "Hollowmere",
+    "url": "https://claude.ai/code/artifact/75122f3c-395e-4f80-89e1-68fc7d7960a0#no_universal_links",
+    "description": "Explore detailed natural landscapes and architecture.",
+    "cover": "/covers/hollowmere.webp",
+    "creator": "Leon Lin",
+    "portfolio": "https://x.com/lexnlin",
+    "addedAt": "2026-10-05T22:00:00Z",
+    "categories": ["explore"]
   }
 ]
