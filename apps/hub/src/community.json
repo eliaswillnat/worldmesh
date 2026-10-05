@@ -65,5 +65,16 @@
     "portfolio": "https://x.com/mizugame_22",
     "addedAt": "2026-10-05T12:00:00Z",
     "categories": ["explore"]
+  },
+  {
+    "id": "island-three-w5h2kp",
+    "name": "Island Three",
+    "url": "https://island-three.gruberbuilds.workers.dev/",
+    "description": "Physically accurate O'Neill cylinder you can walk around in your browser, with towns full of residents talking about life inside.",
+    "cover": "/covers/island-three.webp",
+    "creator": "Brian Gruber",
+    "portfolio": "https://x.com/gruberbuilds",
+    "addedAt": "2026-10-05T18:00:00Z",
+    "categories": ["space"]
   }
 ]
