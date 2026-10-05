@@ -588,6 +588,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   let pendingAlias = alias;
   let ghost: Ghost | null = null;
   let privateTimer = 0;
+  // Body colour picked in settings; presence sends it so everyone else sees it too.
+  let color: string | null = null;
   const presence = options.presenceEndpoint
     ? new Presence({
         url: `${options.presenceEndpoint.replace(/\/$/, '')}/room/lobby`,
@@ -595,6 +597,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         onCount: (count) => options.onPresenceCount?.(count),
         getName: () => (alias ? null : options.playerName?.() ?? null),
         getAlias: () => alias,
+        // Private mode keeps the default colour, so nothing ties the alias back to this visitor.
+        getColor: () => (alias ? null : color),
         // Someone else entering lights the same beam for everyone watching.
         // Visitors coming back out of a world appear at a door, not here.
         // Each new figure is handed over just before its arrival is reported.
@@ -1354,8 +1358,9 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     world.refreshColliders();
   }
 
-  function setColor(color: string): void {
-    setAvatarColor(world.avatar, color);
+  function setColor(next: string): void {
+    color = next;
+    setAvatarColor(world.avatar, next);
   }
 
   if (options.color) setColor(options.color);

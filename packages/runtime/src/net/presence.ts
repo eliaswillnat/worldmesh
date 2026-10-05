@@ -1,5 +1,5 @@
 import { CanvasTexture, Group, Mesh, MeshBasicMaterial, Sprite, SpriteMaterial, Vector3, type Object3D, type Scene } from 'three';
-import { animateDefaultAvatar, createDefaultAvatar, setAvatarExpression } from '../player/avatar.js';
+import { animateDefaultAvatar, createDefaultAvatar, setAvatarColor, setAvatarExpression } from '../player/avatar.js';
 import { setFigureStroke } from '../player/stroke.js';
 import type { NetworkAdapter, PeerBody, PlayerState, WorldMeshHandle } from '../types.js';
 
@@ -15,6 +15,8 @@ export interface PresenceOptions {
   getName?: () => string | null;
   /** Made-up name shown instead of the username in private mode. */
   getAlias?: () => string | null;
+  /** Body colour ('#rrggbb') everyone else draws this visitor in, or null for the default. */
+  getColor?: () => string | null;
   /**
    * Someone new just started walking here, first seen at (x, z). Not called
    * for the people already in the room when this visitor joins.
@@ -39,6 +41,8 @@ interface Remote {
   speed: number;
   /** Standing on something (floor, platform, step) rather than in the air. */
   grounded: boolean;
+  /** Body colour currently applied, '' for the default. */
+  color: string;
   /** Text currently drawn on the tag. */
   label: string;
   tag: Sprite;
@@ -70,6 +74,8 @@ interface PeerState {
   n?: string;
   a?: string;
   g?: number;
+  /** Body colour, '#rrggbb'; '' or absent for the default. */
+  k?: string;
 }
 
 type ServerMessage =
@@ -99,6 +105,7 @@ export class Presence implements NetworkAdapter {
   private onCount: (count: number | null) => void;
   private getName: () => string | null;
   private getAlias: () => string | null;
+  private getColor: () => string | null;
   private onArrive: (x: number, z: number) => void;
   private onFigure: (root: Object3D) => void;
 
@@ -107,6 +114,7 @@ export class Presence implements NetworkAdapter {
     this.onCount = options.onCount ?? (() => {});
     this.getName = options.getName ?? (() => null);
     this.getAlias = options.getAlias ?? (() => null);
+    this.getColor = options.getColor ?? (() => null);
     this.onArrive = options.onArrive ?? (() => {});
     this.onFigure = options.onFigure ?? (() => {});
     this.group.name = 'worldmesh:remote-players';
@@ -131,7 +139,7 @@ export class Presence implements NetworkAdapter {
     if (now - this.lastSent < 1000 / SEND_RATE) return;
 
     const [x, y, z] = state.position;
-    const payload = JSON.stringify({ t: 's', p: [round(x), round(y), round(z)], r: round(state.facing), e: state.expression, n: this.getName() ?? '', a: this.getAlias() ?? '', g: state.onGround || state.flying ? 1 : 0 });
+    const payload = JSON.stringify({ t: 's', p: [round(x), round(y), round(z)], r: round(state.facing), e: state.expression, n: this.getName() ?? '', a: this.getAlias() ?? '', k: this.getColor() ?? '', g: state.onGround || state.flying ? 1 : 0 });
     if (payload === this.lastPayload && now - this.lastSent < HEARTBEAT_MS) return;
 
     socket.send(payload);
@@ -301,7 +309,7 @@ export class Presence implements NetworkAdapter {
       setFigureStroke(root, true);
       this.onFigure(root);
       this.group.add(root);
-      remote = { root, target: new Vector3(p[0], p[1], p[2]), targetYaw: yaw, yaw, speed: 0, grounded: true, label: GUEST, tag, appear: 0, bubble: null, bubbleLeft: 0 };
+      remote = { root, target: new Vector3(p[0], p[1], p[2]), targetYaw: yaw, yaw, speed: 0, grounded: true, color: '', label: GUEST, tag, appear: 0, bubble: null, bubbleLeft: 0 };
       this.remotes.set(id, remote);
       setFigureOpacity(root, 0);
       if (!snap) this.onArrive(p[0], p[2]);
@@ -314,6 +322,11 @@ export class Presence implements NetworkAdapter {
     remote.target.set(p[0], p[1], p[2]);
     remote.targetYaw = yaw;
     if (typeof expression === 'string') setAvatarExpression(remote.root, expression);
+    const color = typeof state.k === 'string' && COLOR.test(state.k) ? state.k.toLowerCase() : '';
+    if (color !== remote.color) {
+      remote.color = color;
+      setAvatarColor(remote.root, color || DEFAULT_COLOR);
+    }
     if (label !== remote.label) {
       remote.label = label;
       disposeObject(remote.tag);
@@ -361,6 +374,11 @@ function round(value: number): number {
 const APPEAR_FADE = 0.55;
 
 const GUEST = 'Guest';
+
+/** What a body colour must look like on the wire. */
+const COLOR = /^#[0-9a-f]{6}$/i;
+/** The default avatar's own colour, for a peer that goes back to it. */
+const DEFAULT_COLOR = '#ffffff';
 
 /** Ease every mesh on an avatar toward a shared opacity. */
 function setFigureOpacity(root: Object3D, amount: number): void {
