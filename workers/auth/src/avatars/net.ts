@@ -78,6 +78,26 @@ export function jsonObject(result: FetchResult): Record<string, unknown> | null 
   }
 }
 
+/** A stored avatar's metadata_json, or an empty object. */
+export function parseMetadata(json: string | null): Record<string, unknown> {
+  try {
+    const value = (json ? JSON.parse(json) : {}) as unknown;
+    return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Walks into nested JSON objects, or returns undefined. */
+export function dig(value: unknown, ...path: string[]): unknown {
+  let current = value;
+  for (const key of path) {
+    if (!current || typeof current !== 'object') return undefined;
+    current = (current as Record<string, unknown>)[key];
+  }
+  return current;
+}
+
 async function readCapped(response: Response, maxBytes: number): Promise<Uint8Array> {
   if (Number(response.headers.get('Content-Length') ?? '0') > maxBytes) {
     await response.body?.cancel();

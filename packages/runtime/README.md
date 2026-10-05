@@ -52,8 +52,8 @@ started with.
 createWorldMesh({ scene, camera, renderer, avatar: { source: 'worldmesh' } });
 ```
 
-Visitors who picked a character in their WorldMesh Avatar Wallet (VRoid Hub,
-at3d) arrive with a short-lived ticket in the URL fragment. The runtime removes
+Visitors who picked a character in their WorldMesh Avatar Wallet (Sketchfab,
+VRoid Hub, at3d) arrive with a short-lived ticket in the URL fragment. The runtime removes
 it from the address bar, asks the hub for a descriptor, and loads the VRM or
 glTF straight from the platform that hosts it. Portals carry the ticket on.
 Without a ticket, or if anything fails, the player keeps the default body.

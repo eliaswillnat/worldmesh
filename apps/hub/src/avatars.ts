@@ -1,7 +1,7 @@
 /**
  * Avatar Wallet: "Choose your character" inside the account dialog.
  *
- * The visitor connects avatar platforms (VRoid Hub, at3d), picks one avatar,
+ * The visitor connects avatar platforms (Sketchfab, VRoid Hub, at3d), picks one avatar,
  * or continues without a character. WorldMesh stores only which avatar was
  * picked; the model stays on the platform. Talks to workers/auth under
  * /api/account/avatar over same-origin fetch.
@@ -38,6 +38,11 @@ const HINT_KEY = 'worldmesh.avatar';
 /** Same key as AVATAR_TICKET_STORAGE_KEY in @worldmesh/runtime, so walk-mode portals carry it too. */
 const TICKET_KEY = 'worldmesh.avatarTicket';
 const TICKET_PARAM = 'wm-avatar';
+const EMPTY_LISTING: Record<string, string> = {
+  vroid: 'No models on your VRoid Hub account yet.',
+  atproto: 'No at3d avatars on this account yet.',
+  sketchfab: 'No models on your Sketchfab account yet. Upload a rigged GLB, for example one made with Meshy or Tripo.',
+};
 
 let wallet: Wallet | null = null;
 let loadingWallet = false;
@@ -194,7 +199,7 @@ function providerSection(provider: { id: string; label: string }, connection: Wa
   } else if ('error' in listing) {
     section.append(note(listing.error));
   } else if (!listing.length) {
-    section.append(note(provider.id === 'vroid' ? 'No models on your VRoid Hub account yet.' : 'No at3d avatars on this account yet.'));
+    section.append(note(EMPTY_LISTING[provider.id] ?? 'No avatars on this account yet.'));
   } else {
     const grid = document.createElement('div');
     grid.className = 'wallet-grid';

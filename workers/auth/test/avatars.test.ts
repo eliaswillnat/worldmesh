@@ -14,6 +14,11 @@ const SESSION_COOKIE = '__Secure-worldmesh.session_token';
 const FLOW_COOKIE = '__Secure-worldmesh.avatar_flow';
 const VROID = 'https://hub.vroid.com';
 const S3_URL = 'https://vroid-hub.s3.ap-northeast-1.amazonaws.com/model.vrm?X-Amz-Signature=abc';
+const SKETCHFAB = 'https://sketchfab.com';
+const SKETCHFAB_API = 'https://api.sketchfab.com';
+const SKETCHFAB_GLB = 'https://sketchfab-prod-media.s3.amazonaws.com/archives/model.glb?X-Amz-Signature=def';
+const SKETCHFAB_USER = '2e56234e58bb433b86def3a6274166e9';
+const SKETCHFAB_MODEL = '1cb3298227d5469284fe122dbd8baf5f';
 
 const DID = 'did:plc:abcdefghijklmnopqrstuvwx';
 const HANDLE = 'alice.pds-fixture.net';
@@ -28,7 +33,7 @@ let env: Env;
 type Handler = (request: Request) => Response | Promise<Response>;
 const routes = new Map<string, Handler>();
 const calls: Request[] = [];
-const STUBBED = new Set(['hub.vroid.com', 'plc.directory', 'cloudflare-dns.com', 'pds.pds-fixture.net', 'auth.pds-fixture.net', 'alice.pds-fixture.net', '10.0.0.1']);
+const STUBBED = new Set(['hub.vroid.com', 'sketchfab.com', 'api.sketchfab.com', 'plc.directory', 'cloudflare-dns.com', 'pds.pds-fixture.net', 'auth.pds-fixture.net', 'alice.pds-fixture.net', '10.0.0.1']);
 const realFetch = globalThis.fetch;
 
 function route(method: string, url: string, handler: Handler) {
@@ -46,6 +51,8 @@ beforeAll(async () => {
     AVATAR_SECRET,
     VROID_CLIENT_ID: 'vroid-client',
     VROID_CLIENT_SECRET: 'vroid-client-secret',
+    SKETCHFAB_CLIENT_ID: 'sketchfab-client',
+    SKETCHFAB_CLIENT_SECRET: 'sketchfab-client-secret',
   };
   vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
@@ -193,6 +200,7 @@ describe('avatar wallet', () => {
     expect(await res.json()).toEqual({
       enabled: true,
       providers: [
+        { id: 'sketchfab', label: 'Sketchfab' },
         { id: 'vroid', label: 'VRoid Hub' },
         { id: 'atproto', label: 'at3d' },
       ],
@@ -674,5 +682,219 @@ describe('at3d / AT Protocol', () => {
         sourceUrl: null,
       },
     });
+  });
+});
+
+// ── Sketchfab ────────────────────────────────────────────────────────────────
+
+function sketchfabModel(uid: string, ownerUid: string, name: string, extra: Record<string, unknown> = {}) {
+  return {
+    uid,
+    name,
+    viewerUrl: `${SKETCHFAB}/3d-models/${name.toLowerCase()}-${uid}`,
+    animationCount: 2,
+    isPrivate: false,
+    user: { uid: ownerUid, username: 'mesh-maker' },
+    thumbnails: {
+      images: [
+        { url: `https://media.sketchfab.com/models/${uid}/thumbnails/big.jpeg`, width: 1920 },
+        { url: `https://media.sketchfab.com/models/${uid}/thumbnails/small.jpeg`, width: 200 },
+        { url: `https://media.sketchfab.com/models/${uid}/thumbnails/medium.jpeg`, width: 720 },
+      ],
+    },
+    archives: { glb: { size: 4_000_000 }, gltf: { size: 3_000_000 } },
+    ...extra,
+  };
+}
+
+async function connectSketchfab(cookie: string) {
+  const start = await post('/api/account/avatar/connect/sketchfab', cookie, {});
+  expect(start.status).toBe(200);
+  const authorize = new URL(((await start.json()) as { url: string }).url);
+  const flow = cookieValue(start, FLOW_COOKIE);
+
+  let verifier = '';
+  route('POST', `${SKETCHFAB}/oauth2/token/`, async (request) => {
+    const form = new URLSearchParams(await request.text());
+    expect(form.get('grant_type')).toBe('authorization_code');
+    expect(form.get('code')).toBe('sf-code');
+    expect(form.get('client_id')).toBe('sketchfab-client');
+    expect(form.get('client_secret')).toBe('sketchfab-client-secret');
+    expect(form.get('redirect_uri')).toBe(`${ORIGIN}/api/account/avatar/callback/sketchfab`);
+    verifier = form.get('code_verifier') ?? '';
+    return reply({ access_token: 'sf-access-1', refresh_token: 'sf-refresh-1', token_type: 'Bearer', expires_in: 2592000 });
+  });
+  route('GET', `${SKETCHFAB_API}/v3/me`, (request) => {
+    expect(request.headers.get('Authorization')).toBe('Bearer sf-access-1');
+    return reply({ uid: SKETCHFAB_USER, username: 'mesh-maker', displayName: 'Mesh Maker' });
+  });
+  const callback = await call(
+    `/api/account/avatar/callback/sketchfab?code=sf-code&state=${authorize.searchParams.get('state')}`,
+    { headers: { Cookie: `${cookie}; ${FLOW_COOKIE}=${flow}` } },
+  );
+  expect(callback.headers.get('Location')).toBe(`${ORIGIN}/?avatar=connected`);
+  expect(await pkceChallenge(verifier)).toBe(authorize.searchParams.get('code_challenge'));
+  const wallet = (await (await call('/api/account/avatar/wallet', { headers: { Cookie: cookie } })).json()) as {
+    connections: { id: string; provider: string; displayName: string }[];
+  };
+  const connection = wallet.connections.find((c) => c.provider === 'sketchfab')!;
+  expect(connection.displayName).toBe('Mesh Maker');
+  return connection.id;
+}
+
+async function selectSketchfabModel(cookie: string, connectionId: string) {
+  route('GET', `${SKETCHFAB_API}/v3/models/${SKETCHFAB_MODEL}`, () => reply(sketchfabModel(SKETCHFAB_MODEL, SKETCHFAB_USER, 'Robo')));
+  const res = await post('/api/account/avatar/select', cookie, { connectionId, avatarId: SKETCHFAB_MODEL });
+  expect(res.status).toBe(200);
+}
+
+describe('Sketchfab', () => {
+  it('starts the authorization code flow with PKCE', async () => {
+    const { cookie } = await signedInUser('sf-start@example.com');
+    const res = await post('/api/account/avatar/connect/sketchfab', cookie, {});
+    const url = new URL(((await res.json()) as { url: string }).url);
+    expect(url.origin + url.pathname).toBe(`${SKETCHFAB}/oauth2/authorize/`);
+    expect(Object.fromEntries(url.searchParams)).toMatchObject({
+      response_type: 'code',
+      client_id: 'sketchfab-client',
+      redirect_uri: `${ORIGIN}/api/account/avatar/callback/sketchfab`,
+      code_challenge_method: 'S256',
+    });
+    expect(url.searchParams.get('state')).toBeTruthy();
+  });
+
+  it('connects, keeping tokens only in encrypted form', async () => {
+    const { user, cookie } = await signedInUser('sf-connect@example.com');
+    await connectSketchfab(cookie);
+    const row = await env.DB.prepare('select * from avatar_connection where user_id = ?').bind(user.id).first<Record<string, string>>();
+    expect(row).toMatchObject({ provider: 'sketchfab', provider_account_id: SKETCHFAB_USER, status: 'active' });
+    expect(row!.token_enc).toBeTruthy();
+    expect(JSON.stringify(row)).not.toContain('sf-access-1');
+    expect(JSON.stringify(row)).not.toContain('sf-refresh-1');
+  });
+
+  it("lists the user's own GLB models across pages, skipping ones worlds cannot load", async () => {
+    const { cookie } = await signedInUser('sf-list@example.com');
+    const connectionId = await connectSketchfab(cookie);
+    const second = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    route('GET', `${SKETCHFAB_API}/v3/me/models`, (request) => {
+      const url = new URL(request.url);
+      if (url.searchParams.get('cursor') === 'p2') {
+        return reply({ results: [sketchfabModel(second, SKETCHFAB_USER, 'Second')], next: 'https://evil.example.org/v3/me/models?cursor=p3' });
+      }
+      return reply({
+        results: [
+          sketchfabModel(SKETCHFAB_MODEL, SKETCHFAB_USER, 'Robo'),
+          sketchfabModel('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', SKETCHFAB_USER, 'NoGlb', { archives: { gltf: { size: 1 } } }),
+          sketchfabModel('cccccccccccccccccccccccccccccccc', SKETCHFAB_USER, 'Busy', { status: { processing: 'PROCESSING' } }),
+          sketchfabModel('not-a-uid', SKETCHFAB_USER, 'Bad'),
+        ],
+        next: `${SKETCHFAB_API}/v3/me/models?count=24&cursor=p2`,
+      });
+    });
+    const list = await call(`/api/account/avatar/connections/${connectionId}/avatars`, { headers: { Cookie: cookie } });
+    const { avatars } = (await list.json()) as { avatars: { id: string }[] };
+    expect(avatars).toEqual([
+      {
+        id: SKETCHFAB_MODEL,
+        name: 'Robo',
+        thumbnail: `https://media.sketchfab.com/models/${SKETCHFAB_MODEL}/thumbnails/medium.jpeg`,
+        format: 'glb',
+        metadata: { viewerUrl: `${SKETCHFAB}/3d-models/robo-${SKETCHFAB_MODEL}`, animationCount: 2, glbBytes: 4_000_000, private: false },
+      },
+      expect.objectContaining({ id: second, name: 'Second' }),
+    ]);
+    // The foreign `next` link on page two was not followed.
+    expect(calls.map((c) => new URL(c.url).hostname)).not.toContain('evil.example.org');
+  });
+
+  it("selects only the user's own models", async () => {
+    const { cookie } = await signedInUser('sf-select@example.com');
+    const connectionId = await connectSketchfab(cookie);
+    await selectSketchfabModel(cookie, connectionId);
+    const other = 'dddddddddddddddddddddddddddddddd';
+    route('GET', `${SKETCHFAB_API}/v3/models/${other}`, () => reply(sketchfabModel(other, 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', 'Theirs')));
+    expect((await post('/api/account/avatar/select', cookie, { connectionId, avatarId: other })).status).toBe(404);
+    expect((await post('/api/account/avatar/select', cookie, { connectionId, avatarId: '../v3/me' })).status).toBe(404);
+  });
+
+  it('resolves to the presigned GLB URL without exposing credentials', async () => {
+    const { cookie } = await signedInUser('sf-resolve@example.com');
+    const connectionId = await connectSketchfab(cookie);
+    await selectSketchfabModel(cookie, connectionId);
+    route('GET', `${SKETCHFAB_API}/v3/models/${SKETCHFAB_MODEL}/download`, (request) => {
+      expect(request.headers.get('Authorization')).toBe('Bearer sf-access-1');
+      return reply({
+        gltf: { url: 'https://sketchfab-prod-media.s3.amazonaws.com/archives/model.zip', size: 3_000_000, expires: 300 },
+        glb: { url: SKETCHFAB_GLB, size: 4_000_000, expires: 300 },
+      });
+    });
+    const before = Date.now();
+    const res = await resolveFromWorld(await ticketFor(cookie));
+    const text = await res.text();
+    const { avatar } = JSON.parse(text) as { avatar: Record<string, string> };
+    expect(avatar).toMatchObject({
+      provider: 'sketchfab',
+      avatarId: SKETCHFAB_MODEL,
+      name: 'Robo',
+      format: 'glb',
+      modelUrl: SKETCHFAB_GLB,
+      sourceUrl: `${SKETCHFAB}/3d-models/robo-${SKETCHFAB_MODEL}`,
+    });
+    const expires = Date.parse(avatar.expiresAt);
+    expect(expires).toBeGreaterThanOrEqual(before + 299_000);
+    expect(expires).toBeLessThanOrEqual(Date.now() + 300_000);
+    for (const secret of ['sf-access', 'sf-refresh', 'sketchfab-client-secret', SKETCHFAB_USER, 'sf-resolve@example.com']) {
+      expect(text).not.toContain(secret);
+    }
+    expect(calls.map((c) => new URL(c.url).hostname)).not.toContain('sketchfab-prod-media.s3.amazonaws.com');
+  });
+
+  it('falls back to no avatar when there is no GLB, and asks to reconnect on a refused token', async () => {
+    const { cookie } = await signedInUser('sf-fallback@example.com');
+    const connectionId = await connectSketchfab(cookie);
+    await selectSketchfabModel(cookie, connectionId);
+    const ticket = await ticketFor(cookie);
+
+    route('GET', `${SKETCHFAB_API}/v3/models/${SKETCHFAB_MODEL}/download`, () => reply({ gltf: { url: 'https://x.example.org/a.zip', expires: 300 } }));
+    expect(await (await resolveFromWorld(ticket)).json()).toEqual({ avatar: null });
+
+    route('GET', `${SKETCHFAB_API}/v3/models/${SKETCHFAB_MODEL}/download`, () => reply({ detail: 'Invalid token' }, 401));
+    expect(await (await resolveFromWorld(ticket)).json()).toEqual({ avatar: null });
+    const wallet = (await (await call('/api/account/avatar/wallet', { headers: { Cookie: cookie } })).json()) as {
+      connections: { status: string }[];
+    };
+    expect(wallet.connections[0].status).toBe('reconnect');
+  });
+
+  it('refreshes an expiring token, and revokes it on disconnect', async () => {
+    const { cookie } = await signedInUser('sf-refresh@example.com');
+    const connectionId = await connectSketchfab(cookie);
+    const expiring = await seal(AVATAR_SECRET, 'provider-token-v1', connectionId, {
+      access: 'sf-access-old',
+      refresh: 'sf-refresh-1',
+      expiresAt: Date.now() + 1000,
+    });
+    await env.DB.prepare('update avatar_connection set token_enc = ? where id = ?').bind(expiring, connectionId).run();
+    route('POST', `${SKETCHFAB}/oauth2/token/`, async (request) => {
+      const form = new URLSearchParams(await request.text());
+      expect(form.get('grant_type')).toBe('refresh_token');
+      expect(form.get('refresh_token')).toBe('sf-refresh-1');
+      return reply({ access_token: 'sf-access-2', expires_in: 2592000 });
+    });
+    route('GET', `${SKETCHFAB_API}/v3/me/models`, (request) => {
+      expect(request.headers.get('Authorization')).toBe('Bearer sf-access-2');
+      return reply({ results: [], next: null });
+    });
+    const list = await call(`/api/account/avatar/connections/${connectionId}/avatars`, { headers: { Cookie: cookie } });
+    expect(await list.json()).toEqual({ avatars: [] });
+
+    route('POST', `${SKETCHFAB}/oauth2/revoke_token/`, async (request) => {
+      expect(new URLSearchParams(await request.text()).get('token')).toBe('sf-access-2');
+      return reply({});
+    });
+    const res = await post('/api/account/avatar/disconnect', cookie, { connectionId });
+    expect(((await res.json()) as { connections: unknown[] }).connections).toEqual([]);
+    expect(calls.some((c) => c.url === `${SKETCHFAB}/oauth2/revoke_token/`)).toBe(true);
   });
 });
