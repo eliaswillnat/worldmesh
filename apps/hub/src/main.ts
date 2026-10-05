@@ -451,7 +451,6 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
           name: world.name,
           url: world.url,
           email: world.email,
-          cover: world.cover,
           submittedAt: new Date().toISOString(),
         };
         saveSubmissionRecord(entry);

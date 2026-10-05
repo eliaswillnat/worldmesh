@@ -263,6 +263,49 @@ describe('what an admin sees', () => {
     expect(await page('/users?q=%25', cookie)).toContain('No account matches.');
   });
 
+  it('edits a waiting world, approves it through the hub, and rejects another', async () => {
+    const cookie = await signIn('admintoken0000000000');
+    const pending = { id: 'w1', name: 'w1.example', url: 'https://w1.example/', email: 'maker@example.com', approveToken: 'tok1', submittedAt: '2026-10-01T11:00:00Z' };
+    await env.WORLDS!.put('pending:w1', JSON.stringify(pending));
+    await env.WORLDS!.put('pending:w2', JSON.stringify({ ...pending, id: 'w2', approveToken: 'tok2' }));
+
+    expect(await page('/worlds', cookie)).toContain('/worlds/edit?id=w1');
+    const form = await page('/worlds/edit?id=w1', cookie);
+    expect(form).toContain('Save and approve');
+    expect(form).toContain('value="games"');
+
+    const post = (body: FormData, origin = ADMIN) =>
+      call(`${ADMIN}/worlds/edit`, { method: 'POST', body, headers: { Cookie: cookie, Origin: origin, 'Sec-Fetch-Site': origin === ADMIN ? 'same-origin' : 'cross-site' } });
+    const fields = (action: string, id = 'w1') => {
+      const body = new FormData();
+      body.set('id', id);
+      body.set('action', action);
+      body.set('name', 'Wave Runner');
+      body.set('description', 'Surf the waves');
+      body.set('cover', 'https://covers.example/w1.webp');
+      body.append('categories', 'games');
+      body.append('categories', 'not-a-tower');
+      body.set('tags', 'racing, multiplayer ,');
+      body.set('featured', '1');
+      return body;
+    };
+
+    expect((await post(fields('save'), 'https://evil.example')).status).toBe(403);
+
+    const saved = await post(fields('save'));
+    expect(saved.status).toBe(303);
+    const stored = JSON.parse((await env.WORLDS!.get('pending:w1'))!);
+    expect(stored).toMatchObject({ name: 'Wave Runner', description: 'Surf the waves', cover: 'https://covers.example/w1.webp', categories: ['games'], tags: ['racing', 'multiplayer'], featured: true, approveToken: 'tok1' });
+
+    const approved = await post(fields('approve'));
+    expect(approved.headers.get('Location')).toBe('/worlds');
+    expect(fetched).toContain(`${HUB}/api/approve?id=w1&token=tok1`);
+
+    const rejected = await post(fields('reject', 'w2'));
+    expect(rejected.headers.get('Location')).toBe('/worlds');
+    expect(await env.WORLDS!.get('pending:w2')).toBeNull();
+  });
+
   it('shows the directory, waiting submissions with their approve link, views and who is online', async () => {
     await env.WORLDS!.put('approved:forest', JSON.stringify({ id: 'forest', name: 'Forest', url: 'https://forest.worldmesh.net/', creator: 'Elias', approvedAt: '2026-09-30T10:00:00Z' }));
     await env.WORLDS!.put(

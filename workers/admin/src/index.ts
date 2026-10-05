@@ -8,6 +8,8 @@
  *   GET  /                      overview: users, live, worlds, ads, health, what needs you
  *   GET  /users?q=              accounts, search
  *   GET  /worlds                directory (approved + waiting), views, who is in each
+ *   GET  /worlds/edit?id=       edit a world's cover, description and labels
+ *   POST /worlds/edit           save, approve or reject it
  *   GET  /live                  presence rooms, auto-refreshing
  *   GET  /ads                   billboard ads and revenue (actions stay in workers/ads)
  *   GET  /federation            followers, deliveries, Avatar Wallet
@@ -16,11 +18,12 @@
  *   GET  /auth/callback         hand-off landing
  *   POST /auth/logout
  *
- * Read-only by design: approving worlds and reviewing ads keep using their
- * existing, already-guarded flows, which the dashboard links to.
+ * Read-only by design, except /worlds/edit (the WORLDS directory only).
+ * Approving still goes through the hub's own approve link; ads review stays in workers/ads.
  */
 import { assertConfigured, type Env } from './env';
 import { adsPage, federationPage, livePage, overview, systemPage, trafficPage, usersPage, worldsPage } from './pages';
+import { editPage, saveEdit } from './edit';
 import { esc, htmlResponse, messagePage } from './render';
 import { callback, currentAdmin, HANDOFF_PATH, handoff, isSameOrigin, logout, startLogin } from './session';
 
@@ -72,6 +75,14 @@ async function route(request: Request, env: Env): Promise<Response> {
     return logout(env);
   }
   if (pathname === '/robots.txt') return new Response('User-agent: *\nDisallow: /\n', { headers: { 'Content-Type': 'text/plain' } });
+
+  if (pathname === '/worlds/edit') {
+    if (method === 'POST' && !isSameOrigin(request, env)) return new Response('Forbidden', { status: 403 });
+    const admin = await currentAdmin(request, env);
+    if (!admin) return startLogin(env);
+    if (method === 'POST') return saveEdit(request, env, admin);
+    if (method === 'GET' || method === 'HEAD') return editPage(request, env, admin);
+  }
 
   const page = PAGES[pathname as keyof typeof PAGES];
   if (!page || (method !== 'GET' && method !== 'HEAD')) {
