@@ -29,14 +29,13 @@ interface WorldEntry {
 import communityWorldsStatic from './community.json';
 import { AD_CONFIG } from './ads/config';
 import { entryIconSvg, formatEntries, hasEntries } from './entries';
+import { HUB_VISIT_KEY, shouldCountHubVisit } from './hubVisit';
 
 const VIEWS_ENDPOINT = (import.meta.env.VITE_VIEWS_ENDPOINT as string | undefined)
   || (import.meta.env.DEV ? 'https://worldmesh-views.elias-willnat.workers.dev' : '/api/views');
 const viewCounts: Record<string, number> = {};
 const sessionViewed = new Map<string, number>();
 const COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes
-/** Views-worker key for visits to the hub itself; not a URL, so it never matches a world. */
-const HUB_VISIT_KEY = 'worldmesh:hub';
 const DEMO_ADDED_AT = '2026-09-27T21:03:21Z';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const NEW_BADGE_DAYS = 7;
@@ -429,8 +428,8 @@ if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
 render();
 
 fetchCommunityWorlds();
-// Count this visit to the hub; the reply carries the all-time total for walk mode.
-trackClick(HUB_VISIT_KEY);
+// Count this visit to the hub (production only; QA can opt out). Display still loads the public total.
+recordHubVisit();
 
 // ── Walk mode ────────────────────────────────────────────────────────────────
 // The same directory as a place: every world is a door on a grid. Three.js
@@ -1189,6 +1188,19 @@ function setStatus(message: string, isError = false): void {
   statusEl.dataset.error = String(isError);
 }
 
+/**
+ * Only the public production hub should bump the visit counter. Localhost,
+ * Vite, Pages previews, and other hosts still load the total for display.
+ * World click ranking via trackClick(world.url) is unchanged.
+ */
+function recordHubVisit(): void {
+  if (shouldCountHubVisit(window.location.hostname, window.location.search, localStorage)) {
+    trackClick(HUB_VISIT_KEY);
+    return;
+  }
+  void fetchViewCounts([HUB_VISIT_KEY]);
+}
+
 function trackClick(url: string): void {
   // Client-side debounce (30-minute session cooldown)
   const last = sessionViewed.get(url);
@@ -1225,6 +1237,7 @@ async function fetchViewCounts(urls: string[]): Promise<void> {
     }
     render();
     lobby?.refreshEntries();
+    if (HUB_VISIT_KEY in counts) showWalkOnline();
   } catch {
     // Network or server error — keep existing counts.
   }
