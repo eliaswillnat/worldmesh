@@ -1249,6 +1249,11 @@
       html.walking[data-walk-theme="light"] .walk-chat-btn:active { background: rgba(0, 0, 0, 0.1); }
       /* Same fields as the gallery form, in a window over the lobby. */
       .world-claim {
+        position: fixed;
+        inset: 0;
+        margin: auto;
+        box-sizing: border-box;
+        height: fit-content;
         width: min(560px, calc(100vw - 32px));
         max-height: min(88vh, 760px);
         padding: 28px 24px 22px;
@@ -2053,6 +2058,17 @@
         html, body { scrollbar-width: none; -ms-overflow-style: none; }
         html::-webkit-scrollbar, body::-webkit-scrollbar { display: none; width: 0; height: 0; background: transparent; }
       }
+      /* iOS Safari zooms the page into any focused field under 16px, which pushes
+         the walk HUD off screen. Keep fields at 16px on touch screens. */
+      /* Phones only need the email; name, portfolio and description stay optional on desktop. */
+      @media (pointer: coarse) {
+        #creator-name, #creator-portfolio, #creator-description { display: none !important; }
+      }
+      @media (pointer: coarse) {
+        input:not([type="range"]):not([type="checkbox"]):not([type="radio"]),
+        textarea,
+        select { font-size: 16px !important; }
+      }
     </style>
   </head>
   <body>
@@ -2158,47 +2174,10 @@
         <input id="creator-portfolio" type="text" placeholder="Portfolio link (optional)" autocomplete="off" />
         <input id="creator-description" type="text" placeholder="Short description (optional)" autocomplete="off" />
 
-        <div class="cover-section" id="cover-section">
-          <input type="file" id="cover-file-input" accept="image/*" style="display:none" />
-          
-          <button type="button" class="cover-upload-trigger" id="cover-upload-trigger">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; vertical-align: middle;">
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-              <circle cx="8.5" cy="8.5" r="1.5"/>
-              <polyline points="21 15 16 10 5 21"/>
-            </svg>
-            <span>Add cover image (optional, portrait 3:4)</span>
-          </button>
-
-          <div class="cropper-container" id="cropper-container" style="display:none">
-            <div class="cropper-preview-card">
-              <canvas id="cropper-canvas" width="600" height="800"></canvas>
-              <div class="cropper-overlay-hint">Drag to move · Scroll to zoom</div>
-            </div>
-
-            <div class="cropper-toolbar">
-              <div class="cropper-zoom-group">
-                <button type="button" class="cropper-icon-btn" id="zoom-out-btn" title="Zoom out">−</button>
-                <input type="range" id="zoom-slider" min="1" max="3" step="0.01" value="1" />
-                <button type="button" class="cropper-icon-btn" id="zoom-in-btn" title="Zoom in">+</button>
-              </div>
-              <div class="cropper-actions">
-                <button type="button" class="cropper-text-btn" id="cropper-reset-btn">Reset</button>
-                <button type="button" class="cropper-text-btn" id="cropper-change-btn">Change</button>
-                <button type="button" class="cropper-text-btn danger" id="cropper-remove-btn">Remove</button>
-              </div>
-            </div>
-          </div>
-        </div>
-
         <div class="nav-requirement">
           <p class="nav-requirement-text">
             WorldMesh worlds should use familiar PC game controls for basic navigation — such as WASD or arrow keys for movement, mouse for looking around, Space for jumping, Shift for sprinting, and familiar interaction keys like E. Mobile support is optional but recommended — touch controls for movement and looking around, tap for interaction, and a portrait-friendly layout. Worlds can add additional controls freely.
           </p>
-          <label class="nav-confirm-label">
-            <input type="checkbox" id="nav-confirm" />
-            I confirm that my world uses familiar PC game navigation controls.
-          </label>
         </div>
 
         <div class="submit-row">

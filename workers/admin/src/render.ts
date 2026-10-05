@@ -250,4 +250,14 @@ td:has(> .cover) { width: 88px; }
   .who .muted { display: none; } main { padding: 20px 16px 48px; } h1 { font-size: 28px; }
   .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .stat-value { font-size: 24px; }
 }
+.notice { padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); } .notice.bad { color: var(--red); }
+.edit { display: grid; gap: 14px; max-width: 640px; }
+.edit .field { display: grid; gap: 6px; border: 0; padding: 0; margin: 0; }
+.edit .field > span, .edit legend { font-weight: 600; font-size: 13px; }
+.edit input:not([type=checkbox]):not([type=file]), .edit textarea { font: inherit; font-size: 16px; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 9px 12px; width: 100%; box-sizing: border-box; }
+.edit .check { display: inline-flex; gap: 6px; align-items: center; margin-right: 14px; }
+.cover-row { display: flex; gap: 14px; align-items: flex-start; } .cover-row > div { display: grid; gap: 8px; flex: 1; min-width: 0; }
+.edit-cover { width: 96px; aspect-ratio: 3 / 4; border-radius: 10px; object-fit: cover; background: var(--line); flex: none; }
+.edit-actions { display: flex; gap: 10px; flex-wrap: wrap; } .edit-actions button { padding: 9px 18px; font-size: 14px; }
+.edit-actions .primary { background: var(--fg); color: var(--bg); } .edit-actions .danger { color: var(--red); margin-left: auto; }
 `;

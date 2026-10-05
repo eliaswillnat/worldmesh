@@ -42,7 +42,6 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { CITY_GLOW_WHITE, applyCityTheme, applySkyTheme, createCityMaterials, createSky, createSpawnRay, flipInside, skyHorizon, type BillboardSlot } from './city';
 import { DOOR_HALF_SPAN, DOOR_HEIGHT, DOOR_TOP, DOOR_WIDTH, FRAME, Door, createLabel, worldIsFull, type DoorWorld } from './door';
 import { doorFrameGeometry, frameOuterCorner, roundedOpeningGeometry } from './doorShape';
-import { ImageCropper } from '../cropper';
 import { describeBillboard } from './layout';
 import { Assembly } from './assemble';
 import { FLOOR_NAMES, Lifts, buildShafts, createColliderMaterial, mergeInto, planLifts } from './elevators';
@@ -553,8 +552,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const departures = createDepartureBoard();
   scene.add(departures.group);
   let flights: Flight[] = [];
-  // Door angles round the hall, in gate-number order.
-  let hallAngles: number[] = [];
   const cityMaterials = createCityMaterials(renderer.capabilities.getMaxAnisotropy());
   let disposed = false;
   const mirror = new Reflector(new PlaneGeometry(FLOOR_SIZE, FLOOR_SIZE), {
@@ -664,7 +661,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const addPrompt = document.createElement('button');
   addPrompt.type = 'button';
   addPrompt.className = 'walk-add-prompt';
-  addPrompt.textContent = isTouch ? 'Tap to put your world in this door' : 'Press E or click to put your world in this door';
+  addPrompt.textContent = isTouch ? 'Tap to add your world' : 'Press E or click to add your world';
   addPrompt.addEventListener('click', (event) => {
     event.stopPropagation();
     addWorld();
@@ -1021,7 +1018,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   function addWorld(): void {
     if (warping || claimModal || !nearEmpty) return;
     document.exitPointerLock?.();
-    const door = nearEmpty;
     claimModal = openClaimModal(light, {
       taken: doorTaken,
       onClose: () => {
@@ -1029,48 +1025,9 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       },
       onClaim: (world) => {
         if (doorTaken(world.url)) return;
-        placeClaim(door, world);
         options.onClaimWorld?.(world);
       },
     });
-  }
-
-  /** The first person at this empty door keeps it: their world opens here. */
-  function placeClaim(empty: Door, world: ClaimedWorld): void {
-    const angle = typeof empty.group.userData.angle === 'number' ? empty.group.userData.angle : Math.atan2(empty.group.position.x, empty.group.position.z);
-    const { x, y, z } = empty.group.position;
-    const level = typeof empty.group.userData.level === 'number' ? empty.group.userData.level : 0;
-    const scale = empty.group.scale.x;
-    for (const list of [emptyDoors, galleryDoors]) {
-      const index = list.indexOf(empty);
-      if (index >= 0) list.splice(index, 1);
-    }
-    if (nearEmpty === empty) {
-      nearEmpty = null;
-      addPrompt.classList.remove('visible');
-    }
-    empty.dispose();
-    saveClaim({ angle, level, name: world.name, url: world.url, cover: world.cover });
-    const door = new Door({ name: world.name, url: world.url, cover: world.cover }, light);
-    door.setEntries(options.entries?.(world.url));
-    const origin = worldRoomOrigin(world.url);
-    const info = origin ? occupancyByOrigin.get(origin) : undefined;
-    door.setFull(info ? worldIsFull(info.count, info.cap) : false);
-    scene.add(door.group);
-    door.place(x, z, 0, 0);
-    door.group.position.y = y;
-    door.group.scale.setScalar(scale);
-    door.group.userData.angle = angle;
-    door.group.userData.level = level;
-    known.set(world.url, { name: world.name, url: world.url, cover: world.cover });
-    doors.set(world.url, door);
-    const slot = level ? -1 : hallAngles.findIndex((candidate) => angleDelta(candidate, angle) < 0.08);
-    if (slot >= 0) {
-      door.setGate(slot + 1);
-      flights = [...flights, { name: world.name, gate: slot + 1, cover: world.cover }].sort((a, b) => a.gate - b.gate);
-      departures.setFlights(flights);
-    }
-    void refreshOccupancy();
   }
 
   // Keyboard: E at a tower door, lift or elevator, or next to an empty door.
@@ -1546,7 +1503,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       emptyDoors.push(door);
     }
     // Gates are numbered round the hall from the first door after exit A.
-    hallAngles = angles;
     flights = [];
     urls.forEach((url, i) => flights.push({ ...pick(known.get(url)!), gate: slots[i] + 1 }));
     for (const claim of claims) {
@@ -2022,8 +1978,6 @@ interface ClaimedWorld {
   name: string;
   url: string;
   email: string;
-  /** Picture shown in the doorway. */
-  cover?: string;
 }
 
 interface DoorClaim {
@@ -2046,42 +2000,17 @@ function angleDelta(a: number, b: number): number {
   return Math.min(d, turn - d);
 }
 
+/**
+ * Doors used to open straight away for whoever placed a world, kept only in
+ * their browser. Worlds now wait for review, so clear any left from before.
+ */
 function loadClaims(): DoorClaim[] {
   try {
-    const raw = localStorage.getItem(CLAIMS_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (entry): entry is DoorClaim =>
-        !!entry &&
-        typeof entry === 'object' &&
-        typeof (entry as DoorClaim).angle === 'number' &&
-        typeof (entry as DoorClaim).name === 'string' &&
-        typeof (entry as DoorClaim).url === 'string' &&
-        ((entry as DoorClaim).cover === undefined || typeof (entry as DoorClaim).cover === 'string') &&
-        ((entry as DoorClaim).level === undefined || typeof (entry as DoorClaim).level === 'number'),
-    );
+    localStorage.removeItem(CLAIMS_KEY);
   } catch {
-    return [];
+    // Storage blocked: nothing was saved either.
   }
-}
-
-function saveClaim(claim: DoorClaim): void {
-  const rest = loadClaims().filter(
-    (entry) => (angleDelta(entry.angle, claim.angle) >= 0.08 || (entry.level ?? 0) !== (claim.level ?? 0)) && entry.url !== claim.url,
-  );
-  const next = [...rest, claim];
-  try {
-    localStorage.setItem(CLAIMS_KEY, JSON.stringify(next));
-  } catch {
-    // A large graphic can overflow storage. Keep the door without the picture.
-    try {
-      localStorage.setItem(CLAIMS_KEY, JSON.stringify(next.map(({ cover: _cover, ...entry }) => entry)));
-    } catch {
-      // Storage blocked: the door still shows the world until the page is left.
-    }
-  }
+  return [];
 }
 
 /**
@@ -2107,9 +2036,9 @@ function openClaimModal(
 
   const title = document.createElement('h2');
   title.id = 'world-claim-title';
-  title.textContent = 'Put your world in this door';
+  title.textContent = 'Add your world';
   const note = document.createElement('p');
-  note.textContent = options.note ?? 'You are the first one at this door, so you can place your world here. It opens in the lobby right away and is sent to the gallery for review.';
+  note.textContent = options.note ?? 'Send your world for review. Once it is approved, it opens in the lobby and the gallery.';
   const status = document.createElement('p');
   status.className = 'world-claim-status';
 
@@ -2124,133 +2053,10 @@ function openClaimModal(
   emailInput.placeholder = 'Email, so you can manage it';
   emailInput.autocomplete = 'email';
 
-  const coverSection = document.createElement('div');
-  coverSection.className = 'cover-section';
-  const coverInput = document.createElement('input');
-  coverInput.type = 'file';
-  coverInput.accept = 'image/*';
-  coverInput.hidden = true;
-  const coverTrigger = document.createElement('button');
-  coverTrigger.type = 'button';
-  coverTrigger.className = 'cover-upload-trigger';
-  coverTrigger.innerHTML =
-    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg><span>Add cover image (optional, portrait 3:4)</span>';
-  const cropperBox = document.createElement('div');
-  cropperBox.className = 'cropper-container';
-  cropperBox.style.display = 'none';
-  const previewCard = document.createElement('div');
-  previewCard.className = 'cropper-preview-card';
-  const canvas = document.createElement('canvas');
-  canvas.width = 600;
-  canvas.height = 800;
-  const hint = document.createElement('div');
-  hint.className = 'cropper-overlay-hint';
-  hint.textContent = 'Drag to move · Scroll to zoom';
-  previewCard.append(canvas, hint);
-  const zoomOut = document.createElement('button');
-  zoomOut.type = 'button';
-  zoomOut.className = 'cropper-icon-btn';
-  zoomOut.title = 'Zoom out';
-  zoomOut.textContent = '−';
-  const zoomIn = document.createElement('button');
-  zoomIn.type = 'button';
-  zoomIn.className = 'cropper-icon-btn';
-  zoomIn.title = 'Zoom in';
-  zoomIn.textContent = '+';
-  const zoomSlider = document.createElement('input');
-  zoomSlider.type = 'range';
-  zoomSlider.min = '1';
-  zoomSlider.max = '3';
-  zoomSlider.step = '0.01';
-  zoomSlider.value = '1';
-  const zoomGroup = document.createElement('div');
-  zoomGroup.className = 'cropper-zoom-group';
-  zoomGroup.append(zoomOut, zoomSlider, zoomIn);
-  const reset = document.createElement('button');
-  reset.type = 'button';
-  reset.className = 'cropper-text-btn';
-  reset.textContent = 'Reset';
-  const change = document.createElement('button');
-  change.type = 'button';
-  change.className = 'cropper-text-btn';
-  change.textContent = 'Change';
-  const remove = document.createElement('button');
-  remove.type = 'button';
-  remove.className = 'cropper-text-btn danger';
-  remove.textContent = 'Remove';
-  const cropActions = document.createElement('div');
-  cropActions.className = 'cropper-actions';
-  cropActions.append(reset, change, remove);
-  const toolbar = document.createElement('div');
-  toolbar.className = 'cropper-toolbar';
-  toolbar.append(zoomGroup, cropActions);
-  cropperBox.append(previewCard, toolbar);
-  coverSection.append(coverInput, coverTrigger, cropperBox);
-
-  const cropper = new ImageCropper(canvas, {
-    onZoomChange: (zoom) => {
-      zoomSlider.value = String(zoom);
-    },
-    onImageLoaded: () => {
-      cropperBox.style.display = 'flex';
-      coverTrigger.style.display = 'none';
-      zoomSlider.value = '1';
-    },
-    onClear: () => {
-      cropperBox.style.display = 'none';
-      coverTrigger.style.display = '';
-      coverInput.value = '';
-    },
-  });
-  const loadCoverFile = (file: File | undefined) => {
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      status.textContent = 'Please select an image file.';
-      return;
-    }
-    void cropper.loadFile(file).then(
-      () => {
-        status.textContent = '';
-      },
-      () => {
-        status.textContent = 'Failed to load image. Please try another one.';
-      },
-    );
-  };
-  coverTrigger.addEventListener('click', () => coverInput.click());
-  change.addEventListener('click', () => coverInput.click());
-  coverInput.addEventListener('change', () => loadCoverFile(coverInput.files?.[0]));
-  zoomSlider.addEventListener('input', () => cropper.setZoom(parseFloat(zoomSlider.value)));
-  zoomIn.addEventListener('click', () => cropper.setZoom(cropper.getZoom() + 0.25));
-  zoomOut.addEventListener('click', () => cropper.setZoom(cropper.getZoom() - 0.25));
-  reset.addEventListener('click', () => cropper.resetTransform());
-  remove.addEventListener('click', () => cropper.clear());
-  for (const dropTarget of [coverTrigger, cropperBox]) {
-    dropTarget.addEventListener('dragover', (event) => {
-      event.preventDefault();
-      coverTrigger.classList.add('drag-over');
-    });
-    dropTarget.addEventListener('dragleave', () => coverTrigger.classList.remove('drag-over'));
-    dropTarget.addEventListener('drop', (event) => {
-      event.preventDefault();
-      coverTrigger.classList.remove('drag-over');
-      loadCoverFile(event.dataTransfer?.files?.[0]);
-    });
-  }
-
-  const frame = document.createElement('iframe');
-  frame.className = 'world-claim-frame';
-  frame.hidden = true;
-  frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-pointer-lock');
-  frame.title = 'Preview of your world';
-
-  const preview = document.createElement('button');
-  preview.type = 'button';
-  preview.textContent = 'Look inside';
   const claim = document.createElement('button');
   claim.type = 'button';
   claim.className = 'world-claim-primary';
-  claim.textContent = 'Place it here';
+  claim.textContent = 'Send for review';
   const closeButton = document.createElement('button');
   closeButton.type = 'button';
   closeButton.className = 'world-claim-close';
@@ -2259,8 +2065,8 @@ function openClaimModal(
 
   const actions = document.createElement('div');
   actions.className = 'world-claim-actions';
-  actions.append(preview, claim);
-  dialog.append(closeButton, title, note, urlInput, emailInput, coverSection, status, frame, actions);
+  actions.append(claim);
+  dialog.append(closeButton, title, note, urlInput, emailInput, status, actions);
   document.body.appendChild(dialog);
   window.dispatchEvent(new Event('blur'));
   dialog.showModal();
@@ -2293,18 +2099,9 @@ function openClaimModal(
     }
   };
 
-  preview.addEventListener('click', () => {
-    const url = readUrl();
-    if (!url) {
-      status.textContent = 'That does not look like a URL.';
-      return;
-    }
-    status.textContent = '';
-    frame.hidden = false;
-    frame.src = url.toString();
-  });
-
+  let sent = false;
   claim.addEventListener('click', () => {
+    if (sent) return;
     const url = readUrl();
     const email = emailInput.value.trim();
     if (!url) {
@@ -2319,9 +2116,15 @@ function openClaimModal(
       status.textContent = 'Enter an email so you can manage this world.';
       return;
     }
-    const picture = cropper.hasImage() ? cropper.exportWebP(0.82) : '';
-    options.onClaim({ name: url.hostname, url: url.toString(), email, cover: picture || undefined });
-    close();
+    options.onClaim({ name: url.hostname, url: url.toString(), email });
+    title.textContent = 'Sent for review';
+    note.textContent = 'Thanks! We will email you once your world is approved and live.';
+    urlInput.remove();
+    emailInput.remove();
+    status.textContent = '';
+    claim.textContent = 'Done';
+    claim.onclick = close;
+    sent = true;
   });
 
   return { close };

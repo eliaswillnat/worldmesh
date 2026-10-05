@@ -245,7 +245,7 @@ export const worldsPage: Page = async (_request, env, admin) => {
           `<span class="cell-main">${esc(world.name ?? world.id)}</span><div class="cell-sub">${link(world.url)}</div>${world.description ? `<div class="cell-sub">${esc(world.description)}</div>` : ''}`,
           `${esc(world.creator ?? '—')}<div class="cell-sub">${esc(world.email ?? '')}</div>${world.portfolio ? `<div class="cell-sub">${link(world.portfolio)}</div>` : ''}`,
           esc(ago(Date.parse(world.submittedAt ?? ''), at)),
-          approve ? `<a class="button" href="${esc(approve)}" target="_blank" rel="noopener noreferrer">Approve</a>` : '',
+          `<a class="button" href="/worlds/edit?id=${esc(encodeURIComponent(world.id))}">Review</a>${approve ? ` <a href="${esc(approve)}" target="_blank" rel="noopener noreferrer">Approve as is</a>` : ''}`,
         ];
       }),
       'No submissions waiting.',
@@ -262,7 +262,7 @@ export const worldsPage: Page = async (_request, env, admin) => {
           const live = liveByOrigin.get(originOf(world.url));
           return [
             cover(world),
-            `<span class="cell-main">${esc(world.name ?? world.id)}</span> ${world.curatedBy ? pill('curated', 'info') : ''}<div class="cell-sub">${link(world.url)}</div>`,
+            `<a class="cell-main" href="/worlds/edit?id=${esc(encodeURIComponent(world.id))}">${esc(world.name ?? world.id)}</a> ${world.curatedBy ? pill('curated', 'info') : ''}<div class="cell-sub">${link(world.url)}</div>`,
             `${esc(world.creator ?? '—')}<div class="cell-sub">${esc(world.email ?? '')}</div>`,
             esc(ago(Date.parse(world.approvedAt ?? world.addedAt ?? ''), at)),
             `<span class="mono">${viewMap ? num(viewMap.get(world.url ?? '') ?? 0) : '—'}</span>`,
