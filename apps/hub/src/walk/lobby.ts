@@ -42,7 +42,6 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { CITY_GLOW_WHITE, applyCityTheme, applySkyTheme, createCityMaterials, createSky, createSpawnRay, flipInside, skyHorizon, type BillboardSlot } from './city';
 import { DOOR_HALF_SPAN, DOOR_HEIGHT, DOOR_TOP, DOOR_WIDTH, FRAME, Door, createLabel, worldIsFull, type DoorWorld } from './door';
 import { doorFrameGeometry, frameOuterCorner, roundedOpeningGeometry } from './doorShape';
-import { ImageCropper } from '../cropper';
 import { describeBillboard } from './layout';
 import { Assembly } from './assemble';
 import { FLOOR_NAMES, Lifts, buildShafts, createColliderMaterial, mergeInto, planLifts } from './elevators';
@@ -2124,129 +2123,6 @@ function openClaimModal(
   emailInput.placeholder = 'Email, so you can manage it';
   emailInput.autocomplete = 'email';
 
-  const coverSection = document.createElement('div');
-  coverSection.className = 'cover-section';
-  const coverInput = document.createElement('input');
-  coverInput.type = 'file';
-  coverInput.accept = 'image/*';
-  coverInput.hidden = true;
-  const coverTrigger = document.createElement('button');
-  coverTrigger.type = 'button';
-  coverTrigger.className = 'cover-upload-trigger';
-  coverTrigger.innerHTML =
-    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg><span>Add cover image (optional, portrait 3:4)</span>';
-  const cropperBox = document.createElement('div');
-  cropperBox.className = 'cropper-container';
-  cropperBox.style.display = 'none';
-  const previewCard = document.createElement('div');
-  previewCard.className = 'cropper-preview-card';
-  const canvas = document.createElement('canvas');
-  canvas.width = 600;
-  canvas.height = 800;
-  const hint = document.createElement('div');
-  hint.className = 'cropper-overlay-hint';
-  hint.textContent = 'Drag to move · Scroll to zoom';
-  previewCard.append(canvas, hint);
-  const zoomOut = document.createElement('button');
-  zoomOut.type = 'button';
-  zoomOut.className = 'cropper-icon-btn';
-  zoomOut.title = 'Zoom out';
-  zoomOut.textContent = '−';
-  const zoomIn = document.createElement('button');
-  zoomIn.type = 'button';
-  zoomIn.className = 'cropper-icon-btn';
-  zoomIn.title = 'Zoom in';
-  zoomIn.textContent = '+';
-  const zoomSlider = document.createElement('input');
-  zoomSlider.type = 'range';
-  zoomSlider.min = '1';
-  zoomSlider.max = '3';
-  zoomSlider.step = '0.01';
-  zoomSlider.value = '1';
-  const zoomGroup = document.createElement('div');
-  zoomGroup.className = 'cropper-zoom-group';
-  zoomGroup.append(zoomOut, zoomSlider, zoomIn);
-  const reset = document.createElement('button');
-  reset.type = 'button';
-  reset.className = 'cropper-text-btn';
-  reset.textContent = 'Reset';
-  const change = document.createElement('button');
-  change.type = 'button';
-  change.className = 'cropper-text-btn';
-  change.textContent = 'Change';
-  const remove = document.createElement('button');
-  remove.type = 'button';
-  remove.className = 'cropper-text-btn danger';
-  remove.textContent = 'Remove';
-  const cropActions = document.createElement('div');
-  cropActions.className = 'cropper-actions';
-  cropActions.append(reset, change, remove);
-  const toolbar = document.createElement('div');
-  toolbar.className = 'cropper-toolbar';
-  toolbar.append(zoomGroup, cropActions);
-  cropperBox.append(previewCard, toolbar);
-  coverSection.append(coverInput, coverTrigger, cropperBox);
-
-  const cropper = new ImageCropper(canvas, {
-    onZoomChange: (zoom) => {
-      zoomSlider.value = String(zoom);
-    },
-    onImageLoaded: () => {
-      cropperBox.style.display = 'flex';
-      coverTrigger.style.display = 'none';
-      zoomSlider.value = '1';
-    },
-    onClear: () => {
-      cropperBox.style.display = 'none';
-      coverTrigger.style.display = '';
-      coverInput.value = '';
-    },
-  });
-  const loadCoverFile = (file: File | undefined) => {
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      status.textContent = 'Please select an image file.';
-      return;
-    }
-    void cropper.loadFile(file).then(
-      () => {
-        status.textContent = '';
-      },
-      () => {
-        status.textContent = 'Failed to load image. Please try another one.';
-      },
-    );
-  };
-  coverTrigger.addEventListener('click', () => coverInput.click());
-  change.addEventListener('click', () => coverInput.click());
-  coverInput.addEventListener('change', () => loadCoverFile(coverInput.files?.[0]));
-  zoomSlider.addEventListener('input', () => cropper.setZoom(parseFloat(zoomSlider.value)));
-  zoomIn.addEventListener('click', () => cropper.setZoom(cropper.getZoom() + 0.25));
-  zoomOut.addEventListener('click', () => cropper.setZoom(cropper.getZoom() - 0.25));
-  reset.addEventListener('click', () => cropper.resetTransform());
-  remove.addEventListener('click', () => cropper.clear());
-  for (const dropTarget of [coverTrigger, cropperBox]) {
-    dropTarget.addEventListener('dragover', (event) => {
-      event.preventDefault();
-      coverTrigger.classList.add('drag-over');
-    });
-    dropTarget.addEventListener('dragleave', () => coverTrigger.classList.remove('drag-over'));
-    dropTarget.addEventListener('drop', (event) => {
-      event.preventDefault();
-      coverTrigger.classList.remove('drag-over');
-      loadCoverFile(event.dataTransfer?.files?.[0]);
-    });
-  }
-
-  const frame = document.createElement('iframe');
-  frame.className = 'world-claim-frame';
-  frame.hidden = true;
-  frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-pointer-lock');
-  frame.title = 'Preview of your world';
-
-  const preview = document.createElement('button');
-  preview.type = 'button';
-  preview.textContent = 'Look inside';
   const claim = document.createElement('button');
   claim.type = 'button';
   claim.className = 'world-claim-primary';
@@ -2259,8 +2135,8 @@ function openClaimModal(
 
   const actions = document.createElement('div');
   actions.className = 'world-claim-actions';
-  actions.append(preview, claim);
-  dialog.append(closeButton, title, note, urlInput, emailInput, coverSection, status, frame, actions);
+  actions.append(claim);
+  dialog.append(closeButton, title, note, urlInput, emailInput, status, actions);
   document.body.appendChild(dialog);
   window.dispatchEvent(new Event('blur'));
   dialog.showModal();
@@ -2293,17 +2169,6 @@ function openClaimModal(
     }
   };
 
-  preview.addEventListener('click', () => {
-    const url = readUrl();
-    if (!url) {
-      status.textContent = 'That does not look like a URL.';
-      return;
-    }
-    status.textContent = '';
-    frame.hidden = false;
-    frame.src = url.toString();
-  });
-
   claim.addEventListener('click', () => {
     const url = readUrl();
     const email = emailInput.value.trim();
@@ -2319,8 +2184,7 @@ function openClaimModal(
       status.textContent = 'Enter an email so you can manage this world.';
       return;
     }
-    const picture = cropper.hasImage() ? cropper.exportWebP(0.82) : '';
-    options.onClaim({ name: url.hostname, url: url.toString(), email, cover: picture || undefined });
+    options.onClaim({ name: url.hostname, url: url.toString(), email });
     close();
   });
 

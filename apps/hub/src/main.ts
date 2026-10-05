@@ -148,7 +148,6 @@ function lobbyWorlds(): WorldEntry[] {
   return ALL_WORLDS;
 }
 
-import { ImageCropper } from './cropper';
 import { getUsername, initAccount } from './account';
 
 initAccount();
@@ -186,7 +185,6 @@ const creatorEmailInput = document.querySelector<HTMLInputElement>('#creator-ema
 const creatorPortfolioInput = document.querySelector<HTMLInputElement>('#creator-portfolio')!;
 const creatorDescriptionInput = document.querySelector<HTMLInputElement>('#creator-description')!;
 const submitWorldBtn = document.querySelector<HTMLButtonElement>('#submit-world')!;
-const navConfirmCheckbox = document.querySelector<HTMLInputElement>('#nav-confirm')!;
 const demoList = document.querySelector<HTMLUListElement>('#demo-worlds')!;
 const multiplayerFilter = document.querySelector<HTMLButtonElement>('#filter-multiplayer')!;
 let multiplayerOnly = false;
@@ -195,96 +193,6 @@ multiplayerFilter.addEventListener('click', () => {
   multiplayerOnly = !multiplayerOnly;
   multiplayerFilter.setAttribute('aria-pressed', String(multiplayerOnly));
   render();
-});
-
-// Cover upload & cropper elements
-const coverFileInput = document.querySelector<HTMLInputElement>('#cover-file-input')!;
-const coverUploadTrigger = document.querySelector<HTMLButtonElement>('#cover-upload-trigger')!;
-const cropperContainer = document.querySelector<HTMLDivElement>('#cropper-container')!;
-const cropperCanvas = document.querySelector<HTMLCanvasElement>('#cropper-canvas')!;
-const zoomSlider = document.querySelector<HTMLInputElement>('#zoom-slider')!;
-const zoomInBtn = document.querySelector<HTMLButtonElement>('#zoom-in-btn')!;
-const zoomOutBtn = document.querySelector<HTMLButtonElement>('#zoom-out-btn')!;
-const cropperResetBtn = document.querySelector<HTMLButtonElement>('#cropper-reset-btn')!;
-const cropperChangeBtn = document.querySelector<HTMLButtonElement>('#cropper-change-btn')!;
-const cropperRemoveBtn = document.querySelector<HTMLButtonElement>('#cropper-remove-btn')!;
-
-const cropper = new ImageCropper(cropperCanvas, {
-  onZoomChange: (z) => {
-    zoomSlider.value = z.toString();
-  },
-  onImageLoaded: () => {
-    cropperContainer.style.display = 'flex';
-    coverUploadTrigger.style.display = 'none';
-    zoomSlider.value = '1';
-  },
-  onClear: () => {
-    cropperContainer.style.display = 'none';
-    coverUploadTrigger.style.display = '';
-    coverFileInput.value = '';
-  },
-});
-
-coverUploadTrigger.addEventListener('click', () => coverFileInput.click());
-cropperChangeBtn.addEventListener('click', () => coverFileInput.click());
-
-coverFileInput.addEventListener('change', async () => {
-  const file = coverFileInput.files?.[0];
-  if (!file) return;
-  if (!file.type.startsWith('image/')) {
-    setStatus('Please select an image file.', true);
-    return;
-  }
-  try {
-    await cropper.loadFile(file);
-    setStatus('Drag the image to adjust position, use slider or mouse wheel to zoom.');
-  } catch {
-    setStatus('Failed to load image. Please try another one.', true);
-  }
-});
-
-for (const dropTarget of [coverUploadTrigger, cropperContainer]) {
-  dropTarget.addEventListener('dragover', (e: Event) => {
-    e.preventDefault();
-    coverUploadTrigger.classList.add('drag-over');
-  });
-  dropTarget.addEventListener('dragleave', () => {
-    coverUploadTrigger.classList.remove('drag-over');
-  });
-  dropTarget.addEventListener('drop', async (e: Event) => {
-    e.preventDefault();
-    coverUploadTrigger.classList.remove('drag-over');
-    const dragEvent = e as DragEvent;
-    const file = dragEvent.dataTransfer?.files?.[0];
-    if (file && file.type.startsWith('image/')) {
-      try {
-        await cropper.loadFile(file);
-        setStatus('Drag the image to adjust position, use slider or mouse wheel to zoom.');
-      } catch {
-        setStatus('Failed to load image. Please try another one.', true);
-      }
-    }
-  });
-}
-
-zoomSlider.addEventListener('input', () => {
-  cropper.setZoom(parseFloat(zoomSlider.value));
-});
-
-zoomInBtn.addEventListener('click', () => {
-  cropper.setZoom(cropper.getZoom() + 0.25);
-});
-
-zoomOutBtn.addEventListener('click', () => {
-  cropper.setZoom(cropper.getZoom() - 0.25);
-});
-
-cropperResetBtn.addEventListener('click', () => {
-  cropper.resetTransform();
-});
-
-cropperRemoveBtn.addEventListener('click', () => {
-  cropper.clear();
 });
 
 let pendingUrl: URL | null = null;
@@ -306,8 +214,6 @@ function setAddingMode(active: boolean): void {
     creatorEmailInput.value = '';
     creatorPortfolioInput.value = '';
     creatorDescriptionInput.value = '';
-    cropper.clear();
-    navConfirmCheckbox.checked = false;
     pendingUrl = null;
     pendingManifest = null;
   }
@@ -871,33 +777,11 @@ form.addEventListener('submit', async (event) => {
 
   if (manifest?.creator) creatorNameInput.value = manifest.creator;
   if (manifest?.description) creatorDescriptionInput.value = manifest.description;
-  if (manifest?.cover) {
-    cropper.loadUrl(manifest.cover).catch(() => {
-      // CORS might block canvas read; manifest.cover remains as fallback.
-    });
-  }
   setAddingMode(true);
-  creatorNameInput.focus();
+  // Name is hidden on touch screens (see index.html), so start at email there.
+  (creatorNameInput.offsetParent ? creatorNameInput : creatorEmailInput).focus();
   setStatus('Almost there — add your details below.');
 });
-
-async function uploadCoverImage(webpData: string, worldUrl: string): Promise<string | null> {
-  const endpoint = SCREENSHOT_ENDPOINT || '/api/screenshot';
-  try {
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: webpData, url: worldUrl }),
-    });
-    if (res.ok) {
-      const data = (await res.json()) as { url?: string };
-      if (data.url) return data.url;
-    }
-  } catch {
-    // Best-effort upload fallback to webpData
-  }
-  return null;
-}
 
 function slugify(str: string): string {
   return str.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase();
@@ -905,12 +789,6 @@ function slugify(str: string): string {
 
 submitWorldBtn.addEventListener('click', async () => {
   if (!pendingUrl) return;
-
-  if (!navConfirmCheckbox.checked) {
-    setStatus('Please confirm that your world uses familiar PC game navigation controls.', true);
-    navConfirmCheckbox.focus();
-    return;
-  }
 
   const email = creatorEmailInput.value.trim();
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -930,31 +808,12 @@ submitWorldBtn.addEventListener('click', async () => {
   const slug = slugify(baseName) || 'world';
   const id = `${slug}-${Math.random().toString(36).substring(2, 8)}`;
 
-  let coverToUse = pendingManifest?.cover;
-
-  if (cropper.hasImage()) {
-    submitWorldBtn.disabled = true;
-    submitWorldBtn.textContent = 'Processing…';
-    setStatus('Converting cover image to WebP…');
-
-    try {
-      const webpData = cropper.exportWebP(0.85);
-      const uploadedUrl = await uploadCoverImage(webpData, pendingUrl.toString());
-      coverToUse = uploadedUrl || webpData;
-    } catch {
-      // Best-effort fallback
-    } finally {
-      submitWorldBtn.disabled = false;
-      submitWorldBtn.textContent = 'Submit world';
-    }
-  }
-
   const entry: WorldEntry = {
     id,
     name: baseName,
     url: pendingUrl.toString(),
     description: creatorDescriptionInput.value.trim() || pendingManifest?.description,
-    cover: coverToUse,
+    cover: pendingManifest?.cover,
     creator: creatorName,
     portfolio,
     email,
