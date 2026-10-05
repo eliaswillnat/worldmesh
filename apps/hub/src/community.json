@@ -76,5 +76,16 @@
     "portfolio": "https://x.com/gruberbuilds",
     "addedAt": "2026-10-05T18:00:00Z",
     "categories": ["space"]
+  },
+  {
+    "id": "snowline-rivals-t6b9xe",
+    "name": "Snowline Rivals",
+    "url": "https://snowline.freesoul.games/",
+    "description": "Downhill snowboarding. Chase faster lines and race your friends’ ghosts.",
+    "cover": "/covers/snowline-rivals.webp",
+    "creator": "Alex Vainshtein",
+    "portfolio": "https://x.com/alex_vainshtein",
+    "addedAt": "2026-10-05T20:00:00Z",
+    "categories": ["games"]
   }
 ]
