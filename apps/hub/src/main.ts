@@ -35,6 +35,8 @@ const VIEWS_ENDPOINT = (import.meta.env.VITE_VIEWS_ENDPOINT as string | undefine
 const viewCounts: Record<string, number> = {};
 const sessionViewed = new Map<string, number>();
 const COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes
+/** Views-worker key for visits to the hub itself; not a URL, so it never matches a world. */
+const HUB_VISIT_KEY = 'worldmesh:hub';
 const DEMO_ADDED_AT = '2026-09-27T21:03:21Z';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const NEW_BADGE_DAYS = 7;
@@ -427,6 +429,8 @@ if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
 render();
 
 fetchCommunityWorlds();
+// Count this visit to the hub; the reply carries the all-time total for walk mode.
+trackClick(HUB_VISIT_KEY);
 
 // ── Walk mode ────────────────────────────────────────────────────────────────
 // The same directory as a place: every world is a door on a grid. Three.js
@@ -522,7 +526,7 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
           walkOnline.textContent = '';
         } else {
           walkOnline.dataset.count = String(count);
-          walkOnline.textContent = `${count} online`;
+          showWalkOnline();
           if (prev !== null && count > prev) {
             walkOnline.classList.remove('glow');
             void walkOnline.offsetWidth;
@@ -571,6 +575,14 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
     walkLoading = false;
     walkToggle.disabled = false;
   }
+}
+
+/** "3 online", plus the hub's all-time visits once they have loaded. */
+function showWalkOnline(): void {
+  const count = walkOnline.dataset.count;
+  if (count == null) return;
+  const visits = viewCounts[HUB_VISIT_KEY];
+  walkOnline.textContent = visits ? `${count} online · ${visits.toLocaleString('en')} visits` : `${count} online`;
 }
 
 function exitWalkMode(): void {
@@ -1196,6 +1208,7 @@ function trackClick(url: string): void {
         viewCounts[url] = data.views;
         render();
         lobby?.refreshEntries();
+        showWalkOnline();
       }
     })
     .catch(() => {});
