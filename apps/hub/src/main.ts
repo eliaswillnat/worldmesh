@@ -186,6 +186,14 @@ const creatorDescriptionInput = document.querySelector<HTMLInputElement>('#creat
 const submitWorldBtn = document.querySelector<HTMLButtonElement>('#submit-world')!;
 const navConfirmCheckbox = document.querySelector<HTMLInputElement>('#nav-confirm')!;
 const demoList = document.querySelector<HTMLUListElement>('#demo-worlds')!;
+const multiplayerFilter = document.querySelector<HTMLButtonElement>('#filter-multiplayer')!;
+let multiplayerOnly = false;
+const isMultiplayer = (w: WorldEntry) => w.tags?.includes('multiplayer') ?? false;
+multiplayerFilter.addEventListener('click', () => {
+  multiplayerOnly = !multiplayerOnly;
+  multiplayerFilter.setAttribute('aria-pressed', String(multiplayerOnly));
+  render();
+});
 
 // Cover upload & cropper elements
 const coverFileInput = document.querySelector<HTMLInputElement>('#cover-file-input')!;
@@ -1036,7 +1044,15 @@ function render(): void {
     ...community.filter((w) => !spotlight.includes(w)).sort(byScore),
     ...DEMO_WORLDS.slice().sort(byScore),
   ];
-  demoList.replaceChildren(...sorted.map((world) => renderCard(world)));
+  const visible = multiplayerOnly ? sorted.filter(isMultiplayer) : sorted;
+  if (visible.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'gallery-empty';
+    empty.textContent = 'No multiplayer worlds yet.';
+    demoList.replaceChildren(empty);
+    return;
+  }
+  demoList.replaceChildren(...visible.map((world) => renderCard(world)));
   if (!userScrolled) requestAnimationFrame(snapFirstCard);
 }
 

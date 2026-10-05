@@ -333,6 +333,18 @@
         margin: 30px 0 16px;
       }
 
+      /* ── Gallery filters ───────────────────────────────────────── */
+      .gallery-filters { display: flex; gap: 8px; margin: 18px 0 18px; }
+      .filter-chip {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 8px 14px; font-size: 13px; font-weight: 500;
+      }
+      .filter-chip[aria-pressed="true"] {
+        background: var(--text); color: var(--bg); border-color: var(--text);
+      }
+      .filter-chip[aria-pressed="true"]:hover { color: var(--bg); border-color: var(--text); opacity: .9; }
+      .gallery-empty { color: var(--muted); font-size: 14px; padding: 32px 0; list-style: none; }
+
       /* ── Card grid ─────────────────────────────────────────────── */
       .card-grid {
         list-style: none;
@@ -560,7 +572,7 @@
         }
         main::-webkit-scrollbar { display: none; }
         html.mobile-adding main { scroll-snap-type: none; }
-        .site-header h1, .tagline, form, .creator-fields, .status, footer { padding-left: 16px; padding-right: 16px; }
+        .site-header h1, .tagline, .gallery-filters, form, .creator-fields, .status, footer { padding-left: 16px; padding-right: 16px; }
         .site-header h1 { padding-top: max(20px, env(safe-area-inset-top)); }
         /* The title stays pinned as the cards scroll under it. */
         .site-header {
@@ -2124,6 +2136,12 @@
         <p class="tagline">
           3D worlds, connected across the web. Step from one into another.
         </p>
+        <div class="gallery-filters" role="group" aria-label="Filter worlds">
+          <button type="button" class="filter-chip" id="filter-multiplayer" aria-pressed="false">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><circle cx="17" cy="9" r="2.5"/><path d="M16 14.6a5 5 0 0 1 5.5 5.4"/></svg>
+            Multiplayer
+          </button>
+        </div>
       </header>
       <dialog class="account-dialog" id="account-dialog" aria-label="Account">
         <div class="account-body"></div>
