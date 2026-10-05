@@ -2053,6 +2053,13 @@
         html, body { scrollbar-width: none; -ms-overflow-style: none; }
         html::-webkit-scrollbar, body::-webkit-scrollbar { display: none; width: 0; height: 0; background: transparent; }
       }
+      /* iOS Safari zooms the page into any focused field under 16px, which pushes
+         the walk HUD off screen. Keep fields at 16px on touch screens. */
+      @media (pointer: coarse) {
+        input:not([type="range"]):not([type="checkbox"]):not([type="radio"]),
+        textarea,
+        select { font-size: 16px !important; }
+      }
     </style>
   </head>
   <body>
