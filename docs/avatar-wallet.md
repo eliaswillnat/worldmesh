@@ -10,31 +10,41 @@ Independent of ActivityPub. Neither system reads the other's tables.
 
 ```
 hub (worldmesh.net)                       workers/auth  (/api/account/avatar/*)          platform
- Choose your character ── connect ──────►  OAuth (PKCE; AT Proto: PAR + DPoP) ────────►  VRoid Hub / user's PDS
+ Choose your character ── connect ──────►  OAuth (PKCE; AT Proto: PAR + DPoP) ────────►  VRoid Hub / PDS / Sketchfab
                        ── pick ─────────►  D1: avatar_connection, avatar (refs only)
  world link #wm-avatar=<ticket> ─┐
                                  ▼
 world (any host) @worldmesh/runtime ── POST /resolve {ticket} ──► descriptor { format, modelUrl, … }
-                 └────────────────────── GET modelUrl ─────────────────────────────►  VRoid S3 / PDS blob
+                 └────────────────────── GET modelUrl ─────────────────────────────►  VRoid S3 / PDS blob / Sketchfab S3
 ```
 
 ## Providers
 
-| | VRoid Hub | at3d (AT Protocol) |
-| --- | --- | --- |
-| Where avatars live | VRoid Hub (pixiv) | `app.at3d.avatar` records + blobs in the user's own PDS |
-| Sign-in | OAuth 2.0 + PKCE, `X-Api-Version: 11` | AT Protocol OAuth: PAR, PKCE, DPoP (ES256), public client |
-| Listing | `GET /api/account/character_models` (the user's own models) | `com.atproto.repo.listRecords` (public) |
-| Loading | `POST /api/download_licenses` → `GET …/{id}/download` → 302 to an S3 presigned URL | `com.atproto.sync.getBlob` on the PDS (public, `Access-Control-Allow-Origin: *`) |
-| Formats | VRM (0.x, 1.0) | VRM, GLB, glTF (parametric avatars are skipped) |
-| Stored | VRoid user id + name, access/refresh tokens **AES-GCM encrypted** | DID, handle, PDS URL. **No tokens**: revoked right after the DID is verified |
-| Refresh | refresh token, on demand before each use | none needed |
+| | VRoid Hub | at3d (AT Protocol) | Sketchfab |
+| --- | --- | --- | --- |
+| Where avatars live | VRoid Hub (pixiv) | `app.at3d.avatar` records + blobs in the user's own PDS | The user's Sketchfab account |
+| Sign-in | OAuth 2.0 + PKCE, `X-Api-Version: 11` | AT Protocol OAuth: PAR, PKCE, DPoP (ES256), public client | OAuth 2.0 authorization code (+ PKCE), confidential client |
+| Listing | `GET /api/account/character_models` (the user's own models) | `com.atproto.repo.listRecords` (public) | `GET /v3/me/models` (the user's own models, up to 5 pages) |
+| Loading | `POST /api/download_licenses` → `GET …/{id}/download` → 302 to an S3 presigned URL | `com.atproto.sync.getBlob` on the PDS (public, `Access-Control-Allow-Origin: *`) | `GET /v3/models/{uid}/download` → `glb.url`, an S3 presigned URL valid ~5 minutes (`Access-Control-Allow-Origin: *`) |
+| Formats | VRM (0.x, 1.0) | VRM, GLB, glTF (parametric avatars are skipped) | GLB (the glTF archive is a zip, which worlds cannot load) |
+| Stored | VRoid user id + name, access/refresh tokens **AES-GCM encrypted** | DID, handle, PDS URL. **No tokens**: revoked right after the DID is verified | Sketchfab uid + name, access/refresh tokens **AES-GCM encrypted** |
+| Refresh | refresh token, on demand before each use | none needed | refresh token, on demand (access tokens last about a month) |
 
 **Why not Avaturn or MetaPerson?** Both keep avatars under the *integrating
 developer's* project (API-created anonymous users, paid API tiers), not in an
 account the visitor owns and reconnects to. WorldMesh would become the account
 holder of everyone's avatars on those platforms, which is the opposite of this
 design. They can be added later if they offer user-owned OAuth accounts.
+
+**Why not Meshy or Tripo directly?** Their APIs take developer API keys only
+(no user sign-in), and they do not keep what they make: Meshy deletes API
+results after 3 days (rigged characters after 2 months), Tripo's download
+links last 5 minutes and it has no "list my models" endpoint. A pointer to
+those models would stop working, and the only alternative is storing the
+files ourselves. Instead, visitors export the rigged GLB from Meshy or Tripo
+and upload it to their own Sketchfab account, which WorldMesh then connects
+to like any other provider. For a character that walks, export it with its
+animations: the runtime plays clips named like `idle` and `walk`/`run`.
 
 ### Limits to know about
 
@@ -49,6 +59,14 @@ design. They can be added later if they offer user-owned OAuth accounts.
 - **VRoid Hub, CORS.** The presigned S3 URL is fetched cross-origin by the
   world. pixiv's own web sample loads it the same way; if a world cannot, the
   runtime keeps the default body.
+- **Sketchfab, app registration.** Client credentials are issued by Sketchfab
+  support on request (sketchfab.com/developers/oauth): send the app name, the
+  authorization code grant and the redirect URI. Token revocation on
+  disconnect uses `/oauth2/revoke_token/`, which Sketchfab does not document;
+  it is best effort.
+- **Sketchfab, own models only.** A model from someone else cannot be picked,
+  even if it is downloadable. Large uploads may exceed the runtime's 40 MB
+  default (`maxBytes`); the GLB size is kept in the selection's metadata.
 - **at3d** is a draft spec with little adoption so far. Records are public by
   nature of AT Protocol: anyone could already fetch them, and the blob URL
   contains the user's DID.
@@ -90,7 +108,7 @@ else: no session, no account details, no platform tokens, no WorldMesh user id.
 | `POST /connect/:provider` `{ handle? }` | → `{ url }` of the platform's authorization page |
 | `GET /callback/:provider` | platform redirect target → `/?avatar=connected\|error` |
 | `POST /select` `{ connectionId, avatarId }` or `{ avatarId: null }` | pick, or continue without character |
-| `POST /disconnect` `{ connectionId }` | revoke (VRoid) and forget |
+| `POST /disconnect` `{ connectionId }` | revoke (VRoid, Sketchfab) and forget |
 | `POST /handoff` | → `{ ticket, expiresAt }` |
 | `POST /resolve` `{ ticket }` | for worlds; CORS, cookie-less |
 | `GET /atproto/client-metadata.json` | AT Protocol OAuth client metadata |

@@ -27,6 +27,9 @@ AVATAR_SECRET=dev-only-avatar-secret-change-me-dev-only
 # VRoid Hub app with redirect URI http://localhost:5170/api/account/avatar/callback/vroid
 VROID_CLIENT_ID=
 VROID_CLIENT_SECRET=
+# Sketchfab app with redirect URI http://localhost:5170/api/account/avatar/callback/sketchfab
+SKETCHFAB_CLIENT_ID=
+SKETCHFAB_CLIENT_SECRET=
 # at3d / AT Protocol needs no client credentials, but its localhost client only
 # accepts loopback IPs: to test it, set BETTER_AUTH_URL=http://127.0.0.1:5170
 # and open the hub at that address.

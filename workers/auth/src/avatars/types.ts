@@ -1,6 +1,6 @@
 import type { Env } from '../auth';
 
-export type AvatarProviderId = 'vroid' | 'atproto';
+export type AvatarProviderId = 'vroid' | 'atproto' | 'sketchfab';
 export type AvatarFormat = 'vrm' | 'glb' | 'gltf';
 
 /**
@@ -10,7 +10,7 @@ export type AvatarFormat = 'vrm' | 'glb' | 'gltf';
  */
 export interface AvatarDescriptor {
   provider: AvatarProviderId;
-  /** The provider's id for the avatar: a VRoid Hub model id, or an at:// URI. */
+  /** The provider's id for the avatar: a VRoid Hub model id, an at:// URI, or a Sketchfab model uid. */
   avatarId: string;
   name: string | null;
   thumbnail: string | null;
