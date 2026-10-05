@@ -20,15 +20,15 @@ world (any host) @worldmesh/runtime ── POST /resolve {ticket} ──► desc
 
 ## Providers
 
-| | VRoid Hub | at3d (AT Protocol) | Sketchfab |
+| | Sketchfab | VRoid Hub | at3d (AT Protocol) |
 | --- | --- | --- | --- |
-| Where avatars live | VRoid Hub (pixiv) | `app.at3d.avatar` records + blobs in the user's own PDS | The user's Sketchfab account |
-| Sign-in | OAuth 2.0 + PKCE, `X-Api-Version: 11` | AT Protocol OAuth: PAR, PKCE, DPoP (ES256), public client | OAuth 2.0 authorization code (+ PKCE), confidential client |
-| Listing | `GET /api/account/character_models` (the user's own models) | `com.atproto.repo.listRecords` (public) | `GET /v3/me/models` (the user's own models, up to 5 pages) |
-| Loading | `POST /api/download_licenses` → `GET …/{id}/download` → 302 to an S3 presigned URL | `com.atproto.sync.getBlob` on the PDS (public, `Access-Control-Allow-Origin: *`) | `GET /v3/models/{uid}/download` → `glb.url`, an S3 presigned URL valid ~5 minutes (`Access-Control-Allow-Origin: *`) |
-| Formats | VRM (0.x, 1.0) | VRM, GLB, glTF (parametric avatars are skipped) | GLB (the glTF archive is a zip, which worlds cannot load) |
-| Stored | VRoid user id + name, access/refresh tokens **AES-GCM encrypted** | DID, handle, PDS URL. **No tokens**: revoked right after the DID is verified | Sketchfab uid + name, access/refresh tokens **AES-GCM encrypted** |
-| Refresh | refresh token, on demand before each use | none needed | refresh token, on demand (access tokens last about a month) |
+| Where avatars live | The user's Sketchfab account | VRoid Hub (pixiv) | `app.at3d.avatar` records + blobs in the user's own PDS |
+| Sign-in | OAuth 2.0 authorization code (+ PKCE), confidential client | OAuth 2.0 + PKCE, `X-Api-Version: 11` | AT Protocol OAuth: PAR, PKCE, DPoP (ES256), public client |
+| Listing | `GET /v3/me/models` (the user's own models, up to 5 pages) | `GET /api/account/character_models` (the user's own models) | `com.atproto.repo.listRecords` (public) |
+| Loading | `GET /v3/models/{uid}/download` → `glb.url`, an S3 presigned URL valid ~5 minutes (`Access-Control-Allow-Origin: *`) | `POST /api/download_licenses` → `GET …/{id}/download` → 302 to an S3 presigned URL | `com.atproto.sync.getBlob` on the PDS (public, `Access-Control-Allow-Origin: *`) |
+| Formats | GLB (the glTF archive is a zip, which worlds cannot load) | VRM (0.x, 1.0) | VRM, GLB, glTF (parametric avatars are skipped) |
+| Stored | Sketchfab uid + name, access/refresh tokens **AES-GCM encrypted** | VRoid user id + name, access/refresh tokens **AES-GCM encrypted** | DID, handle, PDS URL. **No tokens**: revoked right after the DID is verified |
+| Refresh | refresh token, on demand (access tokens last about a month) | refresh token, on demand before each use | none needed |
 
 **Why not Avaturn or MetaPerson?** Both keep avatars under the *integrating
 developer's* project (API-created anonymous users, paid API tiers), not in an

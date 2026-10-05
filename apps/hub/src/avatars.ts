@@ -1,7 +1,7 @@
 /**
  * Avatar Wallet: "Choose your character" inside the account dialog.
  *
- * The visitor connects avatar platforms (VRoid Hub, at3d, Sketchfab), picks one avatar,
+ * The visitor connects avatar platforms (Sketchfab, VRoid Hub, at3d), picks one avatar,
  * or continues without a character. WorldMesh stores only which avatar was
  * picked; the model stays on the platform. Talks to workers/auth under
  * /api/account/avatar over same-origin fetch.

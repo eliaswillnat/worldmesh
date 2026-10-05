@@ -32,9 +32,9 @@ export const AVATAR_BASE_PATH = '/api/account/avatar';
 
 /** Display order in the wallet. Add a provider here and nowhere else. */
 export const PROVIDERS: Record<AvatarProviderId, AvatarProvider> = {
+  sketchfab: sketchfabProvider,
   vroid: vroidProvider,
   atproto: atprotoProvider,
-  sketchfab: sketchfabProvider,
 };
 
 export function avatarWalletEnabled(env: Env): boolean {

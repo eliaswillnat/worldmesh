@@ -200,9 +200,9 @@ describe('avatar wallet', () => {
     expect(await res.json()).toEqual({
       enabled: true,
       providers: [
+        { id: 'sketchfab', label: 'Sketchfab' },
         { id: 'vroid', label: 'VRoid Hub' },
         { id: 'atproto', label: 'at3d' },
-        { id: 'sketchfab', label: 'Sketchfab' },
       ],
       connections: [],
       selected: null,
