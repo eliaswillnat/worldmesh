@@ -54,5 +54,16 @@
     "addedAt": "2026-10-02T12:00:00Z",
     "categories": ["explore"],
     "tags": ["desktop-only"]
+  },
+  {
+    "id": "rainy-night-alley-kyoto-q3n8vd",
+    "name": "Rainy Night Alley - Kyoto",
+    "url": "https://kyoto-rain-alley.pages.dev/",
+    "description": "A Kyoto alleyway on a rainy night.",
+    "cover": "/covers/kyoto-rain-alley.webp",
+    "creator": "MizuGame",
+    "portfolio": "https://x.com/mizugame_22",
+    "addedAt": "2026-10-05T12:00:00Z",
+    "categories": ["explore"]
   }
 ]
