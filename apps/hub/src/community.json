@@ -98,5 +98,17 @@
     "portfolio": "https://x.com/lexnlin",
     "addedAt": "2026-10-05T22:00:00Z",
     "categories": ["explore"]
+  },
+  {
+    "id": "threejs-punk-drive-v6n3xt",
+    "name": "Threejs-Punk Drive",
+    "url": "https://threejspunk.com",
+    "description": "A cyberpunk driving game where you explore a rain-soaked neon city, complete missions and unlock cars.",
+    "cover": "/covers/threejs-punk-drive.webp",
+    "creator": "Anderson Mancini",
+    "portfolio": "https://x.com/andersonmancini",
+    "addedAt": "2026-10-06T12:00:00Z",
+    "categories": ["games"],
+    "tags": ["multiplayer"]
   }
 ]
