@@ -9,7 +9,7 @@
         "dev:hub"
       ],
       "port": 5170,
-      "autoPort": false
+      "autoPort": true
     },
     {
       "name": "forest",

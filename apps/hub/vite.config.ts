@@ -1,8 +1,10 @@
 import { defineConfig } from 'vite';
 
+declare const process: { env: Record<string, string | undefined> };
+
 export default defineConfig({
   server: {
-    port: 5170,
+    port: Number(process.env.PORT) || 5170,
     strictPort: true,
     proxy: {
       '/api/notify': {
