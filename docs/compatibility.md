@@ -114,8 +114,9 @@ nothing.
   (`https://forest.example`), so there is nothing to register and another
   site cannot join your room from a browser. Different pages on the same
   origin share one room.
-- **Up to 16 people per world** on the hosted relay. Visitors past that play
-  single-player and retry in the background.
+- **Up to 16 people per world** on the hosted relay (64 in the hub lobby).
+  Visitors past that see a full-screen “World is full” / “Lobby is full”
+  overlay instead of joining silently alone.
 - **Your own relay.** Deploy `workers/presence` to your own Cloudflare
   account and pass `multiplayer: { server: 'wss://your-relay.example' }`. The
   traffic and cost are then yours, and you can raise the limit.
@@ -152,7 +153,7 @@ world.dispose()
 
 Events: `update`, `portal:enter`, `portal:exit`, `portal:activate`,
 `view:change`, `pointer:lock`, `interact`, `respawn`, `avatar:load`,
-`avatar:error`, `players`, `vr:enter`, `vr:exit`.
+`avatar:error`, `players`, `room:full`, `vr:enter`, `vr:exit`.
 
 ## The manifest
 

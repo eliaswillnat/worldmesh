@@ -605,6 +605,8 @@ const MAX_LAG = 0.25;
 const SMOOTH_FRAMES = 3;
 const MAX_WAIT = 0.5;
 
+const WHITE = new Color(1, 1, 1);
+
 export function createSpawnRay(
   height: number,
   /** A layer the floor mirror does not draw: the dais's lights go on it so they are not reflected. */
@@ -614,6 +616,8 @@ export function createSpawnRay(
   /** The dais under the beam. Solid, so a visitor can stand on it. */
   colliders: Mesh[];
   setTheme(light: boolean): void;
+  /** Tint the beam towards a visitor's colour, kept half white so it stays light. */
+  setTint(color: string): void;
   /** Restart the fade-in → hold → fade-out when a visitor spawns (this one or
    *  someone else). Pass `performance.now()` from the Walk click so the beam
    *  begins then. While it is still lit, it holds again rather than restarting. */
@@ -628,8 +632,9 @@ export function createSpawnRay(
   const time = { value: 0 };
   const theme = { value: 0 };
   const presence = { value: 0 };
-  const haloMaterial = createGodRayMaterial({ length: height, gain: 0.72, time, theme, presence });
-  const beamMaterial = createGodRayMaterial({ length: height, gain: 1.15, time, theme, presence });
+  const tint = new Color(1, 1, 1);
+  const haloMaterial = createGodRayMaterial({ length: height, gain: 0.72, time, theme, presence, tint });
+  const beamMaterial = createGodRayMaterial({ length: height, gain: 1.15, time, theme, presence, tint });
   const halo = new Mesh(new CylinderGeometry(1.35, 1.35, height, 128, 64, true), haloMaterial);
   const beam = new Mesh(new CylinderGeometry(0.7, 0.7, height, 160, 80, true), beamMaterial);
   halo.position.y = height / 2;
@@ -813,6 +818,9 @@ export function createSpawnRay(
   return {
     object: group,
     colliders: [dressing.step, base, top],
+    setTint(color: string) {
+      tint.set(color).lerp(WHITE, 0.5);
+    },
     setTheme(light: boolean) {
       theme.value = light ? 1 : 0;
       deckMaterial.color.set(light ? 0xf1f4fa : 0x030304);

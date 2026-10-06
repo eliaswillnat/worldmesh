@@ -41,6 +41,11 @@ export async function onRequestGet(context: {
     email?: string;
     submittedAt?: string;
     approveToken: string;
+    categories?: string[];
+    tags?: string[];
+    color?: string;
+    preview?: string | string[];
+    featured?: boolean;
   };
 
   if (entry.approveToken !== token) {
@@ -55,6 +60,12 @@ export async function onRequestGet(context: {
     cover: entry.cover,
     creator: entry.creator,
     portfolio: entry.portfolio,
+    // Set in the admin dashboard before approving.
+    categories: entry.categories,
+    tags: entry.tags,
+    color: entry.color,
+    preview: entry.preview,
+    featured: entry.featured,
     approvedAt: new Date().toISOString(),
     addedAt: new Date().toISOString(),
   };

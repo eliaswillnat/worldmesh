@@ -41,6 +41,9 @@ import {
 } from './render';
 import type { AdminSession } from './session';
 
+/** apps/hub HUB_VISIT_KEY: the hub's own visit count in the views store. */
+const HUB_VISIT_KEY = 'worldmesh:hub';
+
 type Page = (request: Request, env: Env, admin: AdminSession) => Promise<Response>;
 
 function render(env: Env, admin: AdminSession, path: string, title: string, body: string, refresh?: number): Response {
@@ -212,7 +215,9 @@ export const worldsPage: Page = async (_request, env, admin) => {
     if (room.room.startsWith('world:') && room.stats.ok) liveByOrigin.set(room.room.slice(6), room.stats.value.peers.length);
   }
   const viewMap = value(counts);
-  const totalViews = viewMap ? [...viewMap.values()].reduce((a, b) => a + b, 0) : null;
+  // The hub counts its own visits in the same store; that is not a world view.
+  const hubVisits = viewMap ? (viewMap.get(HUB_VISIT_KEY) ?? 0) : null;
+  const totalViews = viewMap ? [...viewMap.values()].reduce((a, b) => a + b, 0) - (hubVisits ?? 0) : null;
   const originOf = (url?: string) => {
     try {
       return new URL(url ?? '').origin.toLowerCase();
@@ -226,6 +231,7 @@ export const worldsPage: Page = async (_request, env, admin) => {
     stat('Listed', d ? num(d.approved.length) : '—'),
     stat('Waiting for review', d ? num(d.pending.length) : '—'),
     stat('Total views', totalViews === null ? '—' : num(totalViews), 'deduped per visitor, 30 min'),
+    stat('Hub visits', hubVisits === null ? '—' : num(hubVisits), 'all time, deduped per visitor, 30 min'),
     stat('People in worlds now', rooms ? num([...liveByOrigin.values()].reduce((a, b) => a + b, 0)) : '—'),
   );
 
@@ -239,7 +245,7 @@ export const worldsPage: Page = async (_request, env, admin) => {
           `<span class="cell-main">${esc(world.name ?? world.id)}</span><div class="cell-sub">${link(world.url)}</div>${world.description ? `<div class="cell-sub">${esc(world.description)}</div>` : ''}`,
           `${esc(world.creator ?? '—')}<div class="cell-sub">${esc(world.email ?? '')}</div>${world.portfolio ? `<div class="cell-sub">${link(world.portfolio)}</div>` : ''}`,
           esc(ago(Date.parse(world.submittedAt ?? ''), at)),
-          approve ? `<a class="button" href="${esc(approve)}" target="_blank" rel="noopener noreferrer">Approve</a>` : '',
+          `<a class="button" href="/worlds/edit?id=${esc(encodeURIComponent(world.id))}">Review</a>${approve ? ` <a href="${esc(approve)}" target="_blank" rel="noopener noreferrer">Approve as is</a>` : ''}`,
         ];
       }),
       'No submissions waiting.',
@@ -256,7 +262,7 @@ export const worldsPage: Page = async (_request, env, admin) => {
           const live = liveByOrigin.get(originOf(world.url));
           return [
             cover(world),
-            `<span class="cell-main">${esc(world.name ?? world.id)}</span> ${world.curatedBy ? pill('curated', 'info') : ''}<div class="cell-sub">${link(world.url)}</div>`,
+            `<a class="cell-main" href="/worlds/edit?id=${esc(encodeURIComponent(world.id))}">${esc(world.name ?? world.id)}</a> ${world.curatedBy ? pill('curated', 'info') : ''}<div class="cell-sub">${link(world.url)}</div>`,
             `${esc(world.creator ?? '—')}<div class="cell-sub">${esc(world.email ?? '')}</div>`,
             esc(ago(Date.parse(world.approvedAt ?? world.addedAt ?? ''), at)),
             `<span class="mono">${viewMap ? num(viewMap.get(world.url ?? '') ?? 0) : '—'}</span>`,

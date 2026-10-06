@@ -16,9 +16,9 @@ import { chatRejection } from './chatFilter';
  * visitors of the same space see each other.
  *
  * Protocol (JSON text frames):
- *   server → client  { t: 'welcome', id, peers: [{ id, p, r, e, n, a, g }] }
- *   client → server  { t: 's', p: [x, y, z], r: yaw, e?: expression, n?: username, a?: alias, g?: grounded }
- *   server → client  { t: 's', id, p, r, e, n, a, g? }   another peer moved ('' n and a = guest; g 1 on the ground, 0 in the air)
+ *   server → client  { t: 'welcome', id, peers: [{ id, p, r, e, n, a, g, k }] }
+ *   client → server  { t: 's', p: [x, y, z], r: yaw, e?: expression, n?: username, a?: alias, g?: grounded, k?: '#rrggbb' }
+ *   server → client  { t: 's', id, p, r, e, n, a, g?, k }   another peer moved ('' n and a = guest; g 1 on the ground, 0 in the air; '' k = default colour)
  *   client → server  { t: 'c', m }             a short line of chat
  *   server → client  { t: 'c', id, m }         that line, for everyone else
  *   server → client  { t: 'leave', id }        another peer left
@@ -46,6 +46,8 @@ interface Peer {
   a: string;
   /** 1 standing on something, 0 in the air; absent from clients too old to say. */
   g?: 0 | 1;
+  /** Body colour, '#rrggbb', or '' for the default. */
+  k: string;
   /** False until the peer has sent its first position. */
   seen: boolean;
   /** Last time this peer sent a chat line, so they cannot flood the room. */
@@ -68,10 +70,32 @@ const EXPRESSION = /^[a-z]{1,16}$/;
 const USERNAME = /^[a-z][a-z0-9_]{2,29}$/;
 /** Two capitalised words; cannot be mistaken for a username, which is lower case. */
 const ALIAS = /^[A-Z][a-z]{1,11} [A-Z][a-z]{1,11}$/;
+const COLOR = /^#[0-9a-f]{6}$/;
+/** Public occupancy reads are counts only; never peer names. */
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+};
+/** How many world origins one occupancy request may ask about. */
+const MAX_OCCUPANCY_ORIGINS = 50;
+/** Named rooms (e.g. lobby) on the same public occupancy read. */
+const MAX_OCCUPANCY_ROOMS = 20;
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { status: 204, headers: CORS });
+    }
+
+    // Public read: how full each world's presence room is (count + cap, no names).
+    // The hub polls this to blur door covers before someone walks into a full world.
+    if (request.method === 'GET' && url.pathname === '/occupancy') {
+      return occupancy(url, env);
+    }
+
     let name: string;
     let kind: 'room' | 'world';
     const match = url.pathname.match(/^\/room\/([a-z0-9-]{1,64})$/i);
@@ -88,16 +112,67 @@ export default {
       return new Response('WorldMesh presence', { status: 404 });
     }
 
+    const room = env.ROOMS.get(env.ROOMS.idFromName(name));
+
     if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
+      // Browsers never see the 503 on a failed upgrade. A plain GET to the
+      // same path is the public stand-in: 503 + "Room is full", or count/cap.
+      if (request.method === 'GET') {
+        return room.occupancyHttp(kind === 'world');
+      }
       return new Response('Expected a WebSocket upgrade', { status: 426 });
     }
 
     const forwarded = new Request(request);
     forwarded.headers.set(ROOM_HEADER, kind);
-    const room = env.ROOMS.get(env.ROOMS.idFromName(name));
     return room.fetch(forwarded);
   },
 };
+
+/**
+ * GET /occupancy?origins=https://a.example,https://b.example&rooms=lobby
+ * → { "https://a.example": { count, cap }, "room:lobby": { count, cap }, ... }
+ *
+ * Cap is the live room limit. Counts are open sockets; peer names stay private.
+ */
+async function occupancy(url: URL, env: Env): Promise<Response> {
+  const raw = url.searchParams.get('origins') ?? url.searchParams.get('origin') ?? '';
+  const origins = [
+    ...new Set(
+      raw
+        .split(',')
+        .map((value) => worldOrigin(value.trim()))
+        .filter((origin): origin is string => !!origin),
+    ),
+  ].slice(0, MAX_OCCUPANCY_ORIGINS);
+
+  const named = [
+    ...new Set(
+      (url.searchParams.get('rooms') ?? url.searchParams.get('room') ?? '')
+        .split(',')
+        .map((value) => value.trim().toLowerCase())
+        .filter((name) => /^[a-z0-9-]{1,64}$/.test(name)),
+    ),
+  ].slice(0, MAX_OCCUPANCY_ROOMS);
+
+  const rooms: Record<string, { count: number; cap: number }> = {};
+  await Promise.all([
+    ...origins.map(async (origin) => {
+      const stub = env.ROOMS.get(env.ROOMS.idFromName(`world:${origin}`));
+      const { count } = await stub.occupancy();
+      rooms[origin] = { count, cap: MAX_WORLD_PEERS };
+    }),
+    ...named.map(async (name) => {
+      const stub = env.ROOMS.get(env.ROOMS.idFromName(name));
+      const { count } = await stub.occupancy();
+      rooms[`room:${name}`] = { count, cap: MAX_ROOM_PEERS };
+    }),
+  ]);
+  return new Response(JSON.stringify(rooms), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json', ...CORS },
+  });
+}
 
 /** 'https://forest.example' (scheme + host + port), or null for opaque/odd origins. */
 function worldOrigin(header: string | null): string | null {
@@ -115,10 +190,12 @@ export class Room extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
     const isWorld = request.headers.get(ROOM_HEADER) === 'world';
     const sockets = this.ctx.getWebSockets();
-    if (sockets.length >= (isWorld ? MAX_WORLD_PEERS : MAX_ROOM_PEERS)) return new Response('Room is full', { status: 503 });
+    if (sockets.length >= (isWorld ? MAX_WORLD_PEERS : MAX_ROOM_PEERS)) {
+      return new Response('Room is full', { status: 503, headers: CORS });
+    }
 
     const { 0: client, 1: server } = new WebSocketPair();
-    const peer: Peer = { id: crypto.randomUUID().slice(0, 8), p: [0, 0, 0], r: 0, e: 'smile', n: '', a: '', seen: false, chatAt: 0, notify: !isWorld };
+    const peer: Peer = { id: crypto.randomUUID().slice(0, 8), p: [0, 0, 0], r: 0, e: 'smile', n: '', a: '', k: '', seen: false, chatAt: 0, notify: !isWorld };
 
     this.ctx.acceptWebSocket(server);
     server.serializeAttachment(peer);
@@ -126,7 +203,7 @@ export class Room extends DurableObject<Env> {
     const peers = sockets
       .map((ws) => ws.deserializeAttachment() as Peer | null)
       .filter((other): other is Peer => !!other?.seen)
-      .map(({ id, p, r, e, n, a, g }) => ({ id, p, r, e, n: n ?? '', a: a ?? '', g }));
+      .map(({ id, p, r, e, n, a, g, k }) => ({ id, p, r, e, n: n ?? '', a: a ?? '', g, k: k ?? '' }));
     server.send(JSON.stringify({ t: 'welcome', id: peer.id, peers }));
 
     return new Response(null, { status: 101, webSocket: client });
@@ -135,7 +212,7 @@ export class Room extends DurableObject<Env> {
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     if (typeof message !== 'string' || message.length > MAX_MESSAGE_BYTES) return;
 
-    let data: { t?: unknown; p?: unknown; r?: unknown; e?: unknown; n?: unknown; a?: unknown; g?: unknown; m?: unknown };
+    let data: { t?: unknown; p?: unknown; r?: unknown; e?: unknown; n?: unknown; a?: unknown; g?: unknown; k?: unknown; m?: unknown };
     try {
       data = JSON.parse(message);
     } catch {
@@ -167,10 +244,11 @@ export class Room extends DurableObject<Env> {
     if (typeof data.n === 'string') peer.n = USERNAME.test(data.n) ? data.n : '';
     peer.a = typeof data.a === 'string' && ALIAS.test(data.a) ? data.a : '';
     peer.g = data.g === 0 || data.g === 1 ? data.g : undefined;
+    peer.k = typeof data.k === 'string' && COLOR.test(data.k.toLowerCase()) ? data.k.toLowerCase() : '';
     peer.seen = true;
     ws.serializeAttachment(peer);
 
-    this.broadcast(JSON.stringify({ t: 's', id: peer.id, p: peer.p, r: peer.r, e: peer.e, n: peer.n ?? '', a: peer.a ?? '', g: peer.g }), ws);
+    this.broadcast(JSON.stringify({ t: 's', id: peer.id, p: peer.p, r: peer.r, e: peer.e, n: peer.n ?? '', a: peer.a ?? '', g: peer.g, k: peer.k ?? '' }), ws);
   }
 
   async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
@@ -198,6 +276,28 @@ export class Room extends DurableObject<Env> {
       .filter((peer): peer is Peer => !!peer?.seen)
       .map((peer) => ({ id: peer.id, name: peer.n ?? '', alias: peer.a ?? '', position: peer.p }));
     return { connections: sockets.length, peers };
+  }
+
+  /**
+   * Open socket count only. Served publicly via GET /occupancy so the hub can
+   * mark full world doors without reading peer names or positions.
+   */
+  async occupancy(): Promise<{ count: number }> {
+    return { count: this.ctx.getWebSockets().length };
+  }
+
+  /** Plain GET to /room/… or /world — browsers use this after a silent failed upgrade. */
+  async occupancyHttp(isWorld: boolean): Promise<Response> {
+    const cap = isWorld ? MAX_WORLD_PEERS : MAX_ROOM_PEERS;
+    const count = this.ctx.getWebSockets().length;
+    const full = count >= cap;
+    return new Response(full ? 'Room is full' : JSON.stringify({ count, cap }), {
+      status: full ? 503 : 200,
+      headers: {
+        'Content-Type': full ? 'text/plain; charset=utf-8' : 'application/json',
+        ...CORS,
+      },
+    });
   }
 
   /** Tell the owner on Telegram that someone started walking in this room. */

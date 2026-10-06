@@ -75,6 +75,18 @@ export function getUsername(): string | null {
   return user?.username ?? null;
 }
 
+/** The signed-in visitor's account id, or null for guests. */
+export function getAccountId(): string | null {
+  return user?.id ?? null;
+}
+
+const accountListeners = new Set<() => void>();
+
+/** Called whenever the visitor signs in or out (including the first check). */
+export function onAccountChange(listener: () => void): void {
+  accountListeners.add(listener);
+}
+
 /**
  * Where to go after signing in, when a page elsewhere on this origin sent the
  * visitor here to sign in (the ad moderation page: /?login=1&next=/api/ads/admin/...).
@@ -153,6 +165,7 @@ async function refresh(openIfNoUsername: boolean): Promise<void> {
     setHint(!!user);
     setSignedIn(!!user);
     renderButton();
+    for (const listener of accountListeners) listener();
     if (dialog.open) renderDialog();
     if (user && openWallet) {
       openWallet = false;
@@ -292,6 +305,7 @@ async function signOut(): Promise<void> {
     setHint(false);
     setSignedIn(false);
     renderButton();
+    for (const listener of accountListeners) listener();
     dialog.close();
   });
 }

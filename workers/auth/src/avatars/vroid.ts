@@ -14,7 +14,7 @@
  */
 import type { Env } from '../auth';
 import { pkceChallenge, randomToken } from './crypto';
-import { jsonObject, providerFetch } from './net';
+import { dig, jsonObject, parseMetadata, providerFetch } from './net';
 import { AvatarError, type AvatarProvider, type ConnectionRow, type ProviderAvatar, type ProviderContext } from './types';
 
 export const VROID_HUB = 'https://hub.vroid.com';
@@ -243,21 +243,4 @@ function toAvatar(model: Json): ProviderAvatar | null {
       private: model.is_private === true,
     },
   };
-}
-
-function parseMetadata(json: string | null): Json {
-  try {
-    return (json ? JSON.parse(json) : {}) as Json;
-  } catch {
-    return {};
-  }
-}
-
-function dig(value: unknown, ...path: string[]): unknown {
-  let current = value;
-  for (const key of path) {
-    if (!current || typeof current !== 'object') return undefined;
-    current = (current as Json)[key];
-  }
-  return current;
 }

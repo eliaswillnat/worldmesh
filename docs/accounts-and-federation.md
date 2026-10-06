@@ -129,7 +129,7 @@ an https tunnel.
 | `ap_delivery` | federation | outgoing delivery queue with retries |
 | `ap_inbox_seen` | federation | received activity ids (dedup/replay), pruned after 14 days |
 | `ap_interaction` | federation | likes, boosts, replies (references only) |
-| `avatar_connection` | Avatar Wallet | a connected VRoid Hub / AT Protocol account (VRoid tokens AES-GCM encrypted; none for AT Protocol) |
+| `avatar_connection` | Avatar Wallet | a connected VRoid Hub / AT Protocol / Sketchfab account (VRoid and Sketchfab tokens AES-GCM encrypted; none for AT Protocol) |
 | `avatar` | Avatar Wallet | the one avatar a user picked: provider id, name, thumbnail URL. Never the model |
 
 The public directory still comes from KV (`/api/worlds`). The `world` table is
@@ -212,11 +212,12 @@ creator (and once for the instance actor).
 
 How it works: [avatar-wallet.md](avatar-wallet.md). Separate from federation.
 
-1. Migrate: `npx wrangler d1 migrations apply worldmesh --remote --config workers/auth/wrangler.toml` (adds `0004_avatar_wallet.sql`).
+1. Migrate: `npx wrangler d1 migrations apply worldmesh --remote --config workers/auth/wrangler.toml` (adds `0004_avatar_wallet.sql` and `0006_avatar_sketchfab.sql`).
 2. `npx wrangler secret put AVATAR_SECRET --config workers/auth/wrangler.toml` (`openssl rand -base64 32`). The wallet stays hidden until it is set.
-3. VRoid Hub: register as a developer at hub.vroid.com/en/developer/registration, create an application at hub.vroid.com/oauth/applications with redirect URI `https://worldmesh.net/api/account/avatar/callback/vroid` and scope `default` (set `VROID_SCOPE` if you choose another), then `wrangler secret put VROID_CLIENT_ID` and `VROID_CLIENT_SECRET`.
-4. at3d / AT Protocol: nothing to register. The client id is `https://worldmesh.net/api/account/avatar/atproto/client-metadata.json`, served by the Worker.
-5. No new Worker routes: everything lives under the existing `worldmesh.net/api/account/*` route.
+3. Sketchfab: ask Sketchfab support for OAuth credentials (sketchfab.com/developers/oauth) with the authorization code grant and redirect URI `https://worldmesh.net/api/account/avatar/callback/sketchfab`, then `wrangler secret put SKETCHFAB_CLIENT_ID` and `SKETCHFAB_CLIENT_SECRET`.
+4. VRoid Hub: register as a developer at hub.vroid.com/en/developer/registration, create an application at hub.vroid.com/oauth/applications with redirect URI `https://worldmesh.net/api/account/avatar/callback/vroid` and scope `default` (set `VROID_SCOPE` if you choose another), then `wrangler secret put VROID_CLIENT_ID` and `VROID_CLIENT_SECRET`.
+5. at3d / AT Protocol: nothing to register. The client id is `https://worldmesh.net/api/account/avatar/atproto/client-metadata.json`, served by the Worker.
+6. No new Worker routes: everything lives under the existing `worldmesh.net/api/account/*` route.
 
 ## Local development
 

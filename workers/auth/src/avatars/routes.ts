@@ -23,6 +23,7 @@ import { atprotoClientMetadata, atprotoProvider } from './atproto';
 import { open, seal } from './crypto';
 import { mintTicket, readTicket } from './handoff';
 import { UnsafeUrlError } from './net';
+import { sketchfabProvider } from './sketchfab';
 import * as store from './store';
 import { AvatarError, type AvatarProvider, type AvatarProviderId, type ConnectionRow, type OAuthFlow, type ProviderContext } from './types';
 import { vroidProvider } from './vroid';
@@ -31,6 +32,7 @@ export const AVATAR_BASE_PATH = '/api/account/avatar';
 
 /** Display order in the wallet. Add a provider here and nowhere else. */
 export const PROVIDERS: Record<AvatarProviderId, AvatarProvider> = {
+  sketchfab: sketchfabProvider,
   vroid: vroidProvider,
   atproto: atprotoProvider,
 };

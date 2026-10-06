@@ -41,6 +41,7 @@ export { immersiveVrSupported, requestImmersiveVr, IMMERSIVE_VR } from './xr/ses
 export { deserializePlayerState, serializePlayerState } from './net/adapter.js';
 export { DEFAULT_PRESENCE_SERVER, Presence } from './net/presence.js';
 export type { PresenceOptions } from './net/presence.js';
+export { isRoomFullSignal, occupancyIsFull, occupancyProbeUrl, probeRoomFull, roomFullLabel } from './net/roomFull.js';
 
 export const WORLDMESH_VERSION = '0.2.1';
 /** Bumped when the world-facing contract changes in an incompatible way. */

@@ -33,6 +33,8 @@ export interface Env {
   PRESENCE_URL?: string;
   /** Screenshot Worker's public base, for the health check. */
   SCREENSHOT_URL?: string;
+  /** Secret: workers/screenshot's SCREENSHOT_SECRET, if it has one (cover uploads). */
+  SCREENSHOT_SECRET?: string;
 
   /** Optional Cloudflare API access for traffic and Worker metrics. */
   CF_API_TOKEN?: string;
