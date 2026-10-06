@@ -1319,6 +1319,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   function setColor(next: string): void {
     color = next;
     setAvatarColor(world.avatar, next);
+    spawnRay.setTint(next);
   }
 
   if (options.color) setColor(options.color);
