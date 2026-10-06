@@ -564,16 +564,40 @@
         html:not(.mobile-adding) #creator-fields,
         html:not(.mobile-adding) #status { display: none !important; }
         /* Keep the gallery title clear of the two buttons. Not the walk overlay. */
-        .site-header h1 { padding-right: 116px; letter-spacing: 0.2em; }
+        .site-header h1 { padding-right: 150px; letter-spacing: 0.14em; }
       }
 
       /* ── Account ───────────────────────────────────────────────── */
       /* On mobile the header is sticky, which already anchors the button. */
-      @media (min-width: 601px) { .site-header { position: relative; } }
+      @media (min-width: 601px) {
+        /* Pinned while scrolling: slides away going down, back in going up. */
+        .site-header {
+          position: sticky;
+          top: 0;
+          z-index: 50;
+          margin-top: -4vh;
+          padding-top: 4vh;
+          padding-bottom: 12px;
+          background: var(--bg);
+        }
+        /* Centered on the same line as the fixed Visit pill (44px tall). */
+        .site-header .account-button { top: calc(max(16px, env(safe-area-inset-top)) + 22px); transform: translateY(-50%); height: 44px; padding: 0 16px; border-radius: 22px; }
+        .site-header h1 { margin-bottom: 2px; }
+      }
+      .site-header { transition: transform .25s ease; }
+      html.header-hidden .site-header { transform: translateY(-100%); }
+      /* Visit (and the phone menu button) ride along with the header. */
+      .walk-toggle, .mobile-menu-toggle { transition: transform .25s ease; }
+      html.header-hidden:not(.walking):not(.menu-open) .walk-toggle,
+      html.header-hidden:not(.walking):not(.menu-open) .mobile-menu-toggle {
+        /* Same distance as the header, so both slide at the same speed. */
+        transform: translateY(calc(-1 * var(--header-h, 200px)));
+      }
       .account-button {
         position: absolute;
         top: 0;
-        right: 0;
+        /* Sits just left of the fixed Visit pill, whatever the window width. */
+        right: calc(108px - (100vw - 100%) / 2);
         padding: 8px 16px;
         display: flex;
         align-items: center;
@@ -824,6 +848,20 @@
       .walk-toggle svg { width: 22px; height: 22px; display: block; }
       .walk-toggle .icon-list { display: none; }
       .walk-toggle-label { display: none; }
+      /* In the gallery the walker icon carries a "Visit" label. */
+      html:not(.walking) .walk-toggle {
+        width: auto;
+        padding: 0 14px 0 12px;
+        gap: 6px;
+        border-radius: 22px;
+      }
+      /* Same frame and type as Log in, which sits beside it. */
+      html:not(.walking) .walk-toggle { background: color-mix(in srgb, var(--bg) 96%, var(--text)); }
+      .walk-toggle-visit { line-height: 1; }
+      html.walking .walk-toggle-visit { display: none; }
+      @media (max-width: 600px) {
+        html:not(.walking) .walk-toggle { padding: 0 12px 0 9px; gap: 4px; }
+      }
       html.walking .walk-toggle {
         width: auto;
         height: 44px;
@@ -1916,10 +1954,8 @@
       }
       /* iOS Safari zooms the page into any focused field under 16px, which pushes
          the walk HUD off screen. Keep fields at 16px on touch screens. */
-      /* Phones only need the email; name, portfolio and description stay optional on desktop. */
-      @media (pointer: coarse) {
-        #creator-name, #creator-portfolio, #creator-description { display: none !important; }
-      }
+      /* Submitting only asks for an email; name and description still come from the world's manifest. */
+      #creator-name, #creator-portfolio, #creator-description { display: none !important; }
       @media (pointer: coarse) {
         input:not([type="range"]):not([type="checkbox"]):not([type="radio"]),
         textarea,
@@ -1938,6 +1974,7 @@
         <rect x="3" y="14" width="7" height="7" rx="1.5"/>
         <rect x="14" y="14" width="7" height="7" rx="1.5"/>
       </svg>
+      <span class="walk-toggle-visit">Visit</span>
       <span class="walk-toggle-label">Go to Gallery</span>
     </button>
     <dialog class="walk-confirm" id="walk-confirm" aria-labelledby="walk-confirm-title">
