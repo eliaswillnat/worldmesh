@@ -604,6 +604,13 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         onFigure: (root) => {
           newestFigure = root;
         },
+        // The lifts are shared: everyone sees the same cab at the same floor,
+        // and anyone riding one is drawn standing on its floor.
+        onShared: (key, value, { age }) => {
+          const match = /^lift:(\d)$/.exec(key);
+          if (match) lifts.applyShared(Number(match[1]), { f: value.f, y: value.y, v: value.v }, age);
+        },
+        place: (position, grounded) => lifts.ground(position, grounded),
         // Someone arriving gets the same show as we do: the beam, their figure
         // assembling out of three point clones, and the ring across the floor.
         onArrive: (x, z) => {
@@ -615,6 +622,9 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         },
       })
     : undefined;
+  lifts.onSend = (index, state) => {
+    presence?.share(`lift:${index}`, { f: state.f, y: Math.round(state.y * 100) / 100, v: Math.round(state.v * 100) / 100 });
+  };
 
   // The citadel's walls (solid) and trim (just for looks). Rebuilt whenever
   // the door count changes.
@@ -696,6 +706,18 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   for (const type of ['pointerdown', 'pointerup']) liftPrompt.addEventListener(type, (event) => event.stopPropagation());
   container.appendChild(liftPrompt);
 
+  // At a lift's door when the cab is elsewhere: call it (E on a keyboard).
+  const callPrompt = document.createElement('button');
+  callPrompt.type = 'button';
+  callPrompt.className = 'walk-add-prompt walk-call-prompt';
+  callPrompt.addEventListener('pointerdown', (event) => {
+    event.stopPropagation();
+    event.preventDefault();
+    callLift();
+  });
+  callPrompt.addEventListener('pointerup', (event) => event.stopPropagation());
+  container.appendChild(callPrompt);
+
   // Offered while a billboard is under the crosshair (or centred on a phone).
   const adPrompt = document.createElement('button');
   adPrompt.type = 'button';
@@ -748,9 +770,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       }
       // In a lift: carried with the cab, and kept inside its glass.
       if (!emerging && !warping) {
-        const held = lifts.update(dt, liftPoint.fromArray(handle.getState().position));
+        const held = lifts.update(dt, liftPoint.fromArray(handle.getState().position), presence?.bodies() ?? []);
         if (held) world.setState({ position: held.toArray() });
         updateLiftPrompt();
+      } else {
+        callPrompt.classList.remove('visible');
       }
       const [x, y, z] = handle.getState().position;
       // Only doors on the floor they are standing on.
@@ -1048,14 +1072,25 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   });
   world.on('interact', () => {
     if (lifts.move(liftPoint.fromArray(world.getState().position), 1)) return;
+    if (callLift()) return;
     if (nearEmpty) addWorld();
   });
+
+  /** At a lift's door: bring the cab here, or queue for it. False when not at one. */
+  function callLift(): boolean {
+    const call = lifts.callable(liftPoint.fromArray(world.getState().position));
+    if (!call) return false;
+    if (call.state === 'idle') lifts.call(call.index, call.floor, presence?.bodies() ?? []);
+    updateLiftPrompt();
+    return true;
+  }
 
   /** Inside a standing lift: which floor to go to. */
   function updateLiftPrompt(): void {
     const inside = lifts.aboard(liftPoint.fromArray(world.getState().position));
     const show = !!inside && !inside.moving;
     liftPrompt.classList.toggle('visible', show);
+    updateCallPrompt();
     if (!inside) return;
     liftPrompt.dataset.lift = String(inside.index);
     // No going up from the top or down from the bottom.
@@ -1063,6 +1098,23 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       const next = inside.floor + Number(button.dataset.step);
       button.disabled = next < 0 || next >= FLOOR_NAMES.length;
     }
+  }
+
+  /** At a lift's door: the call button, or how the call is going. */
+  function updateCallPrompt(): void {
+    const call = lifts.callable(liftPoint.fromArray(world.getState().position));
+    callPrompt.classList.toggle('visible', !!call);
+    if (!call) return;
+    const text =
+      call.state === 'coming'
+        ? 'Lift on its way…'
+        : call.state === 'waiting'
+          ? 'Lift in use · it comes next'
+          : isTouch
+            ? 'Tap to call the lift'
+            : 'Press E or click to call the lift';
+    if (callPrompt.textContent !== text) callPrompt.textContent = text;
+    callPrompt.dataset.state = call.state;
   }
 
   // Pointer: clicking or tapping a tower door or a billboard. While the mouse
@@ -1922,6 +1974,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     lifts.dispose();
     liftTrim.dispose();
     liftPrompt.remove();
+    callPrompt.remove();
     departures.dispose();
     cityMaterials.dispose();
     sky.geometry.dispose();

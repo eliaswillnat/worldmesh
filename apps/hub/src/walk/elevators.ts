@@ -19,8 +19,13 @@ import { GALLERY_LEVELS, galleryEdge, type RailGap } from './rotunda';
  * Glass lifts up the rotunda's galleries, like the scenic lifts in an atrium.
  * Each stands in a round glass shaft just in front of the first gallery and
  * stops at the hall floor, the first gallery (step straight across) and the
- * second (across a small square landing). Walk up to its door and it comes to
- * you; inside, E takes it up a floor and Q down, or pick one from the buttons.
+ * second (across a small square landing). Call it from its door and it comes
+ * to you; inside, E takes it up a floor and Q down, or pick one from the buttons.
+ *
+ * The cabs are shared: everyone in the room sees the same cab at the same
+ * floor. Each client runs the same motion; only the choices (where a cab is
+ * going, and from where) travel, through `onSend` and `applyShared`. A call
+ * while someone else is riding waits until they step out.
  */
 
 /** Exits (quarter turns from A) the lifts stand in front of. */
@@ -34,8 +39,15 @@ const OPEN_HALF = (52 * Math.PI) / 180;
 const INSIDE = CAB - 0.35;
 /** Stand this close to a closed shaft and you are kept out. */
 const OUTSIDE = CAB + 0.4;
-/** Walk this close to the door on your floor and the cab comes for you. */
+/** Stand this close to the door on your floor to be offered the call button. */
 const CALL_REACH = 3;
+/**
+ * Someone else standing in a cab holds a call this long, then it goes ahead
+ * and takes them along, so nobody can park in a lift and keep it.
+ */
+const HOLD_S = 8;
+/** A shared state further than this from where a cab is here moves it there. */
+const DRIFT = 0.75;
 const MAX_SPEED = 4.5;
 const ACCEL = 4;
 const RAIL = 1.1;
@@ -66,6 +78,32 @@ interface Lift {
   floor: Mesh;
   /** The glass door on the hall side, open only while the cab stands at the hall floor. */
   door: Mesh;
+  /** A call from this visitor waiting for the cab to be free, or null. */
+  queued: number | null;
+  /** Seconds someone else has stood in the standing cab. */
+  held: number;
+}
+
+/** A lift's shared state: where it is heading (`f`), from where (`y`) and how fast (`v`). */
+export interface LiftShared {
+  f: number;
+  y: number;
+  v: number;
+}
+
+/** Where a call stands, for the prompt at a lift's door. */
+export interface LiftCall {
+  index: number;
+  /** The floor the caller stands on. */
+  floor: number;
+  /** 'idle': not called yet. 'coming': on its way. 'waiting': someone else is in it. */
+  state: 'idle' | 'coming' | 'waiting';
+}
+
+interface Body {
+  x: number;
+  y: number;
+  z: number;
 }
 
 /** A point `r` out along `angle`, `side` metres to its side, at height `y`. */
@@ -182,6 +220,10 @@ export class Lifts {
   private body: Material;
   private floorMaterial: Material;
   private geometries: BufferGeometry[] = [];
+  /** Shared states heard before the lifts were built, applied when they are. */
+  private pending = new Map<number, LiftShared>();
+  /** Told whenever this visitor sends a cab somewhere, to pass on to everyone else. */
+  onSend: (index: number, state: LiftShared) => void = () => {};
 
   constructor(materials: { glass: Material; trim: MeshBasicMaterial; body: Material; floor: Material }) {
     this.glass = materials.glass;
@@ -197,6 +239,8 @@ export class Lifts {
   }
 
   setLifts(plan: ReturnType<typeof planLifts>): void {
+    // A rebuilt hall keeps its cabs where they were.
+    const before = this.lifts.map(({ y, velocity, target, queued }) => ({ y, velocity, target, queued }));
     this.clear();
     for (const { angle, r } of plan.centres) {
       const centre = at(angle, r, 0, 0);
@@ -256,8 +300,15 @@ export class Lifts {
         cab,
         floor,
         door,
+        queued: null,
+        held: 0,
       });
+      const index = this.lifts.length - 1;
+      Object.assign(this.lifts[index], before[index]);
+      const pending = this.pending.get(index);
+      if (pending) this.applyShared(index, pending, 0);
     }
+    this.pending.clear();
     this.place();
   }
 
@@ -265,19 +316,26 @@ export class Lifts {
    * Move the cabs, answer calls, and keep the visitor where they may be.
    * Returns where they should be (carried, or held back from glass), or null.
    */
-  update(dt: number, position: Vector3): Vector3 | null {
+  update(dt: number, position: Vector3, others: Iterable<Body> = []): Vector3 | null {
     let result: Vector3 | null = null;
-    for (const lift of this.lifts) {
+    const bodies = [...others];
+    for (let index = 0; index < this.lifts.length; index++) {
+      const lift = this.lifts[index];
       const dx = position.x - lift.x;
       const dz = position.z - lift.z;
       const distance = Math.hypot(dx, dz);
       const aboard = distance < CAB && Math.abs(position.y - lift.y) < 0.6;
-      const moving = lift.velocity !== 0 || Math.abs(lift.y - FLOORS[lift.target]) > 1e-3;
+      const moving = isMoving(lift);
 
-      // Walk up to the door on your floor and the cab comes to you.
-      if (!aboard && !moving && distance < CALL_REACH) {
-        const floor = FLOORS.findIndex((y) => Math.abs(position.y - y) < 0.6);
-        if (floor >= 0 && floor !== lift.target) lift.target = floor;
+      // A waiting call goes once the cab stands empty (or has been kept long enough).
+      const occupied = bodies.some((body) => this.inCab(lift, body));
+      lift.held = !moving && occupied ? lift.held + dt : 0;
+      if (lift.queued !== null) {
+        if (lift.queued === lift.target && !moving) lift.queued = null;
+        else if (!moving && (!occupied || lift.held >= HOLD_S)) {
+          this.send(index, lift.queued);
+          lift.queued = null;
+        }
       }
 
       this.step(lift, dt);
@@ -309,6 +367,78 @@ export class Lifts {
     return result;
   }
 
+  /**
+   * Draw someone else riding a cab on its floor. Their reported height trails
+   * the cab by a network moment, which would sink them into a rising floor or
+   * float them over a falling one.
+   */
+  ground(position: Vector3, grounded: boolean): void {
+    for (const lift of this.lifts) {
+      if (Math.hypot(position.x - lift.x, position.z - lift.z) >= CAB) continue;
+      const floor = lift.y + FLOOR_LIFT;
+      // Jumping in a standing cab still shows; in a moving one it is all riding.
+      if (Math.abs(position.y - floor) < 1.5 && (grounded || isMoving(lift))) position.y = floor;
+      return;
+    }
+  }
+
+  /**
+   * Near a lift's door on a floor where its cab is not standing: whether it
+   * can be called, is on its way, or is waiting on someone else to get out.
+   */
+  callable(position: Vector3): LiftCall | null {
+    for (let index = 0; index < this.lifts.length; index++) {
+      const lift = this.lifts[index];
+      const distance = Math.hypot(position.x - lift.x, position.z - lift.z);
+      if (distance >= CALL_REACH || distance < CAB) continue;
+      const floor = FLOORS.findIndex((y) => Math.abs(position.y - y) < 0.6);
+      if (floor < 0) continue;
+      const moving = isMoving(lift);
+      if (lift.queued === floor) return { index, floor, state: 'waiting' };
+      if (lift.target === floor) return moving ? { index, floor, state: 'coming' } : null;
+      return { index, floor, state: 'idle' };
+    }
+    return null;
+  }
+
+  /**
+   * Call a cab to a floor. It comes now if it is free; if it is moving or
+   * someone else stands in it, the call waits its turn.
+   */
+  call(index: number, floor: number, others: Iterable<Body> = []): void {
+    const lift = this.lifts[index];
+    if (!lift || floor < 0 || floor >= FLOORS.length || lift.target === floor) return;
+    const occupied = [...others].some((body) => this.inCab(lift, body));
+    if (isMoving(lift) || occupied) lift.queued = floor;
+    else this.send(index, floor);
+  }
+
+  /**
+   * Someone (maybe this visitor, echoed back) sent a cab somewhere. Every
+   * client takes the writes in the relay's order, so they agree on the last.
+   * `age` is how long ago it happened, for state remembered from before joining.
+   */
+  applyShared(index: number, state: LiftShared, age: number): void {
+    const target = Math.round(state.f);
+    if (!(target >= 0 && target < FLOORS.length) || !Number.isFinite(state.y) || !Number.isFinite(state.v)) return;
+    const lift = this.lifts[index];
+    if (!lift) {
+      this.pending.set(index, state);
+      return;
+    }
+    lift.target = target;
+    if (lift.queued === target) lift.queued = null;
+    // Remembered state is replayed from where it started; a live write only
+    // moves the cab when this client had it somewhere else.
+    if (age > 0 || Math.abs(lift.y - state.y) > DRIFT) {
+      lift.y = state.y;
+      lift.velocity = state.v;
+      // Catch up on the time since, a tick at a time; anything long has arrived.
+      for (let t = Math.min(age, 30); t > 0; t -= 1 / 30) this.step(lift, Math.min(t, 1 / 30));
+    }
+    this.place();
+  }
+
   /** The lift the visitor is standing in, if any, and which floor it is at or heading for. */
   aboard(position: Vector3): { index: number; floor: number; moving: boolean } | null {
     for (let index = 0; index < this.lifts.length; index++) {
@@ -321,10 +451,12 @@ export class Lifts {
     return null;
   }
 
-  /** Send a lift to a floor. */
+  /** Send a lift to a floor, and tell everyone else. */
   send(index: number, floor: number): void {
     const lift = this.lifts[index];
-    if (lift && floor >= 0 && floor < FLOORS.length) lift.target = floor;
+    if (!lift || floor < 0 || floor >= FLOORS.length) return;
+    lift.target = floor;
+    this.onSend(index, { f: floor, y: lift.y, v: lift.velocity });
   }
 
   /** Inside a standing cab: one floor up (+1) or down (-1). False when there is none that way. */
@@ -362,6 +494,10 @@ export class Lifts {
     } else lift.y += move;
   }
 
+  private inCab(lift: Lift, body: Body): boolean {
+    return Math.hypot(body.x - lift.x, body.z - lift.z) < CAB && Math.abs(body.y - lift.y) < 1.6;
+  }
+
   private place(): void {
     for (const lift of this.lifts) {
       lift.cab.position.set(lift.x, lift.y, lift.z);
@@ -380,6 +516,10 @@ export class Lifts {
     this.geometries = [];
     this.lifts = [];
   }
+}
+
+function isMoving(lift: Lift): boolean {
+  return lift.velocity !== 0 || Math.abs(lift.y - FLOORS[lift.target]) > 1e-3;
 }
 
 /** Merge geometries into one mesh, disposing the parts. */
