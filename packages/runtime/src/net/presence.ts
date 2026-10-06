@@ -30,6 +30,19 @@ export interface PresenceOptions {
    * ordinary disconnects — those still reconnect in the background.
    */
   onFull?: (full: boolean) => void;
+  /**
+   * Shared state of something in the room changed: a lift, a door. Called
+   * for every write in the order the relay took them, this visitor's own
+   * included (`self`), and for the room's remembered state on joining, with
+   * how old it is in seconds (`age`, 0 for live writes).
+   */
+  onShared?: (key: string, value: Record<string, number>, info: { self: boolean; age: number }) => void;
+  /**
+   * Adjust where a remote figure is drawn this frame, after it eased toward
+   * its last reported spot. Lets a world keep someone standing on a moving
+   * platform, which they reported a moment ago from a little lower down.
+   */
+  place?: (position: Vector3, grounded: boolean) => void;
 }
 
 /** How often the local position goes out, per second. */
@@ -85,7 +98,8 @@ interface PeerState {
 }
 
 type ServerMessage =
-  | { t: 'welcome'; id: string; peers: (PeerState & { id: string })[] }
+  | { t: 'welcome'; id: string; peers: (PeerState & { id: string })[]; objects?: { k: string; v: unknown; ms: number }[] }
+  | { t: 'o'; id: string; k: string; v: unknown }
   | ({ t: 's'; id: string } & PeerState)
   | { t: 'c'; id: string; m: string }
   | { t: 'leave'; id: string };
@@ -118,6 +132,8 @@ export class Presence implements NetworkAdapter {
   private getColor: () => string | null;
   private onArrive: (x: number, z: number) => void;
   private onFigure: (root: Object3D) => void;
+  private onShared: NonNullable<PresenceOptions['onShared']>;
+  private place: PresenceOptions['place'];
 
   constructor(options: PresenceOptions) {
     this.url = options.url;
@@ -128,6 +144,8 @@ export class Presence implements NetworkAdapter {
     this.getColor = options.getColor ?? (() => null);
     this.onArrive = options.onArrive ?? (() => {});
     this.onFigure = options.onFigure ?? (() => {});
+    this.onShared = options.onShared ?? (() => {});
+    this.place = options.place;
     this.group.name = 'worldmesh:remote-players';
     options.scene.add(this.group);
   }
@@ -172,6 +190,18 @@ export class Presence implements NetworkAdapter {
     socket.send(JSON.stringify({ t: 'c', m: line }));
   }
 
+  /**
+   * Set shared state everyone in the room sees, e.g. where a lift is going.
+   * Values are flat objects of numbers. The write comes back through
+   * `onShared` like everyone else's. False when not connected.
+   */
+  share(key: string, value: Record<string, number>): boolean {
+    const socket = this.socket;
+    if (!socket || socket.readyState !== WebSocket.OPEN || !this.selfId) return false;
+    socket.send(JSON.stringify({ t: 'o', k: key, v: value }));
+    return true;
+  }
+
   /** Everyone else's body where it is drawn, so walking into them stops where they appear to be. */
   bodies(): PeerBody[] {
     const bodies: PeerBody[] = [];
@@ -188,6 +218,7 @@ export class Presence implements NetworkAdapter {
     for (const remote of this.remotes.values()) {
       const before = remote.root.position.clone();
       remote.root.position.lerp(remote.target, blend);
+      this.place?.(remote.root.position, remote.grounded);
 
       let delta = remote.targetYaw - remote.yaw;
       delta = Math.atan2(Math.sin(delta), Math.cos(delta));
@@ -345,6 +376,10 @@ export class Presence implements NetworkAdapter {
         this.lastSent = 0;
         this.leaveFull();
         for (const peer of message.peers) this.upsert(peer.id, peer, true);
+        for (const object of message.objects ?? []) this.shared(object.k, object.v, false, object.ms / 1000);
+        break;
+      case 'o':
+        this.shared(message.k, message.v, message.id === this.selfId, 0);
         break;
       case 's':
         if (message.id !== this.selfId) this.upsert(message.id, message, false);
@@ -362,6 +397,13 @@ export class Presence implements NetworkAdapter {
       }
     }
     this.onCount(this.remotes.size + 1);
+  }
+
+  private shared(key: unknown, value: unknown, self: boolean, age: number): void {
+    if (typeof key !== 'string' || !value || typeof value !== 'object' || Array.isArray(value)) return;
+    const numbers: Record<string, number> = {};
+    for (const [name, v] of Object.entries(value)) if (typeof v === 'number' && Number.isFinite(v)) numbers[name] = v;
+    this.onShared(key, numbers, { self, age: Number.isFinite(age) ? Math.max(0, age) : 0 });
   }
 
   private upsert(id: string, state: PeerState, snap: boolean): void {

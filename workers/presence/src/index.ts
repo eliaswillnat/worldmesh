@@ -22,6 +22,14 @@ import { chatRejection } from './chatFilter';
  *   client → server  { t: 'c', m }             a short line of chat
  *   server → client  { t: 'c', id, m }         that line, for everyone else
  *   server → client  { t: 'leave', id }        another peer left
+ *   client → server  { t: 'o', k, v }          shared state of something in the room (a lift, a door)
+ *   server → client  { t: 'o', id, k, v }      that state, for everyone including the sender, in the order the room took it
+ *   server → client  welcome also carries `objects: [{ k, v, ms }]`, the last state of each key and its age
+ *
+ * Shared state is the one thing the room remembers: the latest value per key,
+ * so someone walking in sees the lift where everyone else does. Sending it
+ * back to the sender too gives every client the same order of writes, so two
+ * people pressing at once still end up agreeing.
  */
 
 interface Env {
@@ -54,6 +62,14 @@ interface Peer {
   chatAt: number;
   /** Ping the owner on Telegram when this peer appears. Only for named rooms. */
   notify: boolean;
+  /** Last time this peer changed shared state. */
+  sharedAt?: number;
+}
+
+/** The latest value of one key of shared state, and when it was set. */
+interface Shared {
+  v: Record<string, unknown>;
+  at: number;
 }
 
 /** Named rooms such as the hub lobby. */
@@ -71,6 +87,12 @@ const USERNAME = /^[a-z][a-z0-9_]{2,29}$/;
 /** Two capitalised words; cannot be mistaken for a username, which is lower case. */
 const ALIAS = /^[A-Z][a-z]{1,11} [A-Z][a-z]{1,11}$/;
 const COLOR = /^#[0-9a-f]{6}$/;
+/** Keys of shared state, e.g. 'lift:0'. */
+const SHARED_KEY = /^[a-z0-9:_-]{1,32}$/;
+/** How many keys one room remembers. New keys past this are dropped. */
+const MAX_SHARED_KEYS = 32;
+/** Shortest gap between two shared-state writes from one peer. */
+const SHARED_MIN_MS = 80;
 /** Public occupancy reads are counts only; never peer names. */
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -187,6 +209,17 @@ function worldOrigin(header: string | null): string | null {
 }
 
 export class Room extends DurableObject<Env> {
+  /** Shared state by key, kept in storage too so it outlives the room going idle. */
+  private shared = new Map<string, Shared>();
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    ctx.blockConcurrencyWhile(async () => {
+      const stored = await ctx.storage.list<Shared>({ prefix: 'o:', limit: MAX_SHARED_KEYS });
+      for (const [key, value] of stored) this.shared.set(key.slice(2), value);
+    });
+  }
+
   async fetch(request: Request): Promise<Response> {
     const isWorld = request.headers.get(ROOM_HEADER) === 'world';
     const sockets = this.ctx.getWebSockets();
@@ -204,7 +237,9 @@ export class Room extends DurableObject<Env> {
       .map((ws) => ws.deserializeAttachment() as Peer | null)
       .filter((other): other is Peer => !!other?.seen)
       .map(({ id, p, r, e, n, a, g, k }) => ({ id, p, r, e, n: n ?? '', a: a ?? '', g, k: k ?? '' }));
-    server.send(JSON.stringify({ t: 'welcome', id: peer.id, peers }));
+    const now = Date.now();
+    const objects = [...this.shared].map(([k, { v, at }]) => ({ k, v, ms: Math.max(0, now - at) }));
+    server.send(JSON.stringify({ t: 'welcome', id: peer.id, peers, objects }));
 
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -220,6 +255,10 @@ export class Room extends DurableObject<Env> {
     }
     if (data?.t === 'c') {
       this.relayChat(ws, data.m);
+      return;
+    }
+    if (data?.t === 'o') {
+      this.relayShared(ws, (data as { k?: unknown }).k, (data as { v?: unknown }).v);
       return;
     }
     if (data?.t !== 's') return;
@@ -329,6 +368,37 @@ export class Room extends DurableObject<Env> {
     peer.chatAt = now;
     ws.serializeAttachment(peer);
     this.broadcast(JSON.stringify({ t: 'c', id: peer.id, m: text }), ws);
+  }
+
+  /**
+   * Remember one key of shared state and pass it to everyone, the sender
+   * included. Values are small flat objects of numbers; anything else is
+   * dropped, so nothing a client sends can be text shown to others.
+   */
+  private relayShared(ws: WebSocket, key: unknown, value: unknown): void {
+    if (typeof key !== 'string' || !SHARED_KEY.test(key)) return;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+    const entries = Object.entries(value as Record<string, unknown>);
+    if (entries.length > 8 || !entries.every(([name, v]) => /^[a-z]{1,8}$/.test(name) && typeof v === 'number' && Number.isFinite(v) && Math.abs(v) < MAX_COORD)) return;
+    if (!this.shared.has(key) && this.shared.size >= MAX_SHARED_KEYS) return;
+    const peer = ws.deserializeAttachment() as Peer | null;
+    if (!peer?.seen) return;
+    const now = Date.now();
+    if (now - (peer.sharedAt ?? 0) < SHARED_MIN_MS) return;
+    peer.sharedAt = now;
+    ws.serializeAttachment(peer);
+    const v = Object.fromEntries(entries.map(([name, n]) => [name, round(n as number)]));
+    const entry = { v, at: now };
+    this.shared.set(key, entry);
+    this.ctx.waitUntil(this.ctx.storage.put(`o:${key}`, entry));
+    const message = JSON.stringify({ t: 'o', id: peer.id, k: key, v });
+    for (const socket of this.ctx.getWebSockets()) {
+      try {
+        socket.send(message);
+      } catch {
+        // The socket is closing; its own close handler cleans up.
+      }
+    }
   }
 
   private leave(ws: WebSocket): void {
