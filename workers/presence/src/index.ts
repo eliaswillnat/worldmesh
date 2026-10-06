@@ -78,6 +78,8 @@ const CORS = {
 };
 /** How many world origins one occupancy request may ask about. */
 const MAX_OCCUPANCY_ORIGINS = 50;
+/** Named rooms (e.g. lobby) on the same public occupancy read. */
+const MAX_OCCUPANCY_ROOMS = 20;
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -109,22 +111,28 @@ export default {
       return new Response('WorldMesh presence', { status: 404 });
     }
 
+    const room = env.ROOMS.get(env.ROOMS.idFromName(name));
+
     if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
+      // Browsers never see the 503 on a failed upgrade. A plain GET to the
+      // same path is the public stand-in: 503 + "Room is full", or count/cap.
+      if (request.method === 'GET') {
+        return room.occupancyHttp(kind === 'world');
+      }
       return new Response('Expected a WebSocket upgrade', { status: 426 });
     }
 
     const forwarded = new Request(request);
     forwarded.headers.set(ROOM_HEADER, kind);
-    const room = env.ROOMS.get(env.ROOMS.idFromName(name));
     return room.fetch(forwarded);
   },
 };
 
 /**
- * GET /occupancy?origins=https://a.example,https://b.example
- * → { "https://a.example": { count, cap }, ... }
+ * GET /occupancy?origins=https://a.example,https://b.example&rooms=lobby
+ * → { "https://a.example": { count, cap }, "room:lobby": { count, cap }, ... }
  *
- * Cap is the live world room limit. Counts are open sockets; peer names stay private.
+ * Cap is the live room limit. Counts are open sockets; peer names stay private.
  */
 async function occupancy(url: URL, env: Env): Promise<Response> {
   const raw = url.searchParams.get('origins') ?? url.searchParams.get('origin') ?? '';
@@ -137,14 +145,28 @@ async function occupancy(url: URL, env: Env): Promise<Response> {
     ),
   ].slice(0, MAX_OCCUPANCY_ORIGINS);
 
+  const named = [
+    ...new Set(
+      (url.searchParams.get('rooms') ?? url.searchParams.get('room') ?? '')
+        .split(',')
+        .map((value) => value.trim().toLowerCase())
+        .filter((name) => /^[a-z0-9-]{1,64}$/.test(name)),
+    ),
+  ].slice(0, MAX_OCCUPANCY_ROOMS);
+
   const rooms: Record<string, { count: number; cap: number }> = {};
-  await Promise.all(
-    origins.map(async (origin) => {
+  await Promise.all([
+    ...origins.map(async (origin) => {
       const stub = env.ROOMS.get(env.ROOMS.idFromName(`world:${origin}`));
       const { count } = await stub.occupancy();
       rooms[origin] = { count, cap: MAX_WORLD_PEERS };
     }),
-  );
+    ...named.map(async (name) => {
+      const stub = env.ROOMS.get(env.ROOMS.idFromName(name));
+      const { count } = await stub.occupancy();
+      rooms[`room:${name}`] = { count, cap: MAX_ROOM_PEERS };
+    }),
+  ]);
   return new Response(JSON.stringify(rooms), {
     status: 200,
     headers: { 'Content-Type': 'application/json', ...CORS },
@@ -167,7 +189,9 @@ export class Room extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
     const isWorld = request.headers.get(ROOM_HEADER) === 'world';
     const sockets = this.ctx.getWebSockets();
-    if (sockets.length >= (isWorld ? MAX_WORLD_PEERS : MAX_ROOM_PEERS)) return new Response('Room is full', { status: 503 });
+    if (sockets.length >= (isWorld ? MAX_WORLD_PEERS : MAX_ROOM_PEERS)) {
+      return new Response('Room is full', { status: 503, headers: CORS });
+    }
 
     const { 0: client, 1: server } = new WebSocketPair();
     const peer: Peer = { id: crypto.randomUUID().slice(0, 8), p: [0, 0, 0], r: 0, e: 'smile', n: '', a: '', k: '', seen: false, chatAt: 0, notify: !isWorld };
@@ -259,6 +283,20 @@ export class Room extends DurableObject<Env> {
    */
   async occupancy(): Promise<{ count: number }> {
     return { count: this.ctx.getWebSockets().length };
+  }
+
+  /** Plain GET to /room/… or /world — browsers use this after a silent failed upgrade. */
+  async occupancyHttp(isWorld: boolean): Promise<Response> {
+    const cap = isWorld ? MAX_WORLD_PEERS : MAX_ROOM_PEERS;
+    const count = this.ctx.getWebSockets().length;
+    const full = count >= cap;
+    return new Response(full ? 'Room is full' : JSON.stringify({ count, cap }), {
+      status: full ? 503 : 200,
+      headers: {
+        'Content-Type': full ? 'text/plain; charset=utf-8' : 'application/json',
+        ...CORS,
+      },
+    });
   }
 
   /** Tell the owner on Telegram that someone started walking in this room. */
