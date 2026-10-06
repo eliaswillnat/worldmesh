@@ -1018,7 +1018,9 @@
         border-color: rgba(0, 0, 0, 0.2);
         box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
       }
-      .walk-root canvas { display: block; }
+      .walk-root canvas { display: block; transition: filter .45s ease-out; }
+      /* Through a portal: the view softens and saturates as the lens pulls wide, and clears coming out. */
+      .walk-root canvas.lensing { filter: blur(3px) saturate(1.5); transition: filter .45s ease-in; }
       .walk-flash {
         position: absolute;
         inset: 0;
