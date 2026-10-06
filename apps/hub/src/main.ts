@@ -484,7 +484,7 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
     lobby.setColor(walkColor);
     showWalkColor(walkColor);
     history.replaceState(null, '', '#walk');
-    setWalkToggleLabel('Go to Gallery');
+    setWalkToggleLabel('Gallery mode');
   } catch (error) {
     console.error('Walk mode failed to start', error);
     // Walk mode is unlisted for now: fail quietly back to the list.
@@ -678,9 +678,9 @@ function askWalk(title: string, body: string, okLabel: string): Promise<boolean>
 async function confirmLeaveWalk(): Promise<void> {
   if (!walkRoot) return;
   const yes = await askWalk(
-    'Go to Gallery?',
+    'Switch to Gallery mode?',
     'You will leave the lobby and return to the list of worlds.',
-    'Go to Gallery',
+    'Gallery mode',
   );
   if (yes) exitWalkMode();
 }
@@ -708,7 +708,7 @@ function mountPauseActions(): void {
   const gallery = document.createElement('button');
   gallery.type = 'button';
   gallery.className = 'walk-gallery';
-  gallery.textContent = 'Go to Gallery';
+  gallery.textContent = 'Gallery mode';
 
   const discord = document.createElement('a');
   discord.className = 'walk-discord';
