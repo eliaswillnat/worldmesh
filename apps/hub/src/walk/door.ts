@@ -275,6 +275,9 @@ export class Door {
 
   private portal: Mesh<PlaneGeometry, ShaderMaterial>;
   private frameMaterial: MeshStandardMaterial;
+  private backstop: Mesh<PlaneGeometry, MeshBasicMaterial>;
+  /** Solid parts: the frame, and the backstop behind the doorway. */
+  readonly blockers: Mesh[];
   private geometries: BufferGeometry[] = [];
   private label: Mesh<PlaneGeometry, MeshBasicMaterial>;
   private drawLabel: (light: boolean) => void;
@@ -320,7 +323,18 @@ export class Door {
     // Frame: posts and a lintel. Its top corners follow the opening, and the posts run under the floor.
     const frame = doorFrameGeometry(DOOR_WIDTH, DOOR_HEIGHT, FRAME, DEPTH);
     this.geometries.push(frame);
-    this.group.add(new Mesh(frame, this.frameMaterial));
+    const frameMesh = new Mesh(frame, this.frameMaterial);
+    this.group.add(frameMesh);
+
+    // Unseen wall just past the reach, inside the wall's thickness: if the
+    // doorway doesn't take you (frame edge, a departure already under way),
+    // you stop here instead of slipping into the wall and out of the hall.
+    const backstop = new PlaneGeometry(DOOR_HALF_SPAN * 2 + 0.4, DOOR_TOP + 1);
+    this.geometries.push(backstop);
+    this.backstop = new Mesh(backstop, new MeshBasicMaterial({ visible: false, side: DoubleSide }));
+    this.backstop.position.set(0, (DOOR_TOP + 1) / 2, -(REACH + 0.08));
+    this.group.add(this.backstop);
+    this.blockers = [frameMesh, this.backstop];
 
     // The world on the other side fills the doorway.
     this.placeholder = new Texture();
@@ -565,6 +579,7 @@ export class Door {
     this.portal.material.dispose();
     for (const geometry of this.geometries) geometry.dispose();
     this.frameMaterial.dispose();
+    this.backstop.material.dispose();
     this.halo?.geometry.dispose();
     this.halo?.material.map?.dispose();
     this.halo?.material.dispose();
