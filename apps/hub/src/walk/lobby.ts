@@ -43,6 +43,7 @@ import { CITY_GLOW_WHITE, applyCityTheme, applySkyTheme, createCityMaterials, cr
 import { DOOR_HALF_SPAN, DOOR_HEIGHT, DOOR_TOP, DOOR_WIDTH, FRAME, Door, createLabel, worldIsFull, type DoorWorld } from './door';
 import { doorFrameGeometry, frameOuterCorner, roundedOpeningGeometry } from './doorShape';
 import { describeBillboard } from './layout';
+import { fetchOccupancy } from './occupancy';
 import { Assembly } from './assemble';
 import { FLOOR_NAMES, Lifts, buildShafts, createColliderMaterial, mergeInto, planLifts } from './elevators';
 import {
@@ -1407,18 +1408,16 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     occupancyFetch = controller;
     try {
       const base = presenceHttpBase(options.presenceEndpoint);
-      const res = await fetch(`${base}/occupancy?origins=${encodeURIComponent(origins.join(','))}`, {
-        signal: controller.signal,
-      });
-      if (!res.ok) return;
-      const data = (await res.json()) as Record<string, { count?: unknown; cap?: unknown }>;
-      occupancyByOrigin.clear();
-      for (const [origin, value] of Object.entries(data)) {
-        const count = Number(value?.count);
-        const cap = Number(value?.cap);
-        if (!Number.isFinite(count) || !Number.isFinite(cap)) continue;
-        occupancyByOrigin.set(origin.toLowerCase(), { count, cap });
+      const { occupancy, failed } = await fetchOccupancy(base, origins, controller.signal);
+      // All batches failed — leave the last known full/not-full state.
+      if (failed.length === origins.length) return;
+      // Origins in a failed batch keep their previous reading.
+      for (const origin of failed) {
+        const prev = occupancyByOrigin.get(origin.toLowerCase());
+        if (prev && !occupancy.has(origin.toLowerCase())) occupancy.set(origin.toLowerCase(), prev);
       }
+      occupancyByOrigin.clear();
+      for (const [origin, info] of occupancy) occupancyByOrigin.set(origin, info);
       if (!disposed) applyOccupancy();
     } catch {
       // Network or abort — leave the last known full/not-full state.
