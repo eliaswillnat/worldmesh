@@ -316,6 +316,16 @@ export function createDepartureBoard(): {
   // The screens, and a chrome drum just inside each so the back is not see-through.
   drum(BOARD_RADIUS, BOARD_HEIGHT, BOARD_BOTTOM, outer.material, spinning);
   drum(BOARD_RADIUS - 0.2, BOARD_HEIGHT + 0.6, BOARD_BOTTOM - 0.3, chrome, group);
+  // The same covers on the inside, facing in, for anyone looking up through the ring.
+  {
+    const geometry = flipInside(new CylinderGeometry(BOARD_RADIUS - 0.25, BOARD_RADIUS - 0.25, BOARD_HEIGHT, 160, 1, true));
+    // Mirror the texture so the covers and gates read the right way round from inside.
+    const uv = geometry.getAttribute('uv');
+    for (let i = 0; i < uv.count; i++) uv.setX(i, 1 - uv.getX(i));
+    geometry.translate(0, BOARD_BOTTOM + BOARD_HEIGHT / 2, 0);
+    geometries.push(geometry);
+    spinning.add(new Mesh(geometry, outer.material));
+  }
   // Chrome rims, a wide flange between the rings, and lines of light on every edge.
   ring(BOARD_RADIUS + 0.1, outerTop + 0.2, 0.22, chrome);
   ring(BOARD_RADIUS + 0.1, BOARD_BOTTOM - 0.25, 0.22, chrome);
