@@ -4,6 +4,7 @@ import { parseAvatarDescriptor, type AvatarDescriptor } from '../avatar/descript
 import { resolveWorldMeshAvatar, takeAvatarTicket } from '../avatar/handoff.js';
 import { rememberView, takeViewHandoff } from '../camera/viewHandoff.js';
 import { loadAvatarModel } from '../avatar/loader.js';
+import { Footsteps } from '../audio/footsteps.js';
 import { CameraRig } from '../camera/cameraRig.js';
 import { Input } from '../controls/input.js';
 import { CollisionWorld } from '../movement/collision.js';
@@ -110,6 +111,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   let elapsed = 0;
   let activePortal: ResolvedPortal | null = null;
   let disposed = false;
+  const footsteps = options.footsteps ? new Footsteps() : null;
   let avatarDescriptor: AvatarDescriptor | null = null;
   let avatarLoad: AbortController | null = null;
   let xrSession: XRSession | null = null;
@@ -356,12 +358,13 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     } else {
       cameraRig.update(dt, controller.position, player.eyeHeight * (controller.height / height));
     }
-    player.sync(controller.position, cameraRig.yaw, controller.height, {
+    const footfall = player.sync(controller.position, cameraRig.yaw, controller.height, {
       dt,
       speed: Math.hypot(controller.velocity.x, controller.velocity.z),
       grounded: controller.onGround || controller.flying,
       heading: Math.atan2(-controller.velocity.x, -controller.velocity.z),
     }, cameraRig.mode === 'third');
+    footsteps?.update(dt, playing ? Math.hypot(controller.velocity.x, controller.velocity.z) : 0, controller.onGround, footfall, controller.velocity.y, controller.flying);
     portals.animate(elapsed);
 
     updatePortals();
@@ -512,6 +515,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     overlay.dispose();
     portals.dispose();
     player.dispose();
+    footsteps?.dispose();
     if (vrEnabled) scene.remove(xrOrigin);
     events.clear();
   }

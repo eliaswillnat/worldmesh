@@ -1,16 +1,12 @@
 import {
   AdditiveBlending,
   BackSide,
-  BoxGeometry,
   BufferGeometry,
   CircleGeometry,
   Color,
   CylinderGeometry,
   DoubleSide,
-  DynamicDrawUsage,
   Group,
-  InstancedBufferAttribute,
-  InstancedMesh,
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
@@ -341,20 +337,6 @@ export function createGodRayMaterial(options: {
   });
 }
 
-/** Metres climbed: slow for 2s, then speed eases up over the next 4s. */
-function pulseClimb(age: number): number {
-  const slow = 1.6;
-  const fast = 92;
-  const hold = 2;
-  const ramp = 4;
-  if (age <= 0) return 0;
-  if (age <= hold) return slow * age;
-  const s = Math.min(1, (age - hold) / ramp);
-  const duringRamp = (fast - slow) * ramp * (s ** 3 - 0.5 * s ** 4);
-  if (s < 1) return slow * age + duringRamp;
-  return slow * age + (fast - slow) * (ramp * 0.5 + (age - hold - ramp));
-}
-
 /**
  * The dressing on the spawn dais: a third, wider step, an animated dial
  * inlaid in the top (tick marks, rings, turning arcs, a sweeping scan), two
@@ -494,19 +476,6 @@ function createDaisDressing(
     return { mesh, ...spec };
   });
 
-  // Lit dashes inlaid round the outer step, pointing at the centre, with a light chasing round them.
-  // Short enough to sit between the outer ring (2.5 m) and the step's edge (2.7 m).
-  const postGeometry = keep(new BoxGeometry(0.05, 0.006, 0.12));
-  const posts = Array.from({ length: 8 }, (_, i) => {
-    const material = new MeshBasicMaterial({ transparent: true, depthWrite: false, toneMapped: false, fog: false });
-    materials.push(material);
-    const mesh = new Mesh(postGeometry, material);
-    const angle = (i / 8) * Math.PI * 2 + Math.PI / 8;
-    mesh.position.set(Math.sin(angle) * 2.6, stepTop + 0.003, Math.cos(angle) * 2.6);
-    mesh.rotation.y = angle;
-    group.add(mesh);
-    return { mesh, material, angle };
-  });
 
   // A soft pool of light on the floor round the base.
   const pool = new ShaderMaterial({
@@ -559,18 +528,13 @@ function createDaisDressing(
       boost.value += (presence.value - boost.value) * (1 - Math.exp(-dt * 3));
       for (const halo of halos) halo.mesh.rotation.set(Math.PI / 2, now * halo.speed + (halo.offset ?? 0), 0);
       glow.opacity = 0.8 + 0.1 * boost.value;
-      for (const post of posts) {
-        const chase = Math.pow(Math.max(0, Math.cos(now * 2.2 - post.angle)), 10);
-        post.material.color.copy(glowColor);
-        post.material.opacity = Math.min(1, 0.25 + 0.75 * chase + boost.value * 0.15);
-      }
     },
     setTheme(isLight) {
       light.value = isLight ? 1 : 0;
       // White light on the dark floor; plain ink on the white one.
       glowColor.set(isLight ? 0x2a2a2e : 0xffffff);
       glow.color.copy(glowColor);
-      for (const material of [glow, pool, ...posts.map((post) => post.material)]) setBlending(material, isLight);
+      for (const material of [glow, pool]) setBlending(material, isLight);
       dial.blending = isLight ? NormalBlending : AdditiveBlending;
       dial.needsUpdate = true;
     },
@@ -595,53 +559,34 @@ const SRGB_DECODE = /* glsl */ `
   }
 `;
 
-/** Longest step the spawn effect takes in one frame, and most it catches up on a late start. */
-const MAX_FX_STEP = 1 / 30;
-const MAX_LAG = 0.25;
+/** Spawn pads round the middle of the hall: how many, how far out, and their size against a full dais. */
+const SPAWN_PADS = 6;
+const PAD_RING = 6;
+const PAD_SCALE = 0.5;
+
 /**
- * Quick frames in a row before a spawn beam starts, so it is not played
- * behind a loading stall, and the longest it waits for them after the Walk click.
+ * The spawn pads round the middle of the hall (left clear for the hologram)
+ * that visitors arrive on.
  */
-const SMOOTH_FRAMES = 3;
-const MAX_WAIT = 0.5;
-
-const WHITE = new Color(1, 1, 1);
-
-export function createSpawnRay(
-  height: number,
-  /** A layer the floor mirror does not draw: the dais's lights go on it so they are not reflected. */
+export function createSpawnPads(
+  /** A layer the floor mirror does not draw: the daises' lights go on it so they are not reflected. */
   unreflectedLayer?: number,
 ): {
   object: Object3D;
-  /** The dais under the beam. Solid, so a visitor can stand on it. */
+  /** The daises. Solid, so a visitor can stand on them. */
   colliders: Mesh[];
+  /** Where the spawn pads stand, on the floor. */
+  pads: Array<{ x: number; z: number }>;
   setTheme(light: boolean): void;
-  /** Tint the beam towards a visitor's colour, kept half white so it stays light. */
-  setTint(color: string): void;
-  /** Restart the fade-in → hold → fade-out when a visitor spawns (this one or
-   *  someone else). Pass `performance.now()` from the Walk click so the beam
-   *  begins then. While it is still lit, it holds again rather than restarting. */
-  trigger(fromWallClock?: number): void;
-  /** Drive animations. Returns 0–1 presence of the god-ray (for wobble / refraction). */
-  setTime(time: number): number;
+  /** Drive the daises' animations. */
+  update(time: number): void;
   dispose(): void;
 } {
   const group = new Group();
-  group.name = 'spawn-ray';
-
+  group.name = 'spawn-pads';
   const time = { value: 0 };
-  const theme = { value: 0 };
+  // Nothing lights the daises up any more; they keep their resting glow.
   const presence = { value: 0 };
-  const tint = new Color(1, 1, 1);
-  const haloMaterial = createGodRayMaterial({ length: height, gain: 0.72, time, theme, presence, tint });
-  const beamMaterial = createGodRayMaterial({ length: height, gain: 1.15, time, theme, presence, tint });
-  const halo = new Mesh(new CylinderGeometry(1.35, 1.35, height, 128, 64, true), haloMaterial);
-  const beam = new Mesh(new CylinderGeometry(0.7, 0.7, height, 160, 80, true), beamMaterial);
-  halo.position.y = height / 2;
-  beam.position.y = height / 2;
-  halo.renderOrder = 1;
-  beam.renderOrder = 2;
-  group.add(halo, beam);
 
   // Matte and the floor's own colour, so the dais reads as part of the floor.
   const deckMaterial = new MeshStandardMaterial({ color: 0x030304, roughness: 0.95, metalness: 0 });
@@ -650,358 +595,66 @@ export function createSpawnRay(
   deckMaterial.visible = false;
   const lipMaterial = new MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1, depthWrite: false });
   // Low tiers, nearly flush with the floor: 3 cm, then 4 cm at the centre.
-  const base = new Mesh(new CylinderGeometry(1.85, 2.05, DAIS_BASE, 64), deckMaterial);
-  const top = new Mesh(new CylinderGeometry(1.55, 1.7, DAIS_TOP - DAIS_BASE + 0.005, 64), deckMaterial);
-  const lip = new Mesh(new TorusGeometry(1.62, 0.008, 8, 80), lipMaterial);
+  const baseGeometry = new CylinderGeometry(1.85, 2.05, DAIS_BASE, 64);
+  const topGeometry = new CylinderGeometry(1.55, 1.7, DAIS_TOP - DAIS_BASE + 0.005, 64);
+  const lipGeometry = new TorusGeometry(1.62, 0.008, 8, 80);
   // Wider ring on the lower rim of the dais, where it meets the floor.
-  const foot = new Mesh(new TorusGeometry(2.05, 0.008, 8, 96), lipMaterial);
-  base.position.y = DAIS_BASE / 2;
-  top.position.y = (DAIS_BASE + DAIS_TOP) / 2 - 0.0025;
-  lip.position.y = DAIS_TOP + 0.002;
-  lip.rotation.x = Math.PI / 2;
-  foot.position.y = DAIS_STEP + 0.004;
-  foot.rotation.x = Math.PI / 2;
-  group.add(base, top, lip, foot);
-  const dressing = createDaisDressing(time, presence, deckMaterial);
-  group.add(dressing.group);
-  // The dais's lines of light glow on the floor without a second copy in the mirror under them.
-  if (unreflectedLayer !== undefined) {
-    for (const mesh of [lip, foot]) mesh.layers.set(unreflectedLayer);
-    dressing.group.traverse((child) => {
-      if (child instanceof Mesh && child !== dressing.step) child.layers.set(unreflectedLayer);
-    });
-  }
-
-  const pulseGlow = (seed: number) =>
-    new ShaderMaterial({
-      transparent: true,
-      depthWrite: false,
-      blending: AdditiveBlending,
-      side: DoubleSide,
-      fog: false,
-      uniforms: { uTime: time, uOpacity: { value: 0 }, uSeed: { value: seed } },
-      vertexShader: /* glsl */ `
-        varying vec2 vUv;
-        void main() {
-          vUv = uv;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }
-      `,
-      fragmentShader: /* glsl */ `
-        uniform float uTime;
-        uniform float uOpacity;
-        uniform float uSeed;
-        varying vec2 vUv;
-        float hash(vec2 p) {
-          return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-        }
-        float noise(vec2 p) {
-          vec2 i = floor(p);
-          vec2 f = fract(p);
-          f = f * f * (3.0 - 2.0 * f);
-          return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
-        }
-        ${SRGB_DECODE}
-        void main() {
-          vec2 p = vUv * 2.0 - 1.0;
-          float r = length(p);
-          float inner = 1.46 / 1.64;
-          float edge = smoothstep(inner - 0.02, inner + 0.08, r) * (1.0 - smoothstep(0.88, 1.0, r));
-          vec2 drift = vUv * vec2(3.0, 9.0) + vec2(uSeed, -uTime * 0.35);
-          float n = noise(drift) * 0.65 + noise(drift * 2.4 + uTime * 0.22) * 0.35;
-          float alpha = uOpacity * (0.35 + 0.65 * n) * edge;
-          vec3 color = vec3(1.8, 1.85, 2.1);
-          float ca = 0.04 * sin(atan(p.y, p.x) * 2.0 + uSeed);
-          color.r *= 1.0 + ca;
-          color.b *= 1.0 - ca;
-          gl_FragColor = vec4(color, alpha);
-          // Same on screen as through the beam's pass: decode, then let three encode for wherever this draws.
-          gl_FragColor = srgbDecode(gl_FragColor);
-          #include <colorspace_fragment>
-        }
-      `,
-    });
-  const rimGeometry = new RingGeometry(1.46, 1.64, 128);
-  const pulses = Array.from({ length: 8 }, (_, index) => {
-    const rimMaterial = pulseGlow(index * 1.7);
-    const rim = new Mesh(rimGeometry, rimMaterial);
-    rim.rotation.x = -Math.PI / 2;
-    rim.renderOrder = 3;
-    group.add(rim);
-    return { mesh: rim, rimMaterial, born: -1, radius: 1.55 };
-  });
-  let nextPulse = 0.4;
-
-  const sparkCount = 290;
-  const sparkAlphas = new Float32Array(sparkCount);
-  const sparkHues = new Float32Array(sparkCount);
-  const sparkBorn = new Float32Array(sparkCount).fill(-1);
-  const sparkRadius = new Float32Array(sparkCount);
-  const sparkAngle = new Float32Array(sparkCount);
-  const sparkSpeed = new Float32Array(sparkCount);
-  const sparkLength = new Float32Array(sparkCount);
-  const sparkGeometry = new BoxGeometry(1, 1, 1);
-  const sparkAlphaAttr = new InstancedBufferAttribute(sparkAlphas, 1);
-  const sparkHueAttr = new InstancedBufferAttribute(sparkHues, 1);
-  sparkAlphaAttr.setUsage(DynamicDrawUsage);
-  sparkHueAttr.setUsage(DynamicDrawUsage);
-  sparkGeometry.setAttribute('aAlpha', sparkAlphaAttr);
-  sparkGeometry.setAttribute('aHue', sparkHueAttr);
-  const sparkMaterial = new ShaderMaterial({
-    transparent: true,
-    depthWrite: false,
-    blending: AdditiveBlending,
-    fog: false,
-    uniforms: { uLight: theme },
-    vertexShader: /* glsl */ `
-      attribute float aAlpha;
-      attribute float aHue;
-      varying float vAlpha;
-      varying float vHue;
-      void main() {
-        vAlpha = aAlpha;
-        vHue = aHue;
-        vec4 mv = modelViewMatrix * instanceMatrix * vec4(position, 1.0);
-        gl_Position = projectionMatrix * mv;
-      }
-    `,
-    fragmentShader: /* glsl */ `
-      uniform float uLight;
-      varying float vAlpha;
-      varying float vHue;
-      ${SRGB_DECODE}
-      void main() {
-        vec3 color = mix(vec3(1.15, 1.25, 1.5), vec3(1.1, 1.05, 0.85), uLight);
-        float ca = 0.05 * sin(vHue);
-        color.r *= 1.0 + ca;
-        color.b *= 1.0 - ca;
-        gl_FragColor = vec4(color, vAlpha * mix(0.75, 0.4, uLight));
-
-        // Same on screen as through the beam's pass: decode, then let three encode for wherever this draws.
-        gl_FragColor = srgbDecode(gl_FragColor);
-        #include <colorspace_fragment>
-      }
-    `,
-  });
-  const sparks = new InstancedMesh(sparkGeometry, sparkMaterial, sparkCount);
-  sparks.renderOrder = 4;
-  sparks.frustumCulled = false;
-  sparks.instanceMatrix.setUsage(DynamicDrawUsage);
-  group.add(sparks);
-  const sparkDummy = new Object3D();
-  for (let i = 0; i < sparkCount; i++) {
-    sparkDummy.position.set(0, -20, 0);
-    sparkDummy.scale.set(0.001, 0.001, 0.001);
-    sparkDummy.updateMatrix();
-    sparks.setMatrixAt(i, sparkDummy.matrix);
-  }
-  sparks.instanceMatrix.needsUpdate = true;
-  let nextSpark = 0.2;
-  let pendingTrigger = false;
-  let startedAt = Number.NEGATIVE_INFINITY;
-  let triggerWallClock = 0;
-  // The effect runs on its own clock, which moves with rendered frames and at
-  // most 1/30 s per frame. While the lobby is still loading, frames stall; on
-  // the wall clock the beam would jump through its fade in a few big steps.
-  let clock = 0;
-  let lastNow = Number.NaN;
-  /** Quick frames in a row; the beam waits for the hall to be running smoothly. */
-  let smoothFrames = 0;
-
-  const clamp01 = (t: number) => Math.min(1, Math.max(0, t));
-  /** Up quickly from the first frame, easing into full. */
-  const easeOutCubic = (t: number) => {
-    const u = 1 - clamp01(t);
-    return 1 - u * u * u;
+  const footGeometry = new TorusGeometry(2.05, 0.008, 8, 96);
+  /** One spawn pad: a dais scaled down across, not up. */
+  const buildDais = (x: number, z: number, scale: number) => {
+    const dais = new Group();
+    dais.position.set(x, 0, z);
+    dais.scale.set(scale, 1, scale);
+    const base = new Mesh(baseGeometry, deckMaterial);
+    const top = new Mesh(topGeometry, deckMaterial);
+    const lip = new Mesh(lipGeometry, lipMaterial);
+    const foot = new Mesh(footGeometry, lipMaterial);
+    base.position.y = DAIS_BASE / 2;
+    top.position.y = (DAIS_BASE + DAIS_TOP) / 2 - 0.0025;
+    lip.position.y = DAIS_TOP + 0.002;
+    lip.rotation.x = Math.PI / 2;
+    foot.position.y = DAIS_STEP + 0.004;
+    foot.rotation.x = Math.PI / 2;
+    dais.add(base, top, lip, foot);
+    const dressing = createDaisDressing(time, presence, deckMaterial);
+    dais.add(dressing.group);
+    // The dais's lines of light glow on the floor without a second copy in the mirror under them.
+    if (unreflectedLayer !== undefined) {
+      for (const mesh of [lip, foot]) mesh.layers.set(unreflectedLayer);
+      dressing.group.traverse((child) => {
+        if (child instanceof Mesh && child !== dressing.step) child.layers.set(unreflectedLayer);
+      });
+    }
+    group.add(dais);
+    return { dressing, colliders: [dressing.step, base, top] };
   };
+  // The middle is left clear for the hologram; arrivals appear on the pads round it.
+  const daises: Array<ReturnType<typeof buildDais>> = [];
+  const pads = Array.from({ length: SPAWN_PADS }, (_, i) => {
+    const angle = (i / SPAWN_PADS) * Math.PI * 2 + Math.PI / SPAWN_PADS;
+    return { x: Math.sin(angle) * PAD_RING, z: Math.cos(angle) * PAD_RING };
+  });
+  for (const pad of pads) daises.push(buildDais(pad.x, pad.z, PAD_SCALE));
 
   return {
     object: group,
-    colliders: [dressing.step, base, top],
-    setTint(color: string) {
-      tint.set(color).lerp(WHITE, 0.5);
-    },
+    colliders: daises.flatMap((dais) => dais.colliders),
+    pads,
     setTheme(light: boolean) {
-      theme.value = light ? 1 : 0;
       deckMaterial.color.set(light ? 0xf1f4fa : 0x030304);
       deckMaterial.emissive.set(light ? 0x6b707c : 0x000000);
       lipMaterial.color.set(light ? 0x3a3d44 : 0xffffff);
-      dressing.setTheme(light);
+      for (const dais of daises) dais.dressing.setTheme(light);
     },
-    trigger(fromWallClock = performance.now()) {
-      pendingTrigger = true;
-      triggerWallClock = fromWallClock;
-    },
-    setTime(realNow: number) {
-      time.value = realNow;
-      dressing.update(realNow);
-      const real = Number.isFinite(lastNow) ? realNow - lastNow : Number.POSITIVE_INFINITY;
-      const step = Number.isFinite(real) ? Math.min(Math.max(real, 0), MAX_FX_STEP) : 0;
-      lastNow = realNow;
-      smoothFrames = real < 0.1 ? smoothFrames + 1 : 0;
-      clock += step;
-      const now = clock;
-      // A quick fade in → a hold → a slow, even fade out.
-      const fadeIn = 0.45;
-      const hold = 0.5;
-      const fadeOut = 0.9;
-      if (pendingTrigger && presence.value > 0.02) {
-        // Already lit (someone else arrived a moment ago): carry on from the
-        // same brightness on the way up, and hold again, instead of dropping to dark.
-        pendingTrigger = false;
-        startedAt = now - (1 - Math.cbrt(1 - presence.value)) * fadeIn;
-      } else if (pendingTrigger && (smoothFrames >= SMOOTH_FRAMES || (performance.now() - triggerWallClock) / 1000 > MAX_WAIT)) {
-        pendingTrigger = false;
-        // Catch up a little on the time since the Walk click, never so much that it starts half faded.
-        const lag = Math.min(MAX_LAG, Math.max(0, (performance.now() - triggerWallClock) / 1000));
-        startedAt = now - lag;
-        nextPulse = now + 0.25;
-        nextSpark = now + 0.08;
-        for (const pulse of pulses) {
-          pulse.born = -1;
-          pulse.rimMaterial.uniforms.uOpacity.value = 0;
-          pulse.mesh.visible = false;
-        }
-        for (let i = 0; i < sparkCount; i++) sparkBorn[i] = -1;
-      }
-      const age = now - startedAt;
-      let amount = 0;
-      let dying = 0;
-      if (age >= 0 && age < fadeIn) {
-        amount = easeOutCubic(age / fadeIn);
-      } else if (age >= fadeIn && age < fadeIn + hold) {
-        amount = 1;
-      } else if (age >= fadeIn + hold && age < fadeIn + hold + fadeOut) {
-        // An even S-curve: no sudden drop at the start of the fade.
-        const t = clamp01((age - fadeIn - hold) / fadeOut);
-        dying = t * t * (3 - 2 * t);
-        amount = 1 - dying;
-      }
-      presence.value = amount;
-      lipMaterial.opacity = 1;
-      const live = amount > 0.02;
-      halo.visible = live;
-      beam.visible = live;
-      // Full width until death; then a moderate shrink while it goes transparent.
-      const radiusScale = live ? 1 - 0.45 * dying : 0.55;
-      halo.scale.set(radiusScale, 1, radiusScale);
-      beam.scale.set(radiusScale, 1, radiusScale);
-
-      if (amount > 0.15 && now >= nextPulse) {
-        const pulse = pulses.find((entry) => entry.born < 0);
-        if (pulse) {
-          pulse.born = now;
-          pulse.radius = 1.4 + Math.random() * 0.35;
-          nextPulse = now + 0.55 + Math.random() * 0.95;
-        }
-      }
-      const rise = height * 0.62;
-      for (const pulse of pulses) {
-        const pulseAge = now - pulse.born;
-        const climbed = pulse.born < 0 ? rise : pulseClimb(pulseAge);
-        if (pulse.born < 0 || climbed >= rise || amount < 0.02) {
-          if (climbed >= rise) pulse.born = -1;
-          pulse.rimMaterial.uniforms.uOpacity.value = 0;
-          pulse.mesh.visible = false;
-          continue;
-        }
-        pulse.mesh.visible = true;
-        const u = climbed / rise;
-        pulse.mesh.position.y = 0.16 + climbed;
-        const scale = (pulse.radius / 1.55) * (1 - u * 0.72) * radiusScale;
-        pulse.mesh.scale.set(scale, scale, scale);
-        const appear = Math.min(1, pulseAge / 0.5);
-        const fadeInPulse = appear * appear * (3 - 2 * appear);
-        const fade = fadeInPulse * (1 - u) * (1 - u * 0.35);
-        pulse.rimMaterial.uniforms.uOpacity.value = fade * amount * (theme.value ? 0.08 : 0.14);
-      }
-
-      if (amount > 0.4) {
-        while (now >= nextSpark) {
-          let slot = -1;
-          for (let i = 0; i < sparkCount; i++) {
-            if (sparkBorn[i]! < 0) {
-              slot = i;
-              break;
-            }
-          }
-          if (slot < 0) break;
-          sparkBorn[slot] = now;
-          sparkRadius[slot] = Math.random() * 1.45;
-          sparkAngle[slot] = Math.random() * Math.PI * 2;
-          sparkSpeed[slot] = 5.5 + Math.random() * 2.5;
-          sparkLength[slot] = 0.14 + Math.random() * 0.2;
-          nextSpark += 0.006 + Math.random() * 0.015;
-        }
-      }
-      if (nextSpark < now) nextSpark = now;
-      const sparkRise = 10;
-      const sparkThickness = 0.022;
-      // Burn out well before the top: shrink + fade hard, then gone.
-      const sparkLife = 0.58;
-      // As the beam itself ends, clear remaining streaks sooner.
-      const beamEnd = amount >= 0.55 ? 1 : amount <= 0.02 ? 0 : amount / 0.55;
-      for (let i = 0; i < sparkCount; i++) {
-        const bornAt = sparkBorn[i]!;
-        if (bornAt < 0) {
-          sparkAlphas[i] = 0;
-          sparkDummy.position.set(0, -20, 0);
-          sparkDummy.scale.set(0.001, 0.001, 0.001);
-          sparkDummy.updateMatrix();
-          sparks.setMatrixAt(i, sparkDummy.matrix);
-          continue;
-        }
-        const sparkAge = now - bornAt;
-        const climbed = Math.min(sparkRise, sparkAge * sparkSpeed[i]!);
-        const heightU = climbed / sparkRise;
-        const lifeU = Math.min(1, heightU / sparkLife);
-        if (lifeU >= 0.999 || beamEnd <= 0.001) {
-          sparkBorn[i] = -1;
-          sparkAlphas[i] = 0;
-          sparkDummy.position.set(0, -20, 0);
-          sparkDummy.scale.set(0.001, 0.001, 0.001);
-          sparkDummy.updateMatrix();
-          sparks.setMatrixAt(i, sparkDummy.matrix);
-          continue;
-        }
-        const r = sparkRadius[i]!;
-        const ang = sparkAngle[i]!;
-        const die = lifeU * lifeU;
-        const dieOut = die * die;
-        const keep = (1 - dieOut) * beamEnd;
-        const len = sparkLength[i]! * (0.35 + 0.65 * keep);
-        const thick = sparkThickness * (0.2 + 0.8 * keep);
-        const y = 0.18 + climbed;
-        sparkDummy.position.set(Math.cos(ang) * r, y - len * 0.5, Math.sin(ang) * r);
-        sparkDummy.scale.set(Math.max(0.004, thick), Math.max(0.008, len), Math.max(0.004, thick));
-        sparkDummy.updateMatrix();
-        sparks.setMatrixAt(i, sparkDummy.matrix);
-        const appear = Math.min(1, sparkAge / 0.2);
-        const fadeInSpark = appear * appear * (3 - 2 * appear);
-        sparkAlphas[i] = fadeInSpark * keep * keep * 0.5;
-        sparkHues[i] = ang;
-      }
-      sparks.instanceMatrix.needsUpdate = true;
-      sparkAlphaAttr.needsUpdate = true;
-      sparkHueAttr.needsUpdate = true;
-      return amount;
+    update(now: number) {
+      time.value = now;
+      for (const dais of daises) dais.dressing.update(now);
     },
     dispose() {
-      halo.geometry.dispose();
-      beam.geometry.dispose();
-      haloMaterial.dispose();
-      beamMaterial.dispose();
-      base.geometry.dispose();
-      top.geometry.dispose();
-      lip.geometry.dispose();
-      foot.geometry.dispose();
+      for (const geometry of [baseGeometry, topGeometry, lipGeometry, footGeometry]) geometry.dispose();
       deckMaterial.dispose();
       lipMaterial.dispose();
-      dressing.dispose();
-      rimGeometry.dispose();
-      for (const pulse of pulses) pulse.rimMaterial.dispose();
-      sparkGeometry.dispose();
-      sparkMaterial.dispose();
+      for (const dais of daises) dais.dressing.dispose();
     },
   };
 }

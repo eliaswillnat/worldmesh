@@ -39,13 +39,14 @@ import {
 } from 'three';
 import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { CITY_GLOW_WHITE, applyCityTheme, applySkyTheme, createCityMaterials, createSky, createSpawnRay, flipInside, skyHorizon, type BillboardSlot } from './city';
+import { CITY_GLOW_WHITE, applyCityTheme, applySkyTheme, createCityMaterials, createSky, createSpawnPads, flipInside, skyHorizon, type BillboardSlot } from './city';
 import { DOOR_HALF_SPAN, DOOR_HEIGHT, DOOR_TOP, DOOR_WIDTH, FRAME, Door, createLabel, worldIsFull, type DoorWorld } from './door';
 import { doorFrameGeometry, frameOuterCorner, roundedOpeningGeometry } from './doorShape';
 import { describeBillboard } from './layout';
+import { playSendSound, playWarpSound } from './sounds';
 import { chatRejection } from '../../../../workers/presence/src/chatFilter';
 import { fetchOccupancy } from './occupancy';
-import { Assembly } from './assemble';
+import { Arrival } from './arrival';
 import { FLOOR_NAMES, Lifts, buildShafts, createColliderMaterial, mergeInto, planLifts } from './elevators';
 import {
   DRUM_HEIGHT,
@@ -115,11 +116,6 @@ export interface LobbyOptions {
   signals?: SignalSource;
   /** How many times people have entered a world, by URL; shown beside its doors. */
   entries?: (url: string) => number | undefined;
-  /**
-   * `performance.now()` when the visitor hit Walk. The spawn beam starts from
-   * that moment so load time does not delay it.
-   */
-  enteredAt?: number;
 }
 
 export interface Lobby {
@@ -284,6 +280,8 @@ const SPARE_DOORS = 6;
 const EMPTY_DOOR_REACH = 4.8;
 /** A tap on an empty door this far away still counts. */
 const WARP_MS = 450;
+/** Seconds the figure takes to warp away when leaving through a door: as quick as it arrives. */
+const LEAVE_TIME = 0.12;
 /** Someone back from a world ends up this far out in front of the door they took. */
 const RETURN_STEP = 2.4;
 /**
@@ -306,8 +304,6 @@ const TURN_S = 0.8;
  * open doorway and ends up looking at the back of the door.
  */
 const EXIT_CLEAR = 4;
-/** Where every visitor arrives: the middle of the hall. Each arrival looks a different way. */
-const SPAWN: Vec3Tuple = [0, 0, 0];
 /** How long the screen stays white while switching in or out of private mode. */
 const PRIVATE_FADE_MS = 260;
 /** The ghost's opacity, and how far its shimmer swings either side of it. */
@@ -315,11 +311,12 @@ const GHOST_OPACITY = 0.38;
 const GHOST_SHIMMER = 0.08;
 const GHOST_GLOW = 0x5cc8ff;
 /**
- * Someone else first seen this close to the spawn point has just entered, so
- * the beam lights for us too. Inside the nearest door's return spot (8.6 m), so
- * visitors walking back out of a world do not set it off.
+ * Someone else first seen this close to a spawn pad's centre has just entered,
+ * so the beam lights on that pad for us too. The pads sit 6 m out, inside the
+ * nearest door's return spot (8.6 m), so visitors walking back out of a world
+ * do not set it off.
  */
-const ARRIVE_RADIUS = 6;
+const ARRIVE_RADIUS = 1.5;
 /** Billboards further than this are not picked by the crosshair or a tap. */
 const BILLBOARD_RANGE = 95;
 /** How often the billboard under the crosshair is looked up, in seconds. */
@@ -332,8 +329,6 @@ const RANDOM_DOOR_ARC = 8.2;
 const RANDOM_DOOR_OUT = 0.3;
 
 /** The ring of light that runs across the floor on each arrival: metres per second, and seconds it lasts. */
-const WAVE_SPEED = 14;
-const WAVE_TIME = 2.4;
 
 /** How rough the floor is: 0 is a perfect mirror, 1 a softly blurred, uneven stone. */
 const FLOOR_ROUGHNESS = 1;
@@ -355,7 +350,6 @@ const floorShader = {
     uHaze: { value: new Color() },
     uRough: { value: FLOOR_ROUGHNESS },
     uHall: { value: 0 },
-    uWave: { value: -1 },
   },
   vertexShader: /* glsl */ `
     uniform mat4 textureMatrix;
@@ -380,7 +374,6 @@ const floorShader = {
     uniform vec3 uHaze;
     uniform float uRough;
     uniform float uHall;
-    uniform float uWave;
     varying vec4 vUv;
     varying vec3 vWorld;
 
@@ -459,16 +452,7 @@ const floorShader = {
       float spokeMajor = spokes(vWorld.xz, 8.0) * smoothstep(2.4, 3.0, rr);
       float radial = max(max(ringMinor, spokeMinor) * 0.08 * minorFade, max(ringMajor, spokeMajor) * 0.2);
       float square = max(minor * 0.08 * minorFade, major * 0.2);
-      // On each arrival a ring of light runs out from the platform along the
-      // lines, fading as it goes. uWave is seconds since the spawn, or < 0.
-      float wave = 0.0;
-      if (uWave >= 0.0) {
-        float front = uWave * ${WAVE_SPEED.toFixed(1)};
-        float ring = exp(-pow((rr - front) / 2.2, 2.0));
-        float trail = smoothstep(front + 1.0, front - 6.0, rr) * step(rr, front + 1.0) * 0.35;
-        wave = max(ring, trail) * (1.0 - smoothstep(0.0, ${WAVE_TIME.toFixed(1)}, uWave)) * (1.0 - smoothstep(0.0, uHall, rr) * 0.6);
-      }
-      float lines = mix(square, radial, inside) * fade * (1.0 + glow * 1.6 + wave * 6.0);
+      float lines = mix(square, radial, inside) * fade * (1.0 + glow * 1.6);
 
       // A mirror under a tinted glaze: glossier at grazing angles, faint
       // looking straight down. The rough patches take some of the shine off.
@@ -520,16 +504,20 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const sun = new DirectionalLight(0xffffff, 1.8);
   sun.position.set(4, 10, 6);
   scene.add(sun);
-  const spawnRay = createSpawnRay(CITADEL_HEIGHT + 170, FLOOR_LAYER);
-  scene.add(spawnRay.object);
-  // The local figure assembling out of points on arrival.
-  const assembly = new Assembly(FLOOR_LAYER);
-  /** Lobby clock when the last spawn's ring of light set off across the floor; negative = none. */
-  let waveStarted = -1;
-  /** Other visitors' figures assembling as they arrive, each with its own points. */
-  const arrivals: Array<{ assembly: Assembly; root: Object3D }> = [];
+  const spawnPads = createSpawnPads(FLOOR_LAYER);
+  scene.add(spawnPads.object);
+  // Placed now, not at the first render: the first steps already stand on a pad.
+  spawnPads.object.updateMatrixWorld(true);
+  // Every visitor arrives on one of the pads round the middle of the hall, chosen at
+  // random, facing the middle, which is left clear for the hologram.
+  let spawnPad = Math.floor(Math.random() * spawnPads.pads.length);
+  const padSpawn = (): Vec3Tuple => [spawnPads.pads[spawnPad].x, 0, spawnPads.pads[spawnPad].z];
+  const padYaw = () => Math.atan2(spawnPads.pads[spawnPad].x, spawnPads.pads[spawnPad].z);
+  // The local figure warping in on arrival.
+  const arrival = new Arrival();
+  /** Other visitors' figures warping in as they arrive. */
+  const arrivals: Array<{ arrival: Arrival; root: Object3D }> = [];
   let newestFigure: Object3D | null = null;
-  scene.add(assembly.points);
 
   const wallMaterial = new MeshStandardMaterial({ side: DoubleSide, roughness: 0.7, metalness: 0 });
   const innerWallMaterial = new MeshBasicMaterial({ side: DoubleSide });
@@ -598,7 +586,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         getAlias: () => alias,
         // Private mode keeps the default colour, so nothing ties the alias back to this visitor.
         getColor: () => (alias ? null : color),
-        // Someone else entering lights the same beam for everyone watching.
+        // Someone else arriving on a pad warps in for everyone watching.
         // Visitors coming back out of a world appear at a door, not here.
         // Each new figure is handed over just before its arrival is reported.
         onFigure: (root) => {
@@ -611,17 +599,26 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
           if (match) lifts.applyShared(Number(match[1]), { f: value.f, y: value.y, v: value.v }, age);
         },
         place: (position, grounded) => lifts.ground(position, grounded),
-        // Someone arriving gets the same show as we do: the beam, their figure
-        // assembling out of three point clones, and the ring across the floor.
+        // Someone arriving warps in as we do.
         onArrive: (x, z) => {
-          if (Math.hypot(x - SPAWN[0], z - SPAWN[2]) >= ARRIVE_RADIUS) return;
-          spawnRay.trigger();
-          waveStarted = time;
+          if (!spawnPads.pads.some((spot) => Math.hypot(x - spot.x, z - spot.z) < ARRIVE_RADIUS)) return;
           if (newestFigure) startArrival(newestFigure);
           newestFigure = null;
+          // Heard as their warp starts, quieter the further away they are.
+          playWarpSound(true, 0.2, loudnessAt(x, z));
         },
+        // Everyone else's footsteps, jumps and landings, heard from where we stand.
+        listener: () => listenerPoint.fromArray(world.getState().position),
+        // Someone leaving, by a door or by closing the page: the same sound as our own leaving.
+        onDepart: (x, z) => playWarpSound(false, 0, loudnessAt(x, z)),
       })
     : undefined;
+  const listenerPoint = new Vector3();
+  /** How loud someone else's sound is here: full beside us, fading with distance. */
+  function loudnessAt(x: number, z: number): number {
+    const [px, , pz] = world.getState().position;
+    return 1 / (1 + Math.hypot(x - px, z - pz) / 8);
+  }
   lifts.onSend = (index, state) => {
     presence?.share(`lift:${index}`, { f: state.f, y: Math.round(state.y * 100) / 100, v: Math.round(state.v * 100) / 100 });
   };
@@ -640,6 +637,10 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     new MeshStandardMaterial({ opacity: 0, transparent: true, depthWrite: false }),
   );
   ground.rotation.x = -Math.PI / 2;
+  // Wide from the start: visitors arrive on the pads 6 m out, before the hall
+  // is built and sizes the ground to the plaza.
+  ground.scale.setScalar(PLAZA_RADIUS);
+  ground.updateMatrixWorld(true);
   scene.add(ground);
 
   const known = new Map<string, DoorWorld>();
@@ -655,7 +656,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   let nearEmpty: Door | null = null;
   let time = 0;
   let warping = false;
-  let beamWobble = 0;
+  /** Lobby clock when this visitor started warping out through a door; negative = not leaving. */
+  let leavingAt = -1;
   // The lobby door being walked through, if it was one (not a tower door).
   let warpDoor: Door | null = null;
   let warpTimer = 0;
@@ -738,12 +740,13 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const occupancyByOrigin = new Map<string, { count: number; cap: number }>();
 
   const world = createWorldMesh({
+    footsteps: true,
     scene,
     camera,
     renderer,
-    spawn: SPAWN,
+    spawn: padSpawn(),
     // Held upright, look further down so the floor fills the tall screen instead of the sky.
-    view: { mode: 'third', distance: 5.5, pitch: window.innerWidth < window.innerHeight ? -0.32 : -0.15 },
+    view: { mode: 'third', yaw: padYaw(), distance: 5.5, pitch: window.innerWidth < window.innerHeight ? -0.32 : -0.15 },
     vr: true,
     ui: { title: 'WorldMesh', badge: false, crosshair: false, deferLockPanel: true, moveBeforeLock: true },
     network: presence,
@@ -756,7 +759,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       ...(exitDoor ? [exitDoor.face] : []),
       // Every doorway's frame and backstop, so nobody slips past one into the wall.
       ...[...doors.values(), ...emptyDoors, ...galleryDoors, ...(exitDoor ? [exitDoor] : [])].flatMap((door) => door.blockers),
-      ...spawnRay.colliders,
+      ...spawnPads.colliders,
       ...upper,
       ...lifts.colliders,
     ],
@@ -806,32 +809,20 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       updateBillboardFocus(dt, near !== null);
       billboards?.update(dt, camera);
       floorUniforms.uPlayer.value.set(x, z);
-      floorUniforms.uWave.value = waveStarted < 0 || time - waveStarted > WAVE_TIME ? -1 : time - waveStarted;
       // The sky is centred on the camera, so it stays around it however high the towers take them.
       sky.position.copy(camera.position);
-      const beamPresence = spawnRay.setTime(time);
-      // Arriving: the figure assembles out of points, and shows through as they land.
+      spawnPads.update(time);
+      // Arriving: the figure warps in.
       updateArrivals(dt);
-      const appear = assembly.update(dt, camera, renderer.domElement.height);
+      let appear = arrival.update(dt);
+      // Leaving: the arrival's warp in reverse, from solid back to nothing.
+      if (leavingAt >= 0) appear = 1 - Math.min(1, (time - leavingAt) / LEAVE_TIME);
       if (appear !== null) {
         if (ghost) ghost.shimmer(time, appear);
         else setLocalAppear(world.avatar, appear);
       } else if (ghost) {
         ghost.shimmer(time);
       }
-      // A small shake that grows as the camera nears the shaft. Strength eases
-      // in and out so walking into the beam does not snap. The rig rewrites the
-      // camera next frame, so this does not accumulate.
-      const rayDistance = Math.hypot(x, z);
-      const rayT = Math.min(1, Math.max(0, (rayDistance - 0.6) / 7));
-      const rayNear = 1 - rayT * rayT * (3 - 2 * rayT);
-      const wobbleTarget = rayNear * rayNear * 0.0065 * beamPresence * beamPresence;
-      const wobbleEase = 1 - Math.exp(-dt * 4.5);
-      beamWobble += (wobbleTarget - beamWobble) * wobbleEase;
-      const wobble = beamWobble;
-      camera.position.x += Math.sin(time * 46) * wobble + Math.sin(time * 71) * wobble * 0.35;
-      camera.position.y += Math.sin(time * 58 + 1.1) * wobble * 0.55;
-      camera.position.z += Math.sin(time * 39 + 0.6) * wobble * 0.4;
       // Keep the finite floor under the player. The grid is drawn in world
       // space, so moving the plane does not move the lines.
       mirror.position.set(Math.round(x / 10) * 10, 0, Math.round(z / 10) * 10);
@@ -897,6 +888,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     chatUntil = performance.now() + 7000;
     chatBubble.classList.remove('saying');
     presence?.say(line);
+    playSendSound();
   });
 
   function openChat(): void {
@@ -989,9 +981,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     chatBubble.style.top = `${(-chatPoint.y * 0.5 + 0.5) * rect.height}px`;
     chatBubble.classList.add('visible');
   }
-  // Fire as soon as the world is running — before doors/towers finish building —
-  // and backdate to the Walk click so the beam does not wait on load.
-  if (!options.start) triggerSpawnFx(options.enteredAt);
+  // Warp in as soon as the world is running, before doors and towers finish building.
+  if (!options.start) triggerSpawnFx();
 
   /** Walking through a lobby door: flash, then travel to the world's own URL. */
   function enter(door: Door): void {
@@ -1009,6 +1000,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   function travel(target: DoorWorld, spot: WalkSpot, door: Door | null): void {
     if (warping) return;
     warping = true;
+    leavingAt = time;
+    playWarpSound(false);
     warpDoor = door;
     returnTo = spot;
     options.onEnterWorld?.(target, returnTo);
@@ -1236,6 +1229,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     warpDoor?.settle();
     warpDoor = null;
     warping = false;
+    if (leavingAt >= 0) {
+      leavingAt = -1;
+      if (ghost) ghost.shimmer(time, 1);
+      else setLocalAppear(world.avatar, 1);
+    }
     flash.classList.remove('active');
     if (returnTo) emerge(returnTo);
     else {
@@ -1277,50 +1275,47 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     dispose,
   };
 
-  /** Another visitor arrived: hide their figure and assemble it out of points, as ours is. */
+  /** Another visitor arrived: hide their figure and warp it in, as ours is. */
   function startArrival(root: Object3D): void {
-    const assembly = new Assembly(FLOOR_LAYER);
-    assembly.setTheme(light);
-    scene.add(assembly.points);
-    assembly.start(() => (root.parent ? root : null));
+    const arrival = new Arrival();
+    arrival.start(() => (root.parent ? root : null));
     root.visible = false;
-    arrivals.push({ assembly, root });
+    arrivals.push({ arrival, root });
   }
 
   function updateArrivals(dt: number): void {
     for (let i = arrivals.length - 1; i >= 0; i--) {
-      const { assembly, root } = arrivals[i];
+      const { arrival, root } = arrivals[i];
       // They left before it finished.
       const gone = !root.parent;
-      const appear = gone ? null : assembly.update(dt, camera, renderer.domElement.height);
+      const appear = gone ? null : arrival.update(dt);
       if (appear === null) {
         if (!gone) {
           root.visible = true;
           setLocalAppear(root, 1);
         }
-        assembly.dispose();
         arrivals.splice(i, 1);
         continue;
       }
-      // Hidden until the clones merge, then faded in where they meet.
+      // Hidden until its warp starts.
       root.visible = appear > 0;
       if (appear > 0) setLocalAppear(root, appear);
     }
   }
 
-  /** Beam + local figure fade-in when arriving at the spawn point. */
-  function triggerSpawnFx(fromWallClock?: number): void {
-    spawnRay.trigger(fromWallClock);
-    assembly.start(() => world.avatar);
-    waveStarted = time;
+  /** The local figure warping in on its pad. */
+  function triggerSpawnFx(): void {
+    arrival.start(() => world.avatar);
+    // In time with the warp, which waits a moment before it starts.
+    playWarpSound(true, 0.2);
     if (ghost) ghost.shimmer(time, 0);
     else setLocalAppear(world.avatar, 0);
     aimSpawn();
   }
 
-  /** Pick a new look direction and turn the body toward the camera. */
+  /** Look across the pad towards the middle of the hall, and turn the body toward the camera. */
   function aimSpawn(): void {
-    const yaw = Math.random() * Math.PI * 2;
+    const yaw = padYaw();
     world.setState({ yaw, facing: yaw + Math.PI });
   }
 
@@ -1381,7 +1376,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   function setColor(next: string): void {
     color = next;
     setAvatarColor(world.avatar, next);
-    spawnRay.setTint(next);
   }
 
   if (options.color) setColor(options.color);
@@ -1398,7 +1392,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       world.clearAvatar();
       ghost?.restore();
       ghost = alias ? makeGhost(world.avatar) : null;
-        world.teleport(SPAWN, 0);
+      spawnPad = Math.floor(Math.random() * spawnPads.pads.length);
+      world.teleport(padSpawn(), padYaw());
       triggerSpawnFx();
       presence?.rejoin();
       flash.classList.remove('active');
@@ -1426,9 +1421,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     fog.far = light ? 300 : 230;
     hemisphere.groundColor.set(light ? 0xdde5f2 : 0x202020);
     hemisphere.intensity = light ? 2 : 1.6;
-    spawnRay.setTheme(light);
-    assembly.setTheme(light);
-    for (const arrival of arrivals) arrival.assembly.setTheme(light);
+    spawnPads.setTheme(light);
     floorUniforms.uBackground.value.set(light ? 0xf1f4fa : 0x000000);
     floorUniforms.uHaze.value.copy(background);
     floorUniforms.uLight.value = light ? 1 : 0;
@@ -1979,9 +1972,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     cityMaterials.dispose();
     sky.geometry.dispose();
     sky.material.dispose();
-    spawnRay.dispose();
-    assembly.dispose();
-    for (const arrival of arrivals) arrival.assembly.dispose();
+    spawnPads.dispose();
     ground.geometry.dispose();
     (ground.material as MeshStandardMaterial).dispose();
     mirror.dispose();

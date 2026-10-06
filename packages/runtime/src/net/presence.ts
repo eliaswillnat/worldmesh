@@ -1,4 +1,5 @@
 import { CanvasTexture, Group, Mesh, MeshBasicMaterial, Sprite, SpriteMaterial, Vector3, type Object3D, type Scene } from 'three';
+import { Footsteps } from '../audio/footsteps.js';
 import { animateDefaultAvatar, createDefaultAvatar, setAvatarColor, setAvatarExpression } from '../player/avatar.js';
 import { setFigureStroke } from '../player/stroke.js';
 import type { NetworkAdapter, PeerBody, PlayerState, WorldMeshHandle } from '../types.js';
@@ -25,6 +26,13 @@ export interface PresenceOptions {
   onArrive?: (x: number, z: number) => void;
   /** Called with each remote figure as it is made, already outlined. */
   onFigure?: (root: Object3D) => void;
+  /** Someone in the room left, last seen at (x, z). */
+  onDepart?: (x: number, z: number) => void;
+  /**
+   * Where this visitor is listening from. When set, everyone else's footsteps,
+   * jumps and landings are heard, fading with distance and silent far off.
+   */
+  listener?: () => Vector3 | null;
   /**
    * The relay refused this join because the room is full. Not used for
    * ordinary disconnects — those still reconnect in the background.
@@ -58,6 +66,10 @@ interface Remote {
   yaw: number;
   /** Smoothed horizontal speed, estimated from how far the avatar moves. */
   speed: number;
+  /** Their footsteps, jumps and landings, when this room hears them. */
+  steps: Footsteps | null;
+  /** Smoothed vertical speed, from how far the avatar rises or falls. */
+  vertical: number;
   /** Standing on something (floor, platform, step) rather than in the air. */
   grounded: boolean;
   /** Body colour currently applied, '' for the default. */
@@ -132,6 +144,8 @@ export class Presence implements NetworkAdapter {
   private getColor: () => string | null;
   private onArrive: (x: number, z: number) => void;
   private onFigure: (root: Object3D) => void;
+  private onDepart: (x: number, z: number) => void;
+  private listener: (() => Vector3 | null) | null;
   private onShared: NonNullable<PresenceOptions['onShared']>;
   private place: PresenceOptions['place'];
 
@@ -144,6 +158,8 @@ export class Presence implements NetworkAdapter {
     this.getColor = options.getColor ?? (() => null);
     this.onArrive = options.onArrive ?? (() => {});
     this.onFigure = options.onFigure ?? (() => {});
+    this.onDepart = options.onDepart ?? (() => {});
+    this.listener = options.listener ?? null;
     this.onShared = options.onShared ?? (() => {});
     this.place = options.place;
     this.group.name = 'worldmesh:remote-players';
@@ -227,7 +243,12 @@ export class Presence implements NetworkAdapter {
 
       const moved = Math.hypot(remote.root.position.x - before.x, remote.root.position.z - before.z);
       remote.speed += (moved / Math.max(dt, 1e-4) - remote.speed) * blend;
-      animateDefaultAvatar(remote.root, { dt, speed: remote.speed, grounded: remote.grounded });
+      const footfall = animateDefaultAvatar(remote.root, { dt, speed: remote.speed, grounded: remote.grounded });
+      if (remote.steps) {
+        remote.vertical = (remote.root.position.y - before.y) / Math.max(dt, 1e-4);
+        remote.steps.loudness = earshot(this.listener?.() ?? null, remote.root.position);
+        remote.steps.update(dt, remote.speed, remote.grounded, footfall, remote.vertical);
+      }
 
       if (remote.bubble) {
         remote.bubbleLeft -= dt;
@@ -391,7 +412,10 @@ export class Presence implements NetworkAdapter {
       }
       case 'leave': {
         const remote = this.remotes.get(message.id);
-        if (remote) disposeObject(remote.root);
+        if (remote) {
+          this.onDepart(remote.root.position.x, remote.root.position.z);
+          disposeObject(remote.root);
+        }
         this.remotes.delete(message.id);
         break;
       }
@@ -420,7 +444,7 @@ export class Presence implements NetworkAdapter {
       setFigureStroke(root, true);
       this.onFigure(root);
       this.group.add(root);
-      remote = { root, target: new Vector3(p[0], p[1], p[2]), targetYaw: yaw, yaw, speed: 0, grounded: true, color: '', label: GUEST, tag, appear: 0, bubble: null, bubbleLeft: 0 };
+      remote = { root, target: new Vector3(p[0], p[1], p[2]), targetYaw: yaw, yaw, speed: 0, steps: this.listener ? new Footsteps() : null, vertical: 0, grounded: true, color: '', label: GUEST, tag, appear: 0, bubble: null, bubbleLeft: 0 };
       this.remotes.set(id, remote);
       setFigureOpacity(root, 0);
       if (!snap) this.onArrive(p[0], p[2]);
@@ -657,6 +681,19 @@ function createNameTag(text: string): Sprite {
   sprite.scale.set((worldHeight * canvas.width) / height, worldHeight, 1);
   sprite.name = 'worldmesh:name-tag';
   return sprite;
+}
+
+/** Footsteps are heard this far away at most, in metres. */
+const EARSHOT = 30;
+
+/** How loud someone at `source` is to a listener: full beside them, half at 8 m, nothing past earshot. */
+function earshot(listener: Vector3 | null, source: Vector3): number {
+  if (!listener) return 0;
+  const distance = listener.distanceTo(source);
+  if (distance >= EARSHOT) return 0;
+  // Eased to zero at the edge so walking out of earshot does not cut a step off.
+  const edge = 1 - distance / EARSHOT;
+  return (1 / (1 + distance / 8)) * Math.min(1, edge * 4);
 }
 
 function disposeObject(root: Object3D): void {

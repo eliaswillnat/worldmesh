@@ -102,7 +102,7 @@ function toonSteps(shadow: string, light: string): CanvasTexture {
 const APPEAR_KEY = 'worldmeshAppear';
 
 /**
- * Scatter the surface into points that fill in as `uFill` goes from 0 to 1.
+ * Warp the surface up and down and fade it in as `uFill` goes from 0 to 1.
  * Materials on one figure share a uniform so the body and face appear together.
  */
 function attachAppear(material: Material, shared?: { value: number }): { value: number } {
@@ -127,9 +127,10 @@ float appearNoise(vec3 p) {
       .replace(
         '#include <begin_vertex>',
         `#include <begin_vertex>
-float appearWarp = 1.0 - uFill;
+// Eased so the warp stays strong for longer before it settles.
+float appearWarp = pow(1.0 - uFill, 0.6);
 vec3 appearWorld = (modelMatrix * vec4(position, 1.0)).xyz;
-float appearShift = (appearNoise(appearWorld * 5.5) * 2.0 - 1.0) * 0.38 * appearWarp;
+float appearShift = (appearNoise(appearWorld * 5.5) * 2.0 - 1.0) * 1.1 * appearWarp;
 transformed += (inverse(modelMatrix) * vec4(0.0, appearShift, 0.0, 0.0)).xyz;
 vAppearPos = appearWorld;`,
       );
@@ -141,8 +142,9 @@ ${appearFns}`,
       )
       .replace(
         '#include <dithering_fragment>',
-        `if (uFill < 0.999 && appearHash(floor(vAppearPos * 70.0)) > uFill) discard;
-#include <dithering_fragment>`,
+        `#include <dithering_fragment>
+// Fades from invisible to solid over the whole warp.
+gl_FragColor.a *= uFill * uFill * (3.0 - 2.0 * uFill);`,
       );
   };
   return fill;
@@ -175,6 +177,14 @@ export function setAvatarAppear(root: Object3D, amount: number): boolean {
       const fill = material.userData[APPEAR_KEY] as { value: number } | undefined;
       if (!fill) continue;
       fill.value = amount;
+      // Blend only while fading in, so a settled figure draws as before.
+      // The face decal is always see-through; keep that.
+      material.userData.appearTransparent ??= material.transparent;
+      const blend = amount < 0.999 || material.userData.appearTransparent === true;
+      if (material.transparent !== blend) {
+        material.transparent = blend;
+        material.needsUpdate = true;
+      }
       found = true;
     }
   });
@@ -300,11 +310,13 @@ export function getAvatarExpression(avatar: Object3D): AvatarExpression | null {
 /**
  * Swing the limbs of an avatar made by `createDefaultAvatar`. Call once per
  * frame with how fast it is moving; anything else is ignored, so it is safe
- * to call on custom avatars too.
+ * to call on custom avatars too. Returns true on the frame a foot lands,
+ * false otherwise, and null when `avatar` is not a default avatar.
  */
-export function animateDefaultAvatar(avatar: Object3D, motion: AvatarMotion): void {
+export function animateDefaultAvatar(avatar: Object3D, motion: AvatarMotion): boolean | null {
   const rig = avatar.userData[RIG_KEY] as AvatarRig | undefined;
-  if (!rig || motion.dt <= 0) return;
+  if (!rig) return null;
+  if (motion.dt <= 0) return false;
 
   const blend = 1 - Math.exp(-motion.dt * 10);
   const walking = motion.grounded ? MathUtils.clamp(motion.speed / 4.5, 0, 1) : 0;
@@ -312,6 +324,7 @@ export function animateDefaultAvatar(avatar: Object3D, motion: AvatarMotion): vo
   rig.air += ((motion.grounded ? 0 : 1) - rig.air) * blend;
 
   // Steps get longer, not just faster, as speed rises.
+  const before = footfalls(rig.phase);
   rig.phase += motion.dt * (4 + motion.speed * 1.2) * (rig.stride > 0.01 ? 1 : 0);
   const swing = Math.sin(rig.phase) * 0.75 * rig.stride;
 
@@ -324,6 +337,8 @@ export function animateDefaultAvatar(avatar: Object3D, motion: AvatarMotion): vo
 
   rig.torso.position.y = Math.abs(Math.cos(rig.phase)) * 0.045 * rig.stride;
   rig.head.rotation.z = Math.sin(rig.phase) * 0.04 * rig.stride;
+  // A foot lands where the legs are furthest apart and the body is lowest.
+  const landed = motion.grounded && rig.stride > 0.15 && footfalls(rig.phase) !== before;
 
   rig.blinkTimer -= motion.dt;
   if (rig.blinkTimer <= 0) {
@@ -331,6 +346,12 @@ export function animateDefaultAvatar(avatar: Object3D, motion: AvatarMotion): vo
     rig.blinkTimer = rig.blinking ? 0.12 : nextBlink();
     rig.face.map = faceTexture(rig.expression, rig.blinking);
   }
+  return landed;
+}
+
+/** How many footfalls a walk cycle at `phase` has passed: one per half turn, offset to the widest stance. */
+function footfalls(phase: number): number {
+  return Math.floor((phase - Math.PI / 2) / Math.PI);
 }
 
 function nextBlink(): number {
