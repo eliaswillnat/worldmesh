@@ -244,6 +244,55 @@ const CSS = `
   transition: opacity .2s ease;
 }
 .wm-overlay[data-locked="true"] .wm-hint { opacity: 1; }
+.wm-room-full {
+  position: absolute;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  background: rgba(8, 11, 16, 0.22);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  pointer-events: auto;
+  z-index: 6;
+  padding: max(20px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+}
+.wm-overlay[data-room-full="true"] .wm-room-full { display: flex; }
+.wm-overlay[data-room-full="true"] .wm-lock { display: none; }
+.wm-room-full-label {
+  margin: 0;
+  padding: 14px 36px;
+  border-radius: 4px;
+  background: rgba(160, 12, 18, 0.92);
+  color: #fff;
+  font-family: Urbanist, ui-sans-serif, system-ui, sans-serif;
+  font-size: clamp(22px, 4.4vw, 36px);
+  font-weight: 700;
+  letter-spacing: .02em;
+  text-align: center;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+}
+.wm-room-full-retry {
+  font-size: 13.5px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  padding: 12px 28px;
+  border: 1px solid rgba(255,255,255,0.45);
+  border-radius: 999px;
+  background: rgba(255,255,255,0.12);
+  color: #fff;
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 500;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.wm-room-full-retry:hover, .wm-room-full-retry:active {
+  background: rgba(255,255,255,0.22);
+  border-color: rgba(255,255,255,0.7);
+}
 
 @media (max-width: 400px) {
   .wm-lock {
@@ -323,7 +372,11 @@ export class Overlay {
   private lock: HTMLDivElement;
   private vrLaunch: HTMLButtonElement;
   private vrMenu: HTMLButtonElement;
+  private roomFull: HTMLDivElement;
+  private roomFullLabel: HTMLParagraphElement;
+  private roomFullRetry: HTMLButtonElement;
   private onEnter: (touch?: boolean) => void;
+  private onRoomFullRetry: (() => void) | null = null;
   private deferLockPanel: boolean;
 
   constructor(
@@ -465,6 +518,26 @@ export class Overlay {
     this.vrLaunch = vrLaunch;
     this.root.appendChild(vrLaunch);
 
+    const roomFull = document.createElement('div');
+    roomFull.className = 'wm-room-full';
+    roomFull.hidden = true;
+    const roomFullLabel = document.createElement('p');
+    roomFullLabel.className = 'wm-room-full-label';
+    const roomFullRetry = document.createElement('button');
+    roomFullRetry.type = 'button';
+    roomFullRetry.className = 'wm-room-full-retry';
+    roomFullRetry.textContent = 'Try again';
+    roomFullRetry.hidden = true;
+    roomFullRetry.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this.onRoomFullRetry?.();
+    });
+    roomFull.append(roomFullLabel, roomFullRetry);
+    this.roomFull = roomFull;
+    this.roomFullLabel = roomFullLabel;
+    this.roomFullRetry = roomFullRetry;
+    this.root.appendChild(roomFull);
+
     document.body.appendChild(this.root);
   }
 
@@ -508,6 +581,19 @@ export class Overlay {
     this.lock.style.removeProperty('-webkit-backdrop-filter');
     const content = this.lock.querySelector('.wm-lock-content');
     if (content instanceof HTMLElement) content.style.visibility = '';
+  }
+
+  /**
+   * Presence refused the join because the room is full. Soft-blur the scene
+   * and show the same red banner language as a full world door.
+   */
+  setRoomFull(label: string | null, options?: { onRetry?: () => void }): void {
+    const full = Boolean(label);
+    this.root.dataset.roomFull = String(full);
+    this.roomFull.hidden = !full;
+    this.roomFullLabel.textContent = label ?? '';
+    this.onRoomFullRetry = options?.onRetry ?? null;
+    this.roomFullRetry.hidden = !this.onRoomFullRetry;
   }
 
   setPrompt(text: string | null): void {

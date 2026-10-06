@@ -24,6 +24,7 @@ import { isTouchDevice } from '../controls/touch.js';
 import { immersiveVrSupported, requestImmersiveVr } from '../xr/session.js';
 import { Emitter } from './events.js';
 import { DEFAULT_PRESENCE_SERVER, Presence } from '../net/presence.js';
+import { roomFullLabel } from '../net/roomFull.js';
 
 /** Never simulate more than this per substep, so a stall cannot tunnel the player. */
 const MAX_STEP = 1 / 60;
@@ -170,6 +171,15 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   if (options.autoStart !== false) start();
 
   const network = options.network ?? createMultiplayer();
+  if (network instanceof Presence) {
+    network.setOnFull((full) => {
+      overlay.setRoomFull(full ? roomFullLabel(network.url) : null, {
+        onRetry: full ? () => network.rejoin() : undefined,
+      });
+      if (full) input.exitPointerLock();
+      events.emit('room:full', { full });
+    });
+  }
   network?.attach(handle);
   if (network?.bodies) controller.bodies = () => network.bodies!();
 

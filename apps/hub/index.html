@@ -858,6 +858,13 @@
       html.walking:not(:has(.wm-overlay[data-lock-ready="true"]:not([data-locked="true"]))):not(:has(dialog[open])) * {
         cursor: none !important;
       }
+      html.walking:has(.wm-overlay[data-room-full="true"]),
+      html.walking:has(.wm-overlay[data-room-full="true"]) * {
+        cursor: auto !important;
+      }
+      html.walking:has(.wm-overlay[data-room-full="true"]) .wm-room-full-retry {
+        cursor: pointer !important;
+      }
       html.walking main { display: none; }
       .walk-root {
         position: fixed;

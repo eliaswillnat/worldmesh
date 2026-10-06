@@ -191,6 +191,8 @@ export interface WorldMeshEvents {
   'avatar:error': { descriptor: AvatarDescriptor | null; error: unknown };
   /** People in this world including the visitor, or null while not connected. Only with `multiplayer`. */
   players: { count: number | null };
+  /** The presence relay refused the join because the room is at capacity. */
+  'room:full': { full: boolean };
   /** An immersive-vr session started. */
   'vr:enter': Record<string, never>;
   /** The immersive-vr session ended. */

@@ -2,6 +2,7 @@ import { CanvasTexture, Group, Mesh, MeshBasicMaterial, Sprite, SpriteMaterial, 
 import { animateDefaultAvatar, createDefaultAvatar, setAvatarColor, setAvatarExpression } from '../player/avatar.js';
 import { setFigureStroke } from '../player/stroke.js';
 import type { NetworkAdapter, PeerBody, PlayerState, WorldMeshHandle } from '../types.js';
+import { isRoomFullSignal, probeRoomFull } from './roomFull.js';
 
 /** The relay WorldMesh hosts (workers/presence). Worlds can point at their own. */
 export const DEFAULT_PRESENCE_SERVER = 'wss://relay.worldmesh.net';
@@ -24,6 +25,11 @@ export interface PresenceOptions {
   onArrive?: (x: number, z: number) => void;
   /** Called with each remote figure as it is made, already outlined. */
   onFigure?: (root: Object3D) => void;
+  /**
+   * The relay refused this join because the room is full. Not used for
+   * ordinary disconnects — those still reconnect in the background.
+   */
+  onFull?: (full: boolean) => void;
 }
 
 /** How often the local position goes out, per second. */
@@ -100,9 +106,13 @@ export class Presence implements NetworkAdapter {
   private closed = false;
   private lastSent = 0;
   private lastPayload = '';
+  private welcomed = false;
+  private full = false;
+  private probeId = 0;
 
-  private url: string;
+  readonly url: string;
   private onCount: (count: number | null) => void;
+  private onFull: (full: boolean) => void;
   private getName: () => string | null;
   private getAlias: () => string | null;
   private getColor: () => string | null;
@@ -112,6 +122,7 @@ export class Presence implements NetworkAdapter {
   constructor(options: PresenceOptions) {
     this.url = options.url;
     this.onCount = options.onCount ?? (() => {});
+    this.onFull = options.onFull ?? (() => {});
     this.getName = options.getName ?? (() => null);
     this.getAlias = options.getAlias ?? (() => null);
     this.getColor = options.getColor ?? (() => null);
@@ -119,6 +130,12 @@ export class Presence implements NetworkAdapter {
     this.onFigure = options.onFigure ?? (() => {});
     this.group.name = 'worldmesh:remote-players';
     options.scene.add(this.group);
+  }
+
+  /** Late-bind the full-room overlay (createWorldMesh wires this after constructing Presence). */
+  setOnFull(handler: (full: boolean) => void): void {
+    this.onFull = handler;
+    if (this.full) handler(true);
   }
 
   attach(world: WorldMeshHandle): void {
@@ -204,6 +221,8 @@ export class Presence implements NetworkAdapter {
   rejoin(): void {
     if (this.closed) return;
     window.clearTimeout(this.reconnectTimer);
+    this.probeId += 1;
+    this.leaveFull();
     this.disconnect();
     this.backoff = 1000;
     this.connect();
@@ -230,6 +249,12 @@ export class Presence implements NetworkAdapter {
       return;
     }
     this.socket = socket;
+    this.welcomed = false;
+
+    listenForHandshakeRefuse(socket, (signal) => {
+      if (this.socket !== socket || this.welcomed) return;
+      if (isRoomFullSignal(signal)) this.enterFull();
+    });
 
     socket.addEventListener('message', (event) => {
       if (typeof event.data !== 'string') return;
@@ -242,17 +267,29 @@ export class Presence implements NetworkAdapter {
       this.handleMessage(message);
     });
 
-    socket.addEventListener('close', () => {
+    socket.addEventListener('close', (event) => {
       if (this.socket !== socket) return;
+      const welcomed = this.welcomed;
       this.socket = null;
       this.selfId = null;
+      this.welcomed = false;
       this.clearRemotes();
       this.onCount(null);
-      this.scheduleReconnect();
+      if (this.full) return;
+      if (welcomed) {
+        this.scheduleReconnect();
+        return;
+      }
+      if (isRoomFullSignal({ code: event.code, reason: event.reason })) {
+        this.enterFull();
+        return;
+      }
+      void this.classifyFailedJoin();
     });
   }
 
   private disconnect(): void {
+    this.probeId += 1;
     const socket = this.socket;
     this.socket = null;
     this.selfId = null;
@@ -262,19 +299,51 @@ export class Presence implements NetworkAdapter {
   }
 
   private scheduleReconnect(): void {
-    if (this.closed) return;
+    if (this.closed || this.full) return;
     window.clearTimeout(this.reconnectTimer);
     this.reconnectTimer = window.setTimeout(() => this.connect(), this.backoff);
     this.backoff = Math.min(this.backoff * 2, MAX_BACKOFF_MS);
+  }
+
+  private enterFull(): void {
+    if (this.full) return;
+    this.full = true;
+    window.clearTimeout(this.reconnectTimer);
+    this.probeId += 1;
+    const socket = this.socket;
+    this.socket = null;
+    this.selfId = null;
+    this.welcomed = false;
+    socket?.close(1000, 'full');
+    this.clearRemotes();
+    this.onCount(null);
+    this.onFull(true);
+  }
+
+  private leaveFull(): void {
+    if (!this.full) return;
+    this.full = false;
+    this.onFull(false);
+  }
+
+  /** Browser handshakes hide 503; confirm via HTTP before treating this as a network blip. */
+  private async classifyFailedJoin(): Promise<void> {
+    const id = ++this.probeId;
+    const full = await probeRoomFull(this.url);
+    if (id !== this.probeId || this.closed || this.socket || this.full) return;
+    if (full) this.enterFull();
+    else this.scheduleReconnect();
   }
 
   private handleMessage(message: ServerMessage): void {
     switch (message.t) {
       case 'welcome':
         this.selfId = message.id;
+        this.welcomed = true;
         this.backoff = 1000;
         this.lastPayload = '';
         this.lastSent = 0;
+        this.leaveFull();
         for (const peer of message.peers) this.upsert(peer.id, peer, true);
         break;
       case 's':
@@ -368,6 +437,52 @@ export class Presence implements NetworkAdapter {
 
 function round(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+/**
+ * Node's `ws` package emits `unexpected-response` with the HTTP status when
+ * the upgrade is refused. Browsers only get a generic `error` / close 1006.
+ */
+function listenForHandshakeRefuse(
+  socket: WebSocket,
+  onRefuse: (signal: { status?: number; message?: string; body?: string }) => void,
+): void {
+  socket.addEventListener('error', (event) => {
+    const err = event as ErrorEvent & { error?: { message?: string } };
+    const message = err.message || err.error?.message;
+    if (isRoomFullSignal({ message })) onRefuse({ message });
+  });
+  const nodeSocket = socket as WebSocket & {
+    on?(event: string, listener: (...args: unknown[]) => void): void;
+  };
+  nodeSocket.on?.('unexpected-response', (...args: unknown[]) => {
+    const res = args[1] as NodeHandshakeResponse | undefined;
+    if (!res) return;
+    const chunks: Uint8Array[] = [];
+    res.on?.('data', (chunk) => {
+      chunks.push(typeof chunk === 'string' ? new TextEncoder().encode(chunk) : chunk);
+    });
+    res.on?.('end', () => {
+      onRefuse({ status: res.statusCode, body: new TextDecoder().decode(concatBytes(chunks)) });
+    });
+    if (!res.on) onRefuse({ status: res.statusCode });
+  });
+}
+
+interface NodeHandshakeResponse {
+  statusCode?: number;
+  on?(event: string, listener: (chunk: string | Uint8Array) => void): void;
+}
+
+function concatBytes(chunks: Uint8Array[]): Uint8Array {
+  const size = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+  const out = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
 }
 
 /** How long a newly appeared figure takes to go from transparent to opaque. */
