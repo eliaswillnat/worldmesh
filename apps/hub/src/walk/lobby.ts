@@ -43,6 +43,7 @@ import { CITY_GLOW_WHITE, applyCityTheme, applySkyTheme, createCityMaterials, cr
 import { DOOR_HALF_SPAN, DOOR_HEIGHT, DOOR_TOP, DOOR_WIDTH, FRAME, Door, createLabel, worldIsFull, type DoorWorld } from './door';
 import { doorFrameGeometry, frameOuterCorner, roundedOpeningGeometry } from './doorShape';
 import { describeBillboard } from './layout';
+import { chatRejection } from '../../../../workers/presence/src/chatFilter';
 import { fetchOccupancy } from './occupancy';
 import { Assembly } from './assemble';
 import { FLOOR_NAMES, Lifts, buildShafts, createColliderMaterial, mergeInto, planLifts } from './elevators';
@@ -731,6 +732,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       ...emptyDoors.map((door) => door.face),
       ...galleryDoors.map((door) => door.face),
       ...(exitDoor ? [exitDoor.face] : []),
+      // Every doorway's frame and backstop, so nobody slips past one into the wall.
+      ...[...doors.values(), ...emptyDoors, ...galleryDoors, ...(exitDoor ? [exitDoor] : [])].flatMap((door) => door.blockers),
       ...spawnRay.colliders,
       ...upper,
       ...lifts.colliders,
@@ -850,6 +853,13 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   chatBubble.addEventListener('submit', (event) => {
     event.preventDefault();
     const line = chatField.value.trim();
+    const rejection = line ? chatRejection(line) : null;
+    if (rejection) {
+      chatField.value = '';
+      chatField.placeholder = rejection === 'link' ? 'links are not allowed' : 'that word is not allowed';
+      return;
+    }
+    chatField.placeholder = 'say something';
     chatting = false;
     chatField.blur();
     chatField.value = '';

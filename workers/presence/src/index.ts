@@ -1,4 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
+import { chatRejection } from './chatFilter';
 
 /**
  * Presence relay: who is standing where (and what face they are pulling), nothing else.
@@ -316,11 +317,11 @@ export class Room extends DurableObject<Env> {
     }
   }
 
-  /** One short line, forwarded as-is. Nothing is stored. */
+  /** One short line, forwarded unless it has blocked words or links. Nothing is stored. */
   private relayChat(ws: WebSocket, raw: unknown): void {
     if (typeof raw !== 'string') return;
     const text = raw.replace(/[\u0000-\u001f]/g, '').trim().slice(0, 80);
-    if (!text) return;
+    if (!text || chatRejection(text)) return;
     const peer = ws.deserializeAttachment() as Peer | null;
     if (!peer?.seen) return;
     const now = Date.now();
