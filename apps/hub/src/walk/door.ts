@@ -937,7 +937,7 @@ const CHIP_BOTTOM = DOOR_TOP + 0.18;
 /** Space between the top row of chips and the name's canvas. */
 const LABEL_GAP = -0.12;
 
-/** Chips with their own colour, as [light, dark]; the rest stay neutral. */
+/** Chips filled with their own colour, as [light, dark]; the rest stay neutral. */
 const CHIP_COLORS: Record<string, [string, string]> = {
   Multiplayer: ['#1d6fe0', '#4d9bff'],
   'VR supported': ['#8a3ee0', '#b57bff'],
@@ -997,12 +997,14 @@ function createChips(labels: string[]): { mesh: Mesh<PlaneGeometry, MeshBasicMat
         const w = widths[i];
         ctx.beginPath();
         ctx.roundRect(x, y, w, pill, pill / 2);
-        ctx.fillStyle = light ? 'rgba(255, 255, 255, 0.85)' : 'rgba(0, 0, 0, 0.55)';
+        // A chip with its own colour is filled with it and labelled in black.
+        // The brighter shade in both themes, so black reads on it.
+        const accent = CHIP_COLORS[labels[i]]?.[1];
+        ctx.fillStyle = accent ?? (light ? 'rgba(255, 255, 255, 0.85)' : 'rgba(0, 0, 0, 0.55)');
         ctx.fill();
-        const accent = CHIP_COLORS[labels[i]]?.[light ? 0 : 1];
         ctx.strokeStyle = accent ?? (light ? 'rgba(0, 0, 0, 0.35)' : 'rgba(255, 255, 255, 0.45)');
         ctx.stroke();
-        ctx.fillStyle = accent ?? (light ? '#111111' : '#ffffff');
+        ctx.fillStyle = accent ? '#000000' : light ? '#111111' : '#ffffff';
         ctx.fillText(labels[i], x + w / 2, y + pill / 2 + 2);
         x += w + gap;
       }

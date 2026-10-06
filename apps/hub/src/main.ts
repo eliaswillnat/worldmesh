@@ -324,6 +324,19 @@ new ResizeObserver(() => {
   document.documentElement.style.setProperty('--header-h', `${siteHeader.offsetHeight}px`);
 }).observe(siteHeader);
 
+// The header slides away while scrolling down and comes back on any scroll up.
+// Desktop scrolls the window; phones scroll <main>.
+let lastScrollY = 0;
+function onScroll(y: number): void {
+  const hide = y > lastScrollY && y > siteHeader.offsetHeight;
+  if (Math.abs(y - lastScrollY) > 4 || y <= 0) {
+    document.documentElement.classList.toggle('header-hidden', hide);
+    lastScrollY = y;
+  }
+}
+window.addEventListener('scroll', () => onScroll(window.scrollY), { passive: true });
+document.querySelector('main')!.addEventListener('scroll', (e) => onScroll((e.target as HTMLElement).scrollTop), { passive: true });
+
 // On mobile the page opens with the first card already snapped into view.
 function snapFirstCard(): void {
   if (!mobileQuery.matches || document.documentElement.classList.contains('mobile-adding')) return;

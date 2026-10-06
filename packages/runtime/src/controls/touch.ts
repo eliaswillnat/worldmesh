@@ -102,6 +102,19 @@ const TOUCH_CSS = `
   font-size: 14px;
   opacity: 0.85;
 }
+.wm-btn-sprint {
+  width: 48px;
+  height: 48px;
+}
+.wm-btn-sprint svg {
+  display: block;
+  pointer-events: none;
+}
+/* Run is a toggle, not a hold: both thumbs are busy steering and looking. */
+.wm-btn-sprint.wm-on {
+  background: rgba(255, 255, 255, 0.85);
+  color: #080b10;
+}
 .wm-touch-menu-btn {
   position: absolute;
   top: 14px;
@@ -156,6 +169,8 @@ export class TouchControls {
   private lookDelta = { dx: 0, dy: 0 };
 
   private actionsDown = new Set<InputAction>();
+  private sprintBtn: HTMLButtonElement;
+  private sprinting = false;
   private justPressed = new Set<InputAction>();
 
   private disposed = false;
@@ -186,7 +201,21 @@ export class TouchControls {
     const interactBtn = this.createActionButton('E', 'interact', 'wm-btn-interact', 'Interact');
     const jumpBtn = this.createActionButton('▲', 'jump', 'wm-btn-jump', 'Jump');
 
-    buttons.append(viewBtn, interactBtn, jumpBtn);
+    this.sprintBtn = document.createElement('button');
+    this.sprintBtn.type = 'button';
+    this.sprintBtn.className = 'wm-touch-btn wm-btn-sprint';
+    // An SVG, not a '»' glyph: font metrics push text off the circle's centre.
+    this.sprintBtn.innerHTML =
+      '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 17 5-5-5-5"/><path d="m13 17 5-5-5-5"/></svg>';
+    this.sprintBtn.title = 'Run';
+    this.sprintBtn.setAttribute('aria-pressed', 'false');
+    this.sprintBtn.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      this.setSprinting(!this.sprinting);
+    });
+
+    buttons.append(viewBtn, interactBtn, this.sprintBtn, jumpBtn);
     this.root.appendChild(buttons);
 
     // Menu / Pause button (top right)
@@ -332,6 +361,8 @@ export class TouchControls {
     if (e.pointerId === this.movePointerId) {
       this.movePointerId = null;
       this.moveAxis = { x: 0, z: 0 };
+      // Like most mobile games, stopping ends the run.
+      this.setSprinting(false);
       this.restJoystick();
     }
     if (e.pointerId === this.lookPointerId) {
@@ -350,6 +381,7 @@ export class TouchControls {
   }
 
   isDown(action: InputAction): boolean {
+    if (action === 'sprint' && this.sprinting) return true;
     return this.actionsDown.has(action);
   }
 
@@ -378,7 +410,14 @@ export class TouchControls {
     this.lookDelta = { dx: 0, dy: 0 };
     this.actionsDown.clear();
     this.justPressed.clear();
+    this.setSprinting(false);
     this.restJoystick();
+  }
+
+  private setSprinting(on: boolean): void {
+    this.sprinting = on;
+    this.sprintBtn.classList.toggle('wm-on', on);
+    this.sprintBtn.setAttribute('aria-pressed', String(on));
   }
 
   private restJoystick(): void {
