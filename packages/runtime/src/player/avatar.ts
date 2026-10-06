@@ -14,6 +14,7 @@ import {
   SplineCurve,
   SRGBColorSpace,
   Vector2,
+  Vector3,
   type BufferGeometry,
   type Object3D,
 } from 'three';
@@ -100,20 +101,30 @@ function toonSteps(shadow: string, light: string): CanvasTexture {
 }
 
 const APPEAR_KEY = 'worldmeshAppear';
+const APPEAR_AXIS_KEY = 'worldmeshAppearAxis';
+const UP = new Vector3(0, 1, 0);
 
 /**
- * Warp the surface up and down and fade it in as `uFill` goes from 0 to 1.
- * Materials on one figure share a uniform so the body and face appear together.
+ * Warp the surface along an axis (up and down unless told otherwise) and fade
+ * it in as `uFill` goes from 0 to 1. Materials on one figure share uniforms so
+ * the body and face appear together.
  */
-function attachAppear(material: Material, shared?: { value: number }): { value: number } {
-  const fill = shared ?? { value: 1 };
+function attachAppear(
+  material: Material,
+  shared?: { fill: { value: number }; axis: { value: Vector3 } },
+): { fill: { value: number }; axis: { value: Vector3 } } {
+  const fill = shared?.fill ?? { value: 1 };
+  const axis = shared?.axis ?? { value: UP.clone() };
   material.userData[APPEAR_KEY] = fill;
+  material.userData[APPEAR_AXIS_KEY] = axis;
   material.customProgramCacheKey = () => 'worldmesh-appear';
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uFill = fill;
+    shader.uniforms.uAppearAxis = axis;
     const appearFns = `
 varying vec3 vAppearPos;
 uniform float uFill;
+uniform vec3 uAppearAxis;
 float appearHash(vec3 p) {
   p = fract(p * vec3(443.897, 441.423, 437.195));
   p += dot(p, p.yzx + 19.19);
@@ -131,7 +142,7 @@ float appearNoise(vec3 p) {
 float appearWarp = pow(1.0 - uFill, 0.6);
 vec3 appearWorld = (modelMatrix * vec4(position, 1.0)).xyz;
 float appearShift = (appearNoise(appearWorld * 5.5) * 2.0 - 1.0) * 1.1 * appearWarp;
-transformed += (inverse(modelMatrix) * vec4(0.0, appearShift, 0.0, 0.0)).xyz;
+transformed += (inverse(modelMatrix) * vec4(uAppearAxis * appearShift, 0.0)).xyz;
 vAppearPos = appearWorld;`,
       );
     shader.fragmentShader = shader.fragmentShader
@@ -147,7 +158,7 @@ ${appearFns}`,
 gl_FragColor.a *= uFill * uFill * (3.0 - 2.0 * uFill);`,
       );
   };
-  return fill;
+  return { fill, axis };
 }
 
 /** Tint a default avatar. Custom bodies are left alone. */
@@ -166,8 +177,11 @@ export function setAvatarColor(root: Object3D, color: string): boolean {
   return found;
 }
 
-/** Drive the point-fill on a default avatar. Returns false for anything else. */
-export function setAvatarAppear(root: Object3D, amount: number): boolean {
+/**
+ * Drive the point-fill on a default avatar. The surface warps along `axis`
+ * (a world direction; up by default). Returns false for anything else.
+ */
+export function setAvatarAppear(root: Object3D, amount: number, axis: { x: number; y: number; z: number } = UP): boolean {
   let found = false;
   root.traverse((child) => {
     const mesh = child as Mesh;
@@ -177,6 +191,7 @@ export function setAvatarAppear(root: Object3D, amount: number): boolean {
       const fill = material.userData[APPEAR_KEY] as { value: number } | undefined;
       if (!fill) continue;
       fill.value = amount;
+      (material.userData[APPEAR_AXIS_KEY] as { value: Vector3 } | undefined)?.value.set(axis.x, axis.y, axis.z);
       // Blend only while fading in, so a settled figure draws as before.
       // The face decal is always see-through; keep that.
       material.userData.appearTransparent ??= material.transparent;

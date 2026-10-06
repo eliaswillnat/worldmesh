@@ -4,7 +4,6 @@ import {
   CanvasTexture,
   Color,
   DoubleSide,
-  Float32BufferAttribute,
   Group,
   LinearFilter,
   Mesh,
@@ -16,10 +15,10 @@ import {
   Texture,
   TextureLoader,
   Vector2,
+  Vector3,
 } from 'three';
 import { drawEntries, measureEntries } from '../entries';
-import { createGodRayMaterial } from './city';
-import { doorFrameGeometry, GALLERY_CORNER, openingCorner, ROUNDED_TOP_GLSL } from './doorShape';
+import { doorFrameGeometry, GALLERY_CORNER, ROUNDED_TOP_GLSL } from './doorShape';
 
 export interface DoorWorld {
   name: string;
@@ -57,6 +56,8 @@ export const DOOR_HEIGHT = 5.6;
 /** Frame thickness and depth. */
 export const FRAME = 0.16;
 const DEPTH = 0.32;
+/** How long the surface ripples after someone goes through, in seconds. */
+const WARP_SECONDS = 1.3;
 /** Step this close to the doorway to go through. */
 const THRESHOLD = 0.1;
 /**
@@ -70,78 +71,6 @@ export const DOOR_HALF_SPAN = DOOR_WIDTH / 2 + FRAME;
 export const DOOR_TOP = DOOR_HEIGHT + FRAME;
 /** Widest a name above a door may get, so neighbouring labels never touch. */
 const MAX_LABEL_WIDTH = 4;
-/** How far occupied doors spill god-rays into the hall. */
-const RAY_LENGTH = 2.05;
-/** Keep the shaft off the floor so the glow sits in the opening, not on the tiles. */
-const RAY_CLEARANCE = 0.02;
-/** Far end is wider than the doorway; a little taller, not as much. */
-const RAY_FLARE_W = 1.18;
-const RAY_FLARE_H = 1.06;
-
-const SHAFT_ARC = 10;
-
-/**
- * Open-bottom shaft: door-sized at the opening, larger out in the hall, with
- * the doorway's rounded top corners. The sill stays level so the far end
- * does not dip into the floor. Corner radii scale with the flare.
- */
-function roundedShaft(
-  nearW: number,
-  nearH: number,
-  farW: number,
-  farH: number,
-  depth: number,
-  nearRx: number,
-  nearRy: number,
-  farRx: number,
-  farRy: number,
-): BufferGeometry {
-  const profile = (halfW: number, bottom: number, top: number, rx: number, ry: number, z: number) => {
-    const rX = Math.min(Math.max(rx, 0), halfW);
-    const rY = Math.min(Math.max(ry, 0), top - bottom);
-    const cxL = -halfW + rX;
-    const cxR = halfW - rX;
-    const cy = top - rY;
-    const pts: number[] = [-halfW, bottom, z, -halfW, cy, z];
-    for (let i = 1; i <= SHAFT_ARC; i++) {
-      const a = Math.PI - (i / SHAFT_ARC) * (Math.PI / 2);
-      pts.push(cxL + Math.cos(a) * rX, cy + Math.sin(a) * rY, z);
-    }
-    for (let i = 0; i <= SHAFT_ARC; i++) {
-      const a = Math.PI / 2 - (i / SHAFT_ARC) * (Math.PI / 2);
-      pts.push(cxR + Math.cos(a) * rX, cy + Math.sin(a) * rY, z);
-    }
-    pts.push(halfW, bottom, z);
-    return pts;
-  };
-
-  const z0 = -depth / 2;
-  const z1 = depth / 2;
-  const nearBottom = -nearH / 2;
-  const farBottom = nearBottom;
-  const near = profile(nearW / 2, nearBottom, nearBottom + nearH, nearRx, nearRy, z0);
-  const far = profile(farW / 2, farBottom, farBottom + farH, farRx, farRy, z1);
-  const stride = 3;
-  const count = near.length / stride;
-  const positions = new Float32Array([...near, ...far]);
-  const indices: number[] = [];
-  for (let i = 0; i < count - 1; i++) {
-    const a = i;
-    const b = i + 1;
-    const c = count + i;
-    const d = count + i + 1;
-    indices.push(a, c, b, b, c, d);
-  }
-  // The end of the shaft, out in the hall, closes on the same rounded outline.
-  for (let i = 1; i < count - 1; i++) indices.push(count, count + i, count + i + 1);
-
-  const geometry = new BufferGeometry();
-  geometry.setAttribute('position', new Float32BufferAttribute(positions, 3));
-  geometry.setIndex(indices);
-  geometry.computeVertexNormals();
-  return geometry;
-}
-
 const portalVertex = /* glsl */ `
   varying vec2 vUv;
   void main() {
@@ -163,8 +92,45 @@ const portalFragment = /* glsl */ `
   uniform float uHover;
   uniform float uRandom;
   uniform float uFull;
+  uniform float uWarp;
+  uniform float uWarpT;
+  uniform vec2 uBreath;
   varying vec2 vUv;
   ${ROUNDED_TOP_GLSL}
+
+  // Someone going through: rings of rippling water spread out from the
+  // middle of the doorway to its edges. Returns the bent point, and the
+  // ripple's slope there (to shade the picture and split its colours).
+  vec3 warp(vec2 p) {
+    if (uWarp <= 0.0) return vec3(p, 0.0);
+    vec2 aspect = vec2(${(DOOR_WIDTH / DOOR_HEIGHT).toFixed(4)}, 1.0);
+    vec2 d = p * aspect;
+    float r = length(d);
+    vec2 dir = r > 0.0001 ? d / r : vec2(0.0);
+    // The rings travel outward with the front, which reaches the corners as the warp ends.
+    float front = uWarpT * 0.8;
+    float wave = sin(20.0 * r - uWarpT * 16.0) * exp(-6.0 * abs(r - front));
+    vec2 bent = d + dir * wave * 0.055 * uWarp;
+    return vec3(bent / aspect, wave * uWarp);
+  }
+
+  // The cover at q with red and blue pulled apart by split.
+  vec3 splitSample(vec2 q, vec2 split) {
+    return vec3(texture2D(uMap, q + split).r, texture2D(uMap, q).g, texture2D(uMap, q - split).b);
+  }
+
+  // The cover seen through the rings: colours split and softly blurred, both
+  // strongest on the ring crests. A small cross of taps is enough at this size.
+  vec3 rippledSample(vec2 q, vec2 split, float blur) {
+    vec3 sum = splitSample(q, split) * 2.0;
+    sum += splitSample(q + vec2(blur, 0.0), split);
+    sum += splitSample(q - vec2(blur, 0.0), split);
+    sum += splitSample(q + vec2(0.0, blur), split);
+    sum += splitSample(q - vec2(0.0, blur), split);
+    sum += splitSample(q + vec2(blur, blur) * 0.7, split);
+    sum += splitSample(q - vec2(blur, blur) * 0.7, split);
+    return sum / 8.0;
+  }
 
   // An empty doorway: a plain recess with a soft "+" asking to be filled.
   vec3 emptyDoor(vec2 p) {
@@ -200,14 +166,22 @@ const portalFragment = /* glsl */ `
   }
 
   void main() {
-    vec2 p = vUv - 0.5;
+    vec3 bent = warp(vUv - 0.5);
+    vec2 p = bent.xy;
+    // Ripple crests a little brighter and troughs darker, in the picture's own colours.
+    float shade = 1.0 + 0.15 * bent.z;
+    // Chromatic aberration on the rings: red and blue pulled apart outward from the middle.
+    vec2 outward = vUv - 0.5;
+    vec2 split = length(outward) > 0.0001 ? normalize(outward) * abs(bent.z) * 0.018 : vec2(0.0);
     float rim = roundedTopEdge(vUv, ${GALLERY_CORNER.toFixed(6)}, ${(DOOR_WIDTH / DOOR_HEIGHT).toFixed(6)});
     if (rim > 1.0) discard;
     if (uRandom > 0.5) {
       vec3 color = randomDoor(p);
+      if (uWarp > 0.0) color = vec3(randomDoor(p + split).r, color.g, randomDoor(p - split).b);
       float edge = rim;
       color = mix(color, vec3(0.55, 0.85, 1.0), smoothstep(0.8, 1.0, edge) * 0.6);
       color += uGlow * 0.6;
+      color *= shade;
       gl_FragColor = vec4(min(color, vec3(1.0)), 1.0);
       #include <colorspace_fragment>
       return;
@@ -217,9 +191,14 @@ const portalFragment = /* glsl */ `
       #include <colorspace_fragment>
       return;
     }
-    // The world on the other side, gently breathing.
-    vec2 q = p * uFit * (1.0 - 0.05 * uOpen - 0.02 * sin(uTime * 0.7)) + 0.5;
+    // The world on the other side, gently breathing, each door at its own pace.
+    vec2 q = p * uFit * (1.0 - 0.05 * uOpen - 0.02 * sin(uTime * uBreath.y + uBreath.x)) + 0.5;
     vec3 far = texture2D(uMap, q).rgb;
+    if (uWarp > 0.0) {
+      // A soft haze over the whole surface while it ripples, sharper blur on the rings.
+      float blur = abs(bent.z) * 0.014 + uWarp * 0.002;
+      far = rippledSample(q, split * uFit, blur);
+    }
     // Full room: soft blur so the cover still reads as that world, just closed.
     if (uFull > 0.5) {
       vec2 px = vec2(0.018, 0.012);
@@ -248,6 +227,7 @@ const portalFragment = /* glsl */ `
     color = mix(color, uTint * 0.55, smoothstep(0.88, 1.0, edge) * 0.22 * uOpen);
     color *= 0.6 + 0.4 * uOpen;
     color += uTint * uGlow * 0.6;
+    color *= shade;
     if (uFull > 0.5) color *= 0.85;
 
     gl_FragColor = vec4(min(color, vec3(1.0)), 1.0);
@@ -288,14 +268,13 @@ export class Door {
   private cover: Texture | null = null;
   private placeholder: Texture;
   private halo: Mesh<PlaneGeometry, MeshBasicMaterial> | null = null;
-  private rays: Mesh<BufferGeometry, ShaderMaterial>[] = [];
-  private rayTime: { value: number } | null = null;
-  private rayTheme: { value: number } | null = null;
-  private rayTint: Color | null = null;
+  /** The world's colour (sampled from its cover once loaded), for the frame's glow. */
+  private tint: Color;
   private light: boolean;
   private entries: number | undefined;
   private full = false;
   private disposed = false;
+  private warpStart = -1;
 
   constructor(world: DoorWorld | null, light: boolean, random = false) {
     this.world = world;
@@ -306,6 +285,7 @@ export class Door {
     const tint = random
       ? new Color(RANDOM_BLUE)
       : new Color(world?.color ?? '#ffffff');
+    this.tint = tint;
     const shared = {
       uTint: { value: tint },
       uTime: { value: 0 },
@@ -316,6 +296,10 @@ export class Door {
       uHover: { value: 0 },
       uRandom: { value: random ? 1 : 0 },
       uFull: { value: 0 },
+      uWarp: { value: 0 },
+      uWarpT: { value: 0 },
+      // Breathing phase and speed, picked per door so they never move together.
+      uBreath: { value: new Vector2(Math.random() * Math.PI * 2, 0.45 + Math.random() * 0.5) },
     };
 
     this.frameMaterial = new MeshStandardMaterial({ roughness: 0.4, metalness: 0.05 });
@@ -354,37 +338,6 @@ export class Door {
     );
     this.portal.position.set(0, DOOR_HEIGHT / 2, -0.02);
     this.group.add(this.portal);
-
-    if (world || random) {
-      const rayTime = { value: 0 };
-      const rayTheme = { value: light ? 1 : 0 };
-      const rayPresence = { value: 1 };
-      this.rayTime = rayTime;
-      this.rayTheme = rayTheme;
-      const rayTint = tint;
-      this.rayTint = rayTint;
-      const rayHeight = DOOR_HEIGHT - RAY_CLEARANCE;
-      const farW = DOOR_WIDTH * RAY_FLARE_W;
-      const farH = rayHeight * RAY_FLARE_H;
-      const corner = openingCorner(DOOR_WIDTH, DOOR_HEIGHT);
-      const ray = new Mesh(
-        roundedShaft(DOOR_WIDTH, rayHeight, farW, farH, RAY_LENGTH, corner.rx, corner.ry, corner.rx * RAY_FLARE_W, corner.ry * RAY_FLARE_H),
-        createGodRayMaterial({
-          length: RAY_LENGTH,
-          gain: 0.7,
-          time: rayTime,
-          theme: rayTheme,
-          presence: rayPresence,
-          tint: rayTint,
-          square: { width: farW, height: farH },
-        }),
-      );
-      ray.position.set(0, RAY_CLEARANCE + rayHeight / 2, RAY_LENGTH / 2);
-      ray.renderOrder = 2;
-      ray.frustumCulled = false;
-      this.group.add(ray);
-      this.rays.push(ray);
-    }
 
     if (random) {
       // A soft blue glow spilling around the frame.
@@ -506,6 +459,12 @@ export class Door {
     };
   }
 
+  /** Straight through the doorway, from the hall into the portal, in world space. */
+  through(out: Vector3): Vector3 {
+    const angle = this.group.rotation.y;
+    return out.set(-Math.sin(angle), 0, -Math.cos(angle));
+  }
+
   /** True once (x, z) has walked into the doorway. */
   contains(x: number, z: number): boolean {
     const { localX, localZ } = this.toLocal(x, z);
@@ -524,16 +483,42 @@ export class Door {
 
   update(time: number): void {
     this.stackLabel();
-    this.portal.material.uniforms.uTime.value = time;
-    if (this.rayTime) this.rayTime.value = time;
+    const uniforms = this.portal.material.uniforms;
+    uniforms.uTime.value = time;
+    // Lobby clock when someone stepped through; negative until the first one.
+    if (this.warpStart > time) this.warpStart = time;
+    const since = this.warpStart < 0 ? WARP_SECONDS : time - this.warpStart;
+    uniforms.uWarpT.value = since;
+    // Swells in fast, then calms like water settling.
+    uniforms.uWarp.value = since < WARP_SECONDS ? Math.min(1, since / 0.12) * (1 - since / WARP_SECONDS) ** 1.5 : 0;
+    this.glowFrame(time);
+  }
+
+  /** Open doors: the frame lit from within in the world's colour. */
+  private tintFrame(): void {
+    if (this.empty || this.random) return;
+    this.frameMaterial.color.copy(this.tint).lerp(new Color(this.light ? 0x1c1c1c : 0xffffff), 0.35);
+    this.frameMaterial.emissive.copy(this.tint);
+  }
+
+  /**
+   * An open door's frame glows in its world's colour, breathing gently, and
+   * flares while someone goes through or comes out.
+   */
+  private glowFrame(time: number): void {
+    if (this.empty || this.random) return;
+    const uniforms = this.portal.material.uniforms;
+    const base = this.light ? 0.45 : 0.85;
+    const breathe = 0.08 * Math.sin(time * 1.4);
+    this.frameMaterial.emissiveIntensity = base + breathe + 1.2 * uniforms.uWarp.value + 0.8 * uniforms.uGlow.value;
   }
 
   setTheme(light: boolean): void {
     this.light = light;
     this.portal.material.uniforms.uLight.value = light ? 1 : 0;
-    if (this.rayTheme) this.rayTheme.value = light ? 1 : 0;
     // White doors on the black grid, ink doors on the white one.
     this.frameMaterial.color.set(light ? 0x1c1c1c : 0xf2f2f2);
+    this.tintFrame();
     if (this.random) {
       this.frameMaterial.color.set(light ? 0x1a5fa8 : 0xbfe4ff);
       this.frameMaterial.emissive.set(RANDOM_BLUE);
@@ -564,6 +549,12 @@ export class Door {
     }
   }
 
+  /** Someone stepped through: send warp rings out from the middle. Starts on the next update. */
+  warp(): void {
+    if (this.empty) return;
+    this.warpStart = Infinity;
+  }
+
   /** Flare the light while we travel through it. */
   surge(amount = 1): void {
     this.portal.material.uniforms.uGlow.value = amount;
@@ -583,10 +574,6 @@ export class Door {
     this.halo?.geometry.dispose();
     this.halo?.material.map?.dispose();
     this.halo?.material.dispose();
-    for (const mesh of this.rays) {
-      mesh.geometry.dispose();
-      mesh.material.dispose();
-    }
     this.label.material.map?.dispose();
     this.label.geometry.dispose();
     this.label.material.dispose();
@@ -625,13 +612,14 @@ export class Door {
     this.cover = texture;
     const sampled = colorFromCover(texture.image);
     if (sampled) {
-      this.rayTint?.copy(sampled);
-      this.portal.material.uniforms.uTint.value.copy(sampled);
+      // The tint is shared with the portal shader, so this recolours both.
+      this.tint.copy(sampled);
+      this.tintFrame();
     }
   }
 }
 
-/** Average colour of a cover, lifted so additive shafts still read at a distance. */
+/** Average colour of a cover, lifted so the frame's glow still reads at a distance. */
 function colorFromCover(image: unknown): Color | null {
   if (!image || typeof image !== 'object' || !('width' in image) || !('height' in image)) return null;
   const source = image as CanvasImageSource & { width: number; height: number };

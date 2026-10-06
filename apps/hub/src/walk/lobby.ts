@@ -43,7 +43,7 @@ import { CITY_GLOW_WHITE, applyCityTheme, applySkyTheme, createCityMaterials, cr
 import { DOOR_HALF_SPAN, DOOR_HEIGHT, DOOR_TOP, DOOR_WIDTH, FRAME, Door, createLabel, worldIsFull, type DoorWorld } from './door';
 import { doorFrameGeometry, frameOuterCorner, roundedOpeningGeometry } from './doorShape';
 import { describeBillboard } from './layout';
-import { playSendSound, playWarpSound } from './sounds';
+import { playPortalSplash, playSendSound, playWarpSound, setPortalHum, stopPortalHum } from './sounds';
 import { chatRejection } from '../../../../workers/presence/src/chatFilter';
 import { fetchOccupancy } from './occupancy';
 import { Arrival } from './arrival';
@@ -276,12 +276,26 @@ const GALLERY_DOOR_PITCH = 5.2;
 /** The hall always has at least this many doors, and always a few empty ones. */
 const MIN_DOORS = 32;
 const SPARE_DOORS = 6;
+/** The portal hum is heard from this far from an open door, in metres. */
+const HUM_RANGE = 9;
 /** Stand this close in front of an empty door to be offered it. */
 const EMPTY_DOOR_REACH = 4.8;
 /** A tap on an empty door this far away still counts. */
 const WARP_MS = 450;
+/** How much wider the lens pulls, in degrees, by the time the flash covers the view. */
+const LENS_FOV = 55;
+/** Seconds the lens takes to settle back after coming out of a world. */
+const LENS_OUT_S = 0.7;
+/** Seconds to keep trying to tell others about coming out, while presence connects. */
+const WARP_SHARE_S = 6;
 /** Seconds the figure takes to warp away when leaving through a door: as quick as it arrives. */
 const LEAVE_TIME = 0.12;
+/** Someone else stepping through a portal fades a little slower, so it reads from across the hall. */
+const OTHER_LEAVE_TIME = 0.45;
+/** A portal or figure this close to where someone went through is the one they used. */
+const WARP_MATCH = 3;
+/** Seconds after which a figure that warped out but never left is shown again. */
+const WARP_GIVE_UP = 8;
 /** Someone back from a world ends up this far out in front of the door they took. */
 const RETURN_STEP = 2.4;
 /**
@@ -518,6 +532,13 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   /** Other visitors' figures warping in as they arrive. */
   const arrivals: Array<{ arrival: Arrival; root: Object3D }> = [];
   let newestFigure: Object3D | null = null;
+  // Everyone else's figures, so one stepping through a portal can be warped out.
+  const figures = new Set<Object3D>();
+  const departing: Array<{ root: Object3D; time: number; axis: Vector3 }> = [];
+  const throughAxis = new Vector3();
+  // Coming out of a world happens as the page loads, often before presence
+  // has connected: hold the warp until it can be shared.
+  let pendingWarp: { x: number; y: number; z: number; o: number; at: number } | null = null;
 
   const wallMaterial = new MeshStandardMaterial({ side: DoubleSide, roughness: 0.7, metalness: 0 });
   const innerWallMaterial = new MeshBasicMaterial({ side: DoubleSide });
@@ -591,12 +612,15 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         // Each new figure is handed over just before its arrival is reported.
         onFigure: (root) => {
           newestFigure = root;
+          figures.add(root);
         },
         // The lifts are shared: everyone sees the same cab at the same floor,
         // and anyone riding one is drawn standing on its floor.
-        onShared: (key, value, { age }) => {
+        onShared: (key, value, { age, self }) => {
           const match = /^lift:(\d)$/.exec(key);
           if (match) lifts.applyShared(Number(match[1]), { f: value.f, y: value.y, v: value.v }, age);
+          // Someone else stepped through a portal just now (not a stale one from before we came).
+          if (key === 'warp' && !self && age < 2) seeWarp(value.x, value.y, value.z, value.o === 1);
         },
         place: (position, grounded) => lifts.ground(position, grounded),
         // Someone arriving warps in as we do.
@@ -766,6 +790,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     onUpdate: (dt, handle) => {
       time += dt;
       if (emerging) stepEmerging(dt);
+      updateDepartures(dt);
+      if (pendingWarp) {
+        const { at, ...warp } = pendingWarp;
+        if (presence?.share('warp', warp) || !presence || time - at > WARP_SHARE_S) pendingWarp = null;
+      }
       departures.update(dt);
       if (interiorBannerRing) {
         interiorBannerAngle += dt * ((Math.PI * 2) / 360);
@@ -786,10 +815,20 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         const { x: doorX, z: doorZ } = exitDoor.inFront(0);
         if (Math.hypot(x - doorX, z - doorZ) > EXIT_CLEAR) setExitDoor(null);
       }
+      let humDoor: Door | null = null;
+      let humDistance = HUM_RANGE;
       for (const door of [...doors.values(), randomDoor]) {
         door.update(time);
-        if (level(door) && !warping && !emerging && door.contains(x, z)) enter(door);
+        if (!level(door)) continue;
+        if (!warping && !emerging && door.contains(x, z)) enter(door);
+        const { x: doorX, z: doorZ } = door.inFront(0);
+        const distance = Math.hypot(x - doorX, z - doorZ);
+        if (distance < humDistance) {
+          humDistance = distance;
+          humDoor = door;
+        }
       }
+      updatePortalHum(humDoor, humDistance);
       let near: Door | null = null;
       let nearest = EMPTY_DOOR_REACH;
       for (const door of [...emptyDoors, ...galleryDoors]) {
@@ -817,9 +856,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       let appear = arrival.update(dt);
       // Leaving: the arrival's warp in reverse, from solid back to nothing.
       if (leavingAt >= 0) appear = 1 - Math.min(1, (time - leavingAt) / LEAVE_TIME);
+      if (leavingAt >= 0) updateLens(time - leavingAt);
       if (appear !== null) {
         if (ghost) ghost.shimmer(time, appear);
-        else setLocalAppear(world.avatar, appear);
+        // Into a portal, the figure smears through it, not up and down.
+        else setLocalAppear(world.avatar, appear, leavingAt >= 0 && warpDoor ? warpDoor.through(throughAxis) : undefined);
       } else if (ghost) {
         ghost.shimmer(time);
       }
@@ -989,9 +1030,110 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     const target = door.random ? pickRandomWorld() : door.world;
     if (!target) return;
     door.surge();
+    const [x, y, z] = world.getState().position;
+    door.warp();
+    presence?.share('warp', { x, y, z });
     const out = door.inFront(RETURN_STEP * door.group.scale.x);
     travel(target, { position: [out.x, door.group.position.y, out.z], yaw: out.yaw }, door);
   }
+
+  /**
+   * Going through: the lens pulls wide, faster and faster, so the view
+   * stretches out like a fisheye into the flash.
+   */
+  function updateLens(since: number): void {
+    const t = Math.min(1, since / (WARP_MS / 1000));
+    camera.fov = baseFov + LENS_FOV * t * t;
+    camera.updateProjectionMatrix();
+    renderer.domElement.classList.add('lensing');
+  }
+
+  /** Coming out: the going-in lens in reverse, from wide back to normal as the flash clears. */
+  function updateLensOut(since: number): void {
+    const t = Math.min(1, Math.max(0, (since - FLASH_HOLD_S) / LENS_OUT_S));
+    camera.fov = baseFov + LENS_FOV * (1 - t) * (1 - t);
+    camera.updateProjectionMatrix();
+    if (t > 0) renderer.domElement.classList.remove('lensing');
+  }
+
+  /**
+   * Someone else went through a portal at (x, y, z): send rings across that door and
+   * warp their figure out, as we see our own go. Coming `out`, only the rings.
+   */
+  function seeWarp(x: number, y: number, z: number, out: boolean): void {
+    if (![x, y, z].every(Number.isFinite)) return;
+    let door: Door | null = null;
+    let nearest = WARP_MATCH;
+    for (const candidate of [...doors.values(), randomDoor]) {
+      if (Math.abs(y - candidate.group.position.y) > 1) continue;
+      const { x: doorX, z: doorZ } = candidate.inFront(0);
+      const distance = Math.hypot(x - doorX, z - doorZ);
+      if (distance < nearest) {
+        nearest = distance;
+        door = candidate;
+      }
+    }
+    if (!door) return;
+    door.warp();
+    playPortalSplash(loudnessAt(x, z));
+    if (out) return;
+    let figure: Object3D | null = null;
+    nearest = WARP_MATCH;
+    for (const root of figures) {
+      if (!root.parent) {
+        figures.delete(root);
+        continue;
+      }
+      const distance = Math.hypot(root.position.x - x, root.position.z - z);
+      if (distance < nearest) {
+        nearest = distance;
+        figure = root;
+      }
+    }
+    if (figure && !departing.some((entry) => entry.root === figure)) departing.push({ root: figure, time: 0, axis: door.through(new Vector3()) });
+  }
+
+  /** Figures of people who went through a portal, warping out. */
+  function updateDepartures(dt: number): void {
+    for (let i = departing.length - 1; i >= 0; i--) {
+      const entry = departing[i];
+      entry.time += dt;
+      if (!entry.root.parent) {
+        departing.splice(i, 1);
+        continue;
+      }
+      const t = Math.min(1, entry.time / OTHER_LEAVE_TIME);
+      setLocalAppear(entry.root, 1 - t * t * (3 - 2 * t), entry.axis);
+      entry.root.visible = t < 1;
+      // Still here long after: they never left (a failed load), so show them again.
+      if (entry.time > WARP_GIVE_UP) {
+        entry.root.visible = true;
+        setLocalAppear(entry.root, 1);
+        departing.splice(i, 1);
+      }
+    }
+  }
+
+  /**
+   * The open portals' watery warp hum: louder the closer the nearest one is,
+   * and heard from its side.
+   */
+  function updatePortalHum(door: Door | null, distance: number): void {
+    if (!door) {
+      setPortalHum(0, 0);
+      return;
+    }
+    const near = 1 - distance / HUM_RANGE;
+    const { x: doorX, z: doorZ } = door.inFront(0);
+    camera.getWorldDirection(humFacing);
+    const toX = doorX - camera.position.x;
+    const toZ = doorZ - camera.position.z;
+    // Right of the camera is (-facing.z, facing.x); how far the door lies that way.
+    const side = (toX * -humFacing.z + toZ * humFacing.x) / (Math.hypot(toX, toZ) * Math.hypot(humFacing.x, humFacing.z) || 1);
+    // Rounded off so tiny moves don't reschedule the sound every frame.
+    setPortalHum(Math.round(near * near * 100) / 100, Math.round(side * 0.7 * 20) / 20);
+  }
+  const humFacing = new Vector3();
 
   /**
    * Into a world, from a lobby door or a tower door: flash, then go to its
@@ -1002,6 +1144,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     warping = true;
     leavingAt = time;
     playWarpSound(false);
+    if (door) playPortalSplash(1);
     warpDoor = door;
     returnTo = spot;
     options.onEnterWorld?.(target, returnTo);
@@ -1235,6 +1378,9 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       else setLocalAppear(world.avatar, 1);
     }
     flash.classList.remove('active');
+    // Back from the world (the page kept from before): the lens as it was.
+    renderer.domElement.classList.remove('lensing');
+    handleResize();
     if (returnTo) emerge(returnTo);
     else {
       world.respawn();
@@ -1243,13 +1389,15 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   };
   window.addEventListener('pageshow', handlePageShow);
 
+  let baseFov = 70;
   const handleResize = () => {
     const { textureWidth, textureHeight } = mirrorResolution();
     mirror.getRenderTarget().setSize(textureWidth, textureHeight);
     // A phone held upright sees a narrow slice of the world; widen the lens so
     // the doors around you stay in view.
     const aspect = window.innerWidth / window.innerHeight;
-    camera.fov = aspect < 1 ? 70 + (1 - aspect) * 30 : 70;
+    baseFov = aspect < 1 ? 70 + (1 - aspect) * 30 : 70;
+    camera.fov = baseFov;
     camera.updateProjectionMatrix();
   };
   window.addEventListener('resize', handleResize);
@@ -1329,6 +1477,19 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       return Math.hypot(out.x - x, out.z - z) < 0.5;
     }) ?? null;
     door?.surge();
+    // Out through the same warp as going in: rings on the door for everyone,
+    // and the lens easing back from wide.
+    door?.warp();
+    playPortalSplash(1);
+    const mouth = door?.inFront(0) ?? { x, z };
+    pendingWarp = { x: mouth.x, y: spot.position[1], z: mouth.z, o: 1, at: time };
+    // Blurred straight away (no fade in), then clearing as the lens settles.
+    const canvas = renderer.domElement;
+    canvas.style.transition = 'none';
+    canvas.classList.add('lensing');
+    void canvas.offsetWidth;
+    canvas.style.transition = '';
+    updateLensOut(0);
     // Open until they are out: it would stop them walking through it.
     if (exitDoor) setExitDoor(null);
     emerging = { spot, door, time: 0, orbit: world.getViewMode() === 'third' };
@@ -1339,6 +1500,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     const { spot, door, orbit } = emerging!;
     const t = (emerging!.time += dt);
     if (t >= FLASH_HOLD_S) flash.classList.remove('active');
+    updateLensOut(t);
 
     // Ease out: a walk that slows to a stop at the spot.
     const walk = Math.min(t / WALK_OUT_S, 1);
@@ -1916,6 +2078,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
   function dispose(): void {
     disposed = true;
+    stopPortalHum();
     window.clearTimeout(warpTimer);
     window.clearTimeout(privateTimer);
     if (billboardTimer) window.clearInterval(billboardTimer);
@@ -2250,10 +2413,10 @@ function makeGhost(root: Object3D | null): Ghost | null {
 }
 
 /** Fill the local figure in from scattered points. Custom avatars fade instead. */
-function setLocalAppear(root: Object3D | null, amount: number): void {
+function setLocalAppear(root: Object3D | null, amount: number, axis?: Vector3): void {
   if (!root) return;
   setStrokeOpacity(root, amount);
-  if (setAvatarAppear(root, amount)) return;
+  if (setAvatarAppear(root, amount, axis)) return;
   const solid = amount >= 0.999;
   root.traverse((child) => {
     if (!(child instanceof Mesh)) return;
