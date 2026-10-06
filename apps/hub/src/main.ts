@@ -147,7 +147,7 @@ function lobbyWorlds(): WorldEntry[] {
   return ALL_WORLDS;
 }
 
-import { getUsername, initAccount } from './account';
+import { getAccountId, getUsername, initAccount, onAccountChange } from './account';
 
 initAccount();
 
@@ -467,7 +467,8 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
     applyWalkTheme();
     mountPauseActions();
     showWalkPrivate(lobby.alias);
-    walkColor = color && WALK_COLORS.includes(color) ? color : WALK_COLORS[0];
+    walkColor = color && WALK_COLORS.includes(color) ? color : savedWalkColor() ?? randomWalkColor();
+    lobby.setColor(walkColor);
     showWalkColor(walkColor);
     history.replaceState(null, '', '#walk');
     setWalkToggleLabel('Go to Gallery');
@@ -577,6 +578,50 @@ document.addEventListener('click', (event) => {
   walkColor = color;
   lobby.setColor(color);
   showWalkColor(color);
+  saveWalkColor(color);
+});
+
+// Guests get a random colour on every arrival; signed-in visitors keep the
+// last one they picked (per account, on this device).
+const WALK_COLOR_KEY = 'worldmesh-walk-color:';
+
+function randomWalkColor(): string {
+  return WALK_COLORS[Math.floor(Math.random() * WALK_COLORS.length)];
+}
+
+function savedWalkColor(): string | null {
+  const id = getAccountId();
+  if (!id) return null;
+  try {
+    const color = localStorage.getItem(WALK_COLOR_KEY + id);
+    return color && WALK_COLORS.includes(color) ? color : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveWalkColor(color: string): void {
+  const id = getAccountId();
+  if (!id) return;
+  try {
+    localStorage.setItem(WALK_COLOR_KEY + id, color);
+  } catch {
+    // Storage blocked: the colour just isn't remembered.
+  }
+}
+
+// The account check finishes after the lobby may already be up: switch to the
+// saved colour then, or remember the current one as this account's first.
+onAccountChange(() => {
+  if (!lobby) return;
+  const saved = savedWalkColor();
+  if (saved) {
+    walkColor = saved;
+    lobby.setColor(saved);
+    showWalkColor(saved);
+  } else {
+    saveWalkColor(walkColor);
+  }
 });
 
 function showWalkPrivate(alias: string | null): void {
