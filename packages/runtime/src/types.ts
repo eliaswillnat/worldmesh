@@ -259,6 +259,8 @@ export interface WorldMeshOptions {
    * Ignored when `network` is set.
    */
   multiplayer?: boolean | MultiplayerOptions;
+  /** Play footstep sounds as the player walks. Off by default. */
+  footsteps?: boolean;
   /** A custom network layer. Replaces `multiplayer`. */
   network?: NetworkAdapter;
   /**

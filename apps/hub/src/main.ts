@@ -420,7 +420,6 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
   if (walkRoot || walkLoading) return;
   walkLoading = true;
   walkToggle.disabled = true;
-  const enteredAt = performance.now();
   try {
     const { createLobby } = await import('./walk/lobby');
     walkRoot = document.createElement('div');
@@ -430,7 +429,6 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
     lobby = createLobby(walkRoot, {
       worlds: lobbyWorlds(),
       start,
-      enteredAt,
       light: walkIsLight(),
       presenceEndpoint: PRESENCE_ENDPOINT,
       playerName: getUsername,
@@ -1031,25 +1029,6 @@ function renderCard(world: WorldEntry): HTMLLIElement {
   name.textContent = world.name;
   body.appendChild(name);
 
-  if (world.creator) {
-    const creatorEl = document.createElement('p');
-    creatorEl.className = 'card-creator';
-    if (world.portfolio) {
-      creatorEl.textContent = 'by ';
-      const creatorLink = document.createElement('a');
-      creatorLink.href = world.portfolio;
-      creatorLink.target = '_blank';
-      creatorLink.rel = 'noopener';
-      creatorLink.className = 'card-creator-link';
-      creatorLink.textContent = world.creator;
-      creatorLink.addEventListener('click', (e) => e.stopPropagation());
-      creatorEl.appendChild(creatorLink);
-    } else {
-      creatorEl.textContent = `by ${world.creator}`;
-    }
-    body.appendChild(creatorEl);
-  }
-
   if (world.description) {
     const desc = document.createElement('p');
     desc.className = 'card-desc';
@@ -1060,10 +1039,25 @@ function renderCard(world: WorldEntry): HTMLLIElement {
   const footer = document.createElement('div');
   footer.className = 'card-footer';
 
-  const host = document.createElement('span');
-  host.className = 'card-host';
-  host.textContent = hostOf(world.url);
-  footer.appendChild(host);
+
+  if (world.creator) {
+    const creatorEl = document.createElement('p');
+    creatorEl.className = 'card-creator';
+    if (world.portfolio) {
+      creatorEl.textContent = 'By ';
+      const creatorLink = document.createElement('a');
+      creatorLink.href = world.portfolio;
+      creatorLink.target = '_blank';
+      creatorLink.rel = 'noopener';
+      creatorLink.className = 'card-creator-link';
+      creatorLink.textContent = world.creator;
+      creatorLink.addEventListener('click', (e) => e.stopPropagation());
+      creatorEl.appendChild(creatorLink);
+    } else {
+      creatorEl.textContent = `By ${world.creator}`;
+    }
+    footer.appendChild(creatorEl);
+  }
 
   const entries = viewCounts[world.url] ?? 0;
   if (hasEntries(entries)) {
@@ -1088,15 +1082,6 @@ function buildGradientCover(world: WorldEntry): HTMLDivElement {
   div.style.background = `linear-gradient(135deg, ${base}55 0%, ${base}22 100%)`;
   div.textContent = world.name.charAt(0);
   return div;
-}
-
-function hostOf(url: string): string {
-  try {
-    const parsed = new URL(url);
-    return parsed.port ? `${parsed.hostname}:${parsed.port}` : parsed.hostname;
-  } catch {
-    return url;
-  }
 }
 
 function setStatus(message: string, isError = false): void {

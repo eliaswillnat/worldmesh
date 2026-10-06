@@ -89,24 +89,30 @@ export class Player {
     if (this.baseBody) this.baseBody.visible = true;
   }
 
-  /** Place the avatar at the player's feet, facing `yaw`, and animate it for `motion`. */
-  sync(feet: Vector3, yaw: number, currentHeight: number, motion?: AvatarMotion, freeLook = false): void {
+  /**
+   * Place the avatar at the player's feet, facing `yaw`, and animate it for `motion`.
+   * Says whether a foot landed this frame, or null when the avatar's walk is
+   * not one the runtime animates and so cannot tell.
+   */
+  sync(feet: Vector3, yaw: number, currentHeight: number, motion?: AvatarMotion, freeLook = false): boolean | null {
     if (!freeLook) this.facing = yaw;
     else if (motion && motion.speed > 0.3 && motion.heading !== undefined) {
       let delta = motion.heading - this.facing;
       delta = Math.atan2(Math.sin(delta), Math.cos(delta));
       this.facing += delta * (1 - Math.exp(-12 * motion.dt));
     }
-    if (!this.root) return;
+    if (!this.root) return null;
     this.root.position.copy(feet);
     this.root.rotation.y = this.facing;
     if (this.external) {
       if (motion) this.external.animate(motion);
+      return null;
     } else if (this.isDefaultAvatar) {
       // Squash the default body while crouching instead of rebuilding it.
       this.root.scale.y = currentHeight / this.height;
-      if (motion && this.baseBody) animateDefaultAvatar(this.baseBody, motion);
+      if (motion && this.baseBody) return animateDefaultAvatar(this.baseBody, motion);
     }
+    return null;
   }
 
   setExpression(expression: AvatarExpression): void {

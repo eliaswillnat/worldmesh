@@ -90,7 +90,6 @@
         display: flex;
         align-items: center;
       }
-      .tagline { color: var(--muted); font-size: 15px; margin: 0 0 20px; line-height: 1.5; }
       form { display: flex; gap: 10px; margin-bottom: 10px; }
       input[type="text"],
       input[type="email"],
@@ -301,6 +300,15 @@
         height: 100%;
         object-fit: cover;
         display: block;
+        transition: transform .5s cubic-bezier(.2, .7, .2, 1);
+      }
+      /* A slow, small push in on the picture while hovered. */
+      @media (hover: hover) {
+        .card:hover .card-cover { transform: scale(1.025); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .card-cover { transition: none; }
+        .card:hover .card-cover { transform: none; }
       }
       .card-cover-gradient {
         width: 100%;
@@ -331,9 +339,9 @@
         overflow: hidden;
         background: linear-gradient(
           to top,
-          color-mix(in srgb, var(--card) 85%, transparent) 0%,
-          color-mix(in srgb, var(--card) 70%, transparent) 40%,
-          color-mix(in srgb, var(--card) 40%, transparent) 65%,
+          color-mix(in srgb, var(--card) 94%, transparent) 0%,
+          color-mix(in srgb, var(--card) 86%, transparent) 45%,
+          color-mix(in srgb, var(--card) 55%, transparent) 75%,
           transparent 100%
         );
       }
@@ -348,7 +356,7 @@
         transition: opacity .15s ease;
       }
       .card-creator-link:hover { opacity: 0.7; }
-      .card-desc { font-size: 12px; color: var(--muted); margin: 0; line-height: 1.35; flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .card-desc { font-size: 12px; color: color-mix(in srgb, var(--text) 80%, transparent); text-shadow: 0 1px 6px color-mix(in srgb, var(--card) 70%, transparent); margin: 0; line-height: 1.35; flex: none; overflow-wrap: anywhere; }
       .card-footer {
         display: flex;
         align-items: center;
@@ -366,6 +374,7 @@
         white-space: nowrap;
       }
       .card-clicks {
+        margin-left: auto;
         font-size: 11px;
         color: var(--subtle);
         white-space: nowrap;
@@ -417,7 +426,7 @@
         }
         main::-webkit-scrollbar { display: none; }
         html.mobile-adding main { scroll-snap-type: none; }
-        .site-header h1, .tagline, .gallery-filters, form, .creator-fields, .status, footer { padding-left: 16px; padding-right: 16px; }
+        .site-header h1, .gallery-filters, form, .creator-fields, .status, footer { padding-left: 16px; padding-right: 16px; }
         .site-header h1 { padding-top: max(20px, env(safe-area-inset-top)); }
         /* The title stays pinned as the cards scroll under it. */
         .site-header {
@@ -427,7 +436,6 @@
           background: var(--bg);
           padding-bottom: 12px;
         }
-        .tagline { font-size: 13px; margin-bottom: 0; }
         footer {
           padding-bottom: 40px;
           scroll-snap-align: end;
@@ -576,13 +584,18 @@
           top: 0;
           z-index: 50;
           margin-top: -4vh;
-          padding-top: 4vh;
+          padding-top: max(16px, env(safe-area-inset-top));
           padding-bottom: 12px;
           background: var(--bg);
         }
         /* Centered on the same line as the fixed Visit pill (44px tall). */
         .site-header .account-button { top: calc(max(16px, env(safe-area-inset-top)) + 22px); transform: translateY(-50%); height: 44px; padding: 0 16px; border-radius: 22px; }
-        .site-header h1 { margin-bottom: 2px; }
+        /* As tall as the two buttons and level with them. */
+        .site-header h1 { margin-bottom: 2px; min-height: 44px; }
+        /* Walk mode's right edge lines up with the page's content (Add world), not the window. */
+        html:not(.walking) .walk-toggle { right: max(20px, env(safe-area-inset-right), (100vw - 880px) / 2); }
+        /* Just left of Walk mode, which sits at the header's right edge. */
+        .site-header .account-button { right: 134px; }
       }
       .site-header { transition: transform .25s ease; }
       html.header-hidden .site-header { transform: translateY(-100%); }
@@ -597,7 +610,7 @@
         position: absolute;
         top: 0;
         /* Sits just left of the fixed Visit pill, whatever the window width. */
-        right: calc(108px - (100vw - 100%) / 2);
+        right: calc(150px - (100vw - 100%) / 2);
         padding: 8px 16px;
         display: flex;
         align-items: center;
@@ -810,7 +823,7 @@
       button:disabled { opacity: 0.6; cursor: default; }
       .account-icon { display: none; width: 18px; height: 18px; }
       @media (max-width: 600px) {
-        /* A 34px circle at the end of the tagline row: the title row belongs to Add world. */
+        /* A 34px circle, since the title row belongs to Add world. */
         .account-button {
           top: auto;
           bottom: 12px;
@@ -823,7 +836,6 @@
         }
         .account-button .account-label, .account-name { display: none; }
         .account-button .account-icon { display: block; }
-        .tagline { padding-right: 60px; }
       }
 
       /* ── Walk mode ─────────────────────────────────────────────── */
@@ -2028,9 +2040,6 @@
       <header class="site-header" id="site-header">
         <button type="button" class="account-button" id="account-button">Log in</button>
         <h1>WORLDMESH</h1>
-        <p class="tagline">
-          3D worlds, connected across the web. Step from one into another.
-        </p>
         <div class="gallery-filters" role="group" aria-label="Filter worlds">
           <button type="button" class="filter-chip" id="filter-multiplayer" aria-pressed="false">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><circle cx="17" cy="9" r="2.5"/><path d="M16 14.6a5 5 0 0 1 5.5 5.4"/></svg>
