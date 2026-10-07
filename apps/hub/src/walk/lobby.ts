@@ -269,9 +269,6 @@ function distribute(count: number, total: number): number[] {
   return Array.from({ length: Math.min(count, total) }, (_, i) => i);
 }
 
-/** Doors round each gallery: smaller, to fit under the floor above, and this far apart. */
-const GALLERY_DOOR_SCALE = 0.62;
-const GALLERY_DOOR_PITCH = 5.2;
 
 /** The hall always has at least this many doors, and always a few empty ones. */
 const MIN_DOORS = 32;
@@ -550,6 +547,14 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     side: DoubleSide,
     roughness: 0.08,
     metalness: 0.4,
+  });
+  // The gallery floors: thicker glass than the rails, so the deck still reads as a floor.
+  const deckGlassMaterial = new MeshStandardMaterial({
+    transparent: true,
+    depthWrite: false,
+    side: DoubleSide,
+    roughness: 0.15,
+    metalness: 0.3,
   });
   // Over the middle of the hall: every world and the gate to find it at.
   // Glass lifts up to the galleries, and the walkable galleries they reach.
@@ -1594,6 +1599,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     // Clear by day with the sky behind it; a faint smoked sheen at night.
     glassMaterial.color.set(light ? 0xe4eef9 : 0x9aa8bf);
     glassMaterial.opacity = light ? 0.22 : 0.1;
+    deckGlassMaterial.color.set(light ? 0xd6e4f2 : 0x8fa4c4);
+    deckGlassMaterial.opacity = light ? 0.38 : 0.2;
     departures.setTheme(light);
     // Lift the shaded sides so white stays white, not grey.
     wallMaterial.emissive.set(light ? CITY_GLOW_WHITE : 0x000000);
@@ -1827,7 +1834,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
     floorUniforms.uHall.value = radius;
 
-    buildTrim(radius, outer);
+    buildTrim(radius, outer, angles.length);
     buildCity(outer);
     world.refreshColliders();
   }
@@ -1836,7 +1843,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
    * A ring of doors round the wall of each gallery.
    * They start empty; a world claimed in one stays on that gallery.
    */
-  function hangGalleryDoors(radius: number): void {
+  function hangGalleryDoors(radius: number, hallDoors: number): void {
     for (const door of galleryDoors) door.dispose();
     galleryDoors.length = 0;
     nearEmpty = null;
@@ -1847,9 +1854,14 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       return claim.level && !(existing && !existing.group.userData.level);
     });
     const r = radius - 0.12;
+    // Full-size doors, spaced like the hall's: the hall's centre-to-centre
+    // pitch, rounded so a whole number of doors goes round.
+    const bay = ((Math.PI * 2) / GATE_COUNT) * radius;
+    const perBay = Math.floor(hallDoors / GATE_COUNT);
+    const pitch = perBay > 0 ? (bay - GATE_WIDTH + 2 * DOOR_HALF_SPAN) / (perBay + 1) : DOOR_SPACING;
     GALLERY_LEVELS.forEach((height, index) => {
       const level = index + 1;
-      const count = Math.floor((Math.PI * 2 * r) / GALLERY_DOOR_PITCH);
+      const count = Math.round((Math.PI * 2 * r) / pitch);
       for (let i = 0; i < count; i++) {
         const angle = ((i + 0.5) / count) * Math.PI * 2;
         const claim = claims.find((entry) => entry.level === level && angleDelta(entry.angle, angle) < 0.02);
@@ -1868,7 +1880,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         }
         door.place(Math.sin(angle) * r, Math.cos(angle) * r, 0, 0);
         door.group.position.y = height;
-        door.group.scale.setScalar(GALLERY_DOOR_SCALE);
         door.group.userData.angle = angle;
         door.group.userData.level = level;
       }
@@ -1876,7 +1887,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   }
 
   /** Ribs, light bands, the crown, the gate's portal frame and the banner. */
-  function buildTrim(radius: number, outer: number): void {
+  function buildTrim(radius: number, outer: number, hallDoors: number): void {
     const solid: BufferGeometry[] = [];
     const glow: BufferGeometry[] = [];
     const matrix = new Matrix4();
@@ -1929,7 +1940,12 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     glazing.renderOrder = 3;
     scene.add(glazing);
     trim.push(glazing);
-    hangGalleryDoors(radius);
+    const decks = new Mesh(mergeGeometries(galleries.decks), deckGlassMaterial);
+    for (const geometry of galleries.decks) geometry.dispose();
+    decks.renderOrder = 2;
+    scene.add(decks);
+    trim.push(decks);
+    hangGalleryDoors(radius, hallDoors);
 
     // The departures board hangs from the oculus ring on four cables.
     const { oculusY } = domeShape(radius);
@@ -2125,6 +2141,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     innerWallMaterial.dispose();
     gateFrameMaterial.dispose();
     glassMaterial.dispose();
+    deckGlassMaterial.dispose();
     colliderMaterial.dispose();
     for (const mesh of upper) mesh.geometry.dispose();
     lifts.dispose();

@@ -31,7 +31,7 @@ import { loadCoverTexture } from './door';
  */
 
 /** Height of the drum, where the dome springs from. */
-export const DRUM_HEIGHT = 31;
+export const DRUM_HEIGHT = 36;
 /** The dome rises this fraction of the hall's radius above the drum. */
 const DOME_RISE = 0.36;
 /** Open eye at the crown, wide enough for the spawn beam's halo. */
@@ -43,15 +43,17 @@ const DOME_RINGS = 4;
 
 /** The screen band above the galleries never gets taller than this. */
 export const MEDIA_MAX_HEIGHT = 7.4;
-/** Gallery floors (balcony tops), bottom to top. */
-export const GALLERY_LEVELS = [10.4, 17];
-/** How far each balcony reaches into the hall from the wall. */
+/**
+ * Gallery floors (balcony tops), bottom to top. Each storey is as tall as the
+ * hall's, so the gallery doors are full size, with room for their names.
+ */
+export const GALLERY_LEVELS = [10.4, 19.4];
 /** How far each gallery reaches into the hall: the first is roomy, for the escalators' landings. */
 const GALLERY_DEPTHS = [6, 4];
 const SLAB = 0.45;
 const RAIL = 1.1;
 /** Headroom on the top gallery, under the screen band. */
-const TOP_HEADROOM = 4.2;
+const TOP_HEADROOM = 7.6;
 /** Where the screen band starts: just over the top gallery's doors. */
 export const MEDIA_BOTTOM = GALLERY_LEVELS[GALLERY_LEVELS.length - 1] + TOP_HEADROOM + 1.2;
 
@@ -152,8 +154,8 @@ export function buildDome(radius: number): { glass: BufferGeometry; solid: Buffe
 }
 
 /**
- * Galleries round the drum above the screens: a balcony with a glass rail at
- * each level and downlights under it. Doors line the wall behind (lobby.ts).
+ * Galleries round the drum above the screens: a glass balcony with a glass
+ * rail at each level and downlights under it. Doors line the wall behind (lobby.ts).
  */
 export function buildGalleries(
   radius: number,
@@ -163,18 +165,21 @@ export function buildGalleries(
   solid: BufferGeometry[];
   glow: BufferGeometry[];
   glass: BufferGeometry[];
+  /** The see-through floors of the balconies. */
+  decks: BufferGeometry[];
   /** Walkable decks and the rails round their edges, for the colliders. */
   colliders: BufferGeometry[];
 } {
   const solid: BufferGeometry[] = [];
   const glow: BufferGeometry[] = [];
   const glass: BufferGeometry[] = [];
+  const decks: BufferGeometry[] = [];
   const colliders: BufferGeometry[] = [];
 
   GALLERY_LEVELS.forEach((level, index) => {
     const edge = galleryEdge(radius, index);
     const depth = GALLERY_DEPTHS[index];
-    // Slab: fascia facing the hall, the deck, and the underside.
+    // Slab: fascia facing the hall, then a glass deck and its underside.
     const fascia = new CylinderGeometry(edge, edge, SLAB, 160, 1, true);
     fascia.translate(0, level - SLAB / 2, 0);
     solid.push(flat(flipInside(fascia)));
@@ -182,13 +187,13 @@ export function buildGalleries(
     deck.rotateX(-Math.PI / 2);
     deck.translate(0, level, 0);
     colliders.push(deck.clone());
-    solid.push(flat(deck));
+    decks.push(flat(deck));
     const under = new RingGeometry(edge, radius, 160, 1);
     under.rotateX(Math.PI / 2);
     under.translate(0, level - SLAB, 0);
     // Solid too, so a camera following someone underneath stops below the slab.
     colliders.push(under.clone());
-    solid.push(flat(under));
+    decks.push(flat(under));
     // A line of light along the fascia.
     const line = new CylinderGeometry(edge - 0.02, edge - 0.02, 0.06, 160, 1, true);
     line.translate(0, level - SLAB + 0.08, 0);
@@ -216,7 +221,7 @@ export function buildGalleries(
       glow.push(flat(spot));
     }
   });
-  return { solid, glow, glass, colliders };
+  return { solid, glow, glass, decks, colliders };
 }
 
 /** An opening in a gallery rail: centred on `angle`, `half` radians either side. */
