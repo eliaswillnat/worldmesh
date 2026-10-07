@@ -1,4 +1,4 @@
-import { ExtrudeGeometry, Shape, type BufferGeometry } from 'three';
+import { ExtrudeGeometry, Shape, Vector2, Vector4, type BufferGeometry, type MeshStandardMaterial } from 'three';
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 /**
@@ -144,4 +144,63 @@ export function roundedOpeningGeometry(width: number, height: number, depth: num
   geometry.translate(0, 0, -depth / 2);
   geometry.computeVertexNormals();
   return geometry;
+}
+
+/**
+ * Light up the rims of a `doorFrameGeometry` frame (no sill), the way Sky Cube
+ * Kororin lights its block edges: the material's own emissive colour, much
+ * brighter in a thin band along every edge. On the front and back faces the
+ * distance to an edge comes from the opening's outline (the outer outline is
+ * the same curve, `thickness` further out); on the sides it is the distance
+ * to the front or back face. The buried bottom gets no band.
+ */
+export function addFrameEdgeGlow(
+  material: MeshStandardMaterial,
+  innerW: number,
+  innerH: number,
+  thickness: number,
+  depth: number,
+  strength = 2.2,
+): void {
+  const { rx, ry } = openingCorner(innerW, innerH);
+  const uniforms = {
+    uEdgeStrength: { value: strength },
+    // x: half the opening's width, y: corner centre's x, z: corner centre's y, w: radius.
+    uOpening: { value: new Vector4(innerW / 2, innerW / 2 - rx, innerH - ry, rx) },
+    uFrame: { value: new Vector2(thickness, depth / 2) },
+  };
+  material.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, uniforms);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', /* glsl */ `#include <common>
+        varying vec3 vFrameLocal;
+        varying vec3 vFrameNormal;`)
+      .replace('#include <begin_vertex>', /* glsl */ `#include <begin_vertex>
+        vFrameLocal = position;
+        vFrameNormal = normal;`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', /* glsl */ `#include <common>
+        uniform float uEdgeStrength;
+        uniform vec4 uOpening;
+        uniform vec2 uFrame;
+        varying vec3 vFrameLocal;
+        varying vec3 vFrameNormal;`)
+      .replace('#include <emissivemap_fragment>', /* glsl */ `#include <emissivemap_fragment>
+        {
+          vec3 p = vFrameLocal;
+          float ax = abs(p.x);
+          // How far outside the opening: 0 on its rim, the frame's thickness on the outer rim.
+          float out_ = p.y <= uOpening.z
+            ? ax - uOpening.x
+            : (ax <= uOpening.y ? p.y - (uOpening.z + uOpening.w) : length(vec2(ax - uOpening.y, p.y - uOpening.z)) - uOpening.w);
+          float e = abs(vFrameNormal.z) > 0.5
+            ? min(out_, uFrame.x - out_)
+            : uFrame.y - abs(p.z);
+          float edge = 1.0 - smoothstep(0.012, 0.05, e);
+          // Not along the bottom, which runs under the floor.
+          edge *= step(0.0, p.y);
+          totalEmissiveRadiance += emissive * edge * uEdgeStrength;
+        }`);
+  };
+  material.customProgramCacheKey = () => 'door-frame-edge-glow';
 }

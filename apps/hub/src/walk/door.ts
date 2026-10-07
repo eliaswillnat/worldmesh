@@ -18,7 +18,7 @@ import {
   Vector3,
 } from 'three';
 import { drawEntries, measureEntries } from '../entries';
-import { doorFrameGeometry, GALLERY_CORNER, ROUNDED_TOP_GLSL } from './doorShape';
+import { addFrameEdgeGlow, doorFrameGeometry, GALLERY_CORNER, ROUNDED_TOP_GLSL } from './doorShape';
 
 export interface DoorWorld {
   name: string;
@@ -303,6 +303,8 @@ export class Door {
     };
 
     this.frameMaterial = new MeshStandardMaterial({ roughness: 0.4, metalness: 0.05 });
+    // Its rims shine brighter than the rest, in the same colour.
+    addFrameEdgeGlow(this.frameMaterial, DOOR_WIDTH, DOOR_HEIGHT, FRAME, DEPTH);
 
     // Frame: posts and a lintel. Its top corners follow the opening, and the posts run under the floor.
     const frame = doorFrameGeometry(DOOR_WIDTH, DOOR_HEIGHT, FRAME, DEPTH);
