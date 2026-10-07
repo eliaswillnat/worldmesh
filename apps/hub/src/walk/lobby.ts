@@ -32,6 +32,7 @@ import {
   RingGeometry,
   Scene,
   ShaderMaterial,
+  Sprite,
   Vector2,
   Vector3,
   WebGLRenderer,
@@ -269,9 +270,6 @@ function distribute(count: number, total: number): number[] {
   return Array.from({ length: Math.min(count, total) }, (_, i) => i);
 }
 
-/** Doors round each gallery: smaller, to fit under the floor above, and this far apart. */
-const GALLERY_DOOR_SCALE = 0.62;
-const GALLERY_DOOR_PITCH = 5.2;
 
 /** The hall always has at least this many doors, and always a few empty ones. */
 const MIN_DOORS = 32;
@@ -290,8 +288,14 @@ const LENS_OUT_S = 0.7;
 const WARP_SHARE_S = 6;
 /** Seconds the figure takes to warp away when leaving through a door: as quick as it arrives. */
 const LEAVE_TIME = 0.12;
-/** Someone else stepping through a portal fades a little slower, so it reads from across the hall. */
-const OTHER_LEAVE_TIME = 0.45;
+/**
+ * Someone else stepping through a portal fades slower than our own figure,
+ * so it reads from across the hall. Their page leaves the room sooner than
+ * this; the figure is kept until the warp has played out.
+ */
+const OTHER_LEAVE_TIME = 0.9;
+/** How far their figure is carried on through the doorway as it warps out, in metres. */
+const OTHER_LEAVE_DRIFT = 1.4;
 /** A portal or figure this close to where someone went through is the one they used. */
 const WARP_MATCH = 3;
 /** Seconds after which a figure that warped out but never left is shown again. */
@@ -534,7 +538,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   let newestFigure: Object3D | null = null;
   // Everyone else's figures, so one stepping through a portal can be warped out.
   const figures = new Set<Object3D>();
-  const departing: Array<{ root: Object3D; time: number; axis: Vector3 }> = [];
+  const departing: Array<{ root: Object3D; time: number; axis: Vector3; from: Vector3; left: boolean }> = [];
   const throughAxis = new Vector3();
   // Coming out of a world happens as the page loads, often before presence
   // has connected: hold the warp until it can be shared.
@@ -550,6 +554,14 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     side: DoubleSide,
     roughness: 0.08,
     metalness: 0.4,
+  });
+  // The gallery floors: thicker glass than the rails, so the deck still reads as a floor.
+  const deckGlassMaterial = new MeshStandardMaterial({
+    transparent: true,
+    depthWrite: false,
+    side: DoubleSide,
+    roughness: 0.15,
+    metalness: 0.3,
   });
   // Over the middle of the hall: every world and the gate to find it at.
   // Glass lifts up to the galleries, and the walkable galleries they reach.
@@ -634,7 +646,13 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         // Everyone else's footsteps, jumps and landings, heard from where we stand.
         listener: () => listenerPoint.fromArray(world.getState().position),
         // Someone leaving, by a door or by closing the page: the same sound as our own leaving.
-        onDepart: (x, z) => playWarpSound(false, 0, loudnessAt(x, z)),
+        // One warping out through a door is kept until the warp has played out.
+        onDepart: (x, z, root) => {
+          playWarpSound(false, 0, loudnessAt(x, z));
+          const entry = departing.find((candidate) => candidate.root === root);
+          if (entry) entry.left = true;
+          return !!entry;
+        },
       })
     : undefined;
   const listenerPoint = new Vector3();
@@ -968,7 +986,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     chatBtn = document.createElement('button');
     chatBtn.type = 'button';
     chatBtn.className = 'walk-chat-btn';
-    chatBtn.textContent = '💬';
+    // Lucide's message-circle (ISC licence, https://lucide.dev).
+    chatBtn.innerHTML =
+      '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+      'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg>';
     chatBtn.title = 'Chat';
     chatBtn.setAttribute('aria-label', 'Open chat');
     chatBtn.addEventListener('pointerdown', (e) => {
@@ -1090,7 +1112,9 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         figure = root;
       }
     }
-    if (figure && !departing.some((entry) => entry.root === figure)) departing.push({ root: figure, time: 0, axis: door.through(new Vector3()) });
+    if (figure && !departing.some((entry) => entry.root === figure)) {
+      departing.push({ root: figure, time: 0, axis: door.through(new Vector3()), from: figure.position.clone(), left: false });
+    }
   }
 
   /** Figures of people who went through a portal, warping out. */
@@ -1103,12 +1127,27 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         continue;
       }
       const t = Math.min(1, entry.time / OTHER_LEAVE_TIME);
-      setLocalAppear(entry.root, 1 - t * t * (3 - 2 * t), entry.axis);
+      const amount = 1 - t * t * (3 - 2 * t);
+      // Carried on into the portal as they smear through it, quickening as they go.
+      // (`axis` points out of the door into the hall, so in is against it.)
+      entry.root.position.copy(entry.from).addScaledVector(entry.axis, -OTHER_LEAVE_DRIFT * t * t);
+      setLocalAppear(entry.root, amount, entry.axis);
+      for (const child of entry.root.children) {
+        if (child instanceof Sprite) child.material.opacity = amount;
+      }
       entry.root.visible = t < 1;
+      if (t >= 1 && entry.left) {
+        presence?.dropFigure(entry.root);
+        departing.splice(i, 1);
+        continue;
+      }
       // Still here long after: they never left (a failed load), so show them again.
       if (entry.time > WARP_GIVE_UP) {
         entry.root.visible = true;
         setLocalAppear(entry.root, 1);
+        for (const child of entry.root.children) {
+          if (child instanceof Sprite) child.material.opacity = 1;
+        }
         departing.splice(i, 1);
       }
     }
@@ -1594,6 +1633,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     // Clear by day with the sky behind it; a faint smoked sheen at night.
     glassMaterial.color.set(light ? 0xe4eef9 : 0x9aa8bf);
     glassMaterial.opacity = light ? 0.22 : 0.1;
+    deckGlassMaterial.color.set(light ? 0xd6e4f2 : 0x8fa4c4);
+    deckGlassMaterial.opacity = light ? 0.38 : 0.2;
     departures.setTheme(light);
     // Lift the shaded sides so white stays white, not grey.
     wallMaterial.emissive.set(light ? CITY_GLOW_WHITE : 0x000000);
@@ -1827,7 +1868,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
     floorUniforms.uHall.value = radius;
 
-    buildTrim(radius, outer);
+    buildTrim(radius, outer, angles.length);
     buildCity(outer);
     world.refreshColliders();
   }
@@ -1836,7 +1877,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
    * A ring of doors round the wall of each gallery.
    * They start empty; a world claimed in one stays on that gallery.
    */
-  function hangGalleryDoors(radius: number): void {
+  function hangGalleryDoors(radius: number, hallDoors: number): void {
     for (const door of galleryDoors) door.dispose();
     galleryDoors.length = 0;
     nearEmpty = null;
@@ -1847,9 +1888,14 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       return claim.level && !(existing && !existing.group.userData.level);
     });
     const r = radius - 0.12;
+    // Full-size doors, spaced like the hall's: the hall's centre-to-centre
+    // pitch, rounded so a whole number of doors goes round.
+    const bay = ((Math.PI * 2) / GATE_COUNT) * radius;
+    const perBay = Math.floor(hallDoors / GATE_COUNT);
+    const pitch = perBay > 0 ? (bay - GATE_WIDTH + 2 * DOOR_HALF_SPAN) / (perBay + 1) : DOOR_SPACING;
     GALLERY_LEVELS.forEach((height, index) => {
       const level = index + 1;
-      const count = Math.floor((Math.PI * 2 * r) / GALLERY_DOOR_PITCH);
+      const count = Math.round((Math.PI * 2 * r) / pitch);
       for (let i = 0; i < count; i++) {
         const angle = ((i + 0.5) / count) * Math.PI * 2;
         const claim = claims.find((entry) => entry.level === level && angleDelta(entry.angle, angle) < 0.02);
@@ -1868,7 +1914,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         }
         door.place(Math.sin(angle) * r, Math.cos(angle) * r, 0, 0);
         door.group.position.y = height;
-        door.group.scale.setScalar(GALLERY_DOOR_SCALE);
         door.group.userData.angle = angle;
         door.group.userData.level = level;
       }
@@ -1876,7 +1921,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   }
 
   /** Ribs, light bands, the crown, the gate's portal frame and the banner. */
-  function buildTrim(radius: number, outer: number): void {
+  function buildTrim(radius: number, outer: number, hallDoors: number): void {
     const solid: BufferGeometry[] = [];
     const glow: BufferGeometry[] = [];
     const matrix = new Matrix4();
@@ -1929,7 +1974,12 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     glazing.renderOrder = 3;
     scene.add(glazing);
     trim.push(glazing);
-    hangGalleryDoors(radius);
+    const decks = new Mesh(mergeGeometries(galleries.decks), deckGlassMaterial);
+    for (const geometry of galleries.decks) geometry.dispose();
+    decks.renderOrder = 2;
+    scene.add(decks);
+    trim.push(decks);
+    hangGalleryDoors(radius, hallDoors);
 
     // The departures board hangs from the oculus ring on four cables.
     const { oculusY } = domeShape(radius);
@@ -2125,6 +2175,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     innerWallMaterial.dispose();
     gateFrameMaterial.dispose();
     glassMaterial.dispose();
+    deckGlassMaterial.dispose();
     colliderMaterial.dispose();
     for (const mesh of upper) mesh.geometry.dispose();
     lifts.dispose();
