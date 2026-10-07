@@ -1129,6 +1129,15 @@
         -webkit-tap-highlight-color: transparent;
       }
       .walk-bubble-close:active { color: #333; }
+      /* Typing on touch: fixed just above the keyboard (top is the visual viewport's bottom). */
+      .walk-bubble.docked {
+        position: fixed;
+        z-index: 5;
+        width: min(480px, calc(100vw - 32px));
+        max-width: none;
+        box-sizing: border-box;
+        padding: 12px 16px;
+      }
       @media (pointer: coarse) {
         .walk-bubble.saying .walk-bubble-close { display: block; }
         /* iOS Safari zooms into any focused field under 16px. */
