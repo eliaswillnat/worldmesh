@@ -1,13 +1,27 @@
-interface Env {
+import { queueDoorView, type DoorViewEnv } from '../lib/doorViews';
+
+interface Env extends DoorViewEnv {
   RESEND_API_KEY?: string;
   FROM_EMAIL?: string;
   WORLDS: KVNamespace;
 }
 
-export async function onRequestGet(context: {
-  request: Request;
-  env: Env;
-}): Promise<Response> {
+type Context = { request: Request; env: Env };
+
+/**
+ * The emailed approve link only asks. Mail systems' link scanners open links
+ * on delivery, so a link that approved on GET would list every submission by
+ * itself; approving takes the confirmation page's POST.
+ */
+export function onRequestGet(context: Context): Promise<Response> {
+  return handle(context, false);
+}
+
+export function onRequestPost(context: Context): Promise<Response> {
+  return handle(context, true);
+}
+
+async function handle(context: Context, approve: boolean): Promise<Response> {
   const { request, env } = context;
   const url = new URL(request.url);
   const id = url.searchParams.get('id');
@@ -52,6 +66,14 @@ export async function onRequestGet(context: {
     return htmlResponse('Invalid approval token.', false);
   }
 
+  if (!approve) {
+    return htmlResponse(
+      `Approve <strong>${escapeHtml(entry.name)}</strong>?<br><a href="${escapeHtml(entry.url)}" target="_blank" rel="noopener">${escapeHtml(entry.url)}</a>` +
+        `<form method="post" style="margin-top:20px"><button type="submit">Approve and list it</button></form>`,
+      'ask',
+    );
+  }
+
   const approvedEntry = {
     id: entry.id,
     name: entry.name,
@@ -72,6 +94,7 @@ export async function onRequestGet(context: {
 
   await env.WORLDS.put(`approved:${id}`, JSON.stringify(approvedEntry));
   await env.WORLDS.delete(`pending:${id}`);
+  await queueDoorView(env, entry.url);
 
   if (entry.email && env.RESEND_API_KEY) {
     const fromEmail = env.FROM_EMAIL || 'WorldMesh <accounts@worldmesh.net>';
@@ -120,18 +143,19 @@ export async function onRequestGet(context: {
   return htmlResponse(`<strong>${escapeHtml(entry.name)}</strong> has been approved and is now live!${entry.email ? ' A confirmation email has been sent to the creator.' : ''}`, true);
 }
 
-function htmlResponse(message: string, success: boolean): Response {
-  const color = success ? '#34d399' : '#f87171';
-  const icon = success ? '&#10003;' : '&#10007;';
+function htmlResponse(message: string, success: boolean | 'ask'): Response {
+  const color = success === 'ask' ? '#70aaff' : success ? '#34d399' : '#f87171';
+  const icon = success === 'ask' ? '?' : success ? '&#10003;' : '&#10007;';
   return new Response(
     `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>WorldMesh${success ? ' - Approved' : ''}</title>
+<title>WorldMesh${success === 'ask' ? ' - Approve?' : success ? ' - Approved' : ''}</title>
 <style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0a0a0a;color:#f0f0f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
 .card{max-width:420px;padding:32px;background:#141414;border:1px solid #2a2a2a;border-radius:12px;text-align:center}
 .icon{font-size:48px;color:${color};margin-bottom:16px}
 .msg{color:#ccc;line-height:1.6}
-a{color:#70aaff}</style></head>
+a{color:#70aaff}
+button{padding:12px 28px;border:0;border-radius:25px;background:#34d399;color:#000;font:600 16px inherit;cursor:pointer}</style></head>
 <body><div class="card"><div class="icon">${icon}</div><p class="msg">${message}</p><p style="margin-top:20px"><a href="https://worldmesh.net">Back to WorldMesh</a></p></div></body></html>`,
     {
       status: 200,

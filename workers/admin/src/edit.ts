@@ -138,10 +138,11 @@ export async function saveEdit(request: Request, env: Env, admin: AdminSession):
   await env.WORLDS!.put(key, JSON.stringify(stored));
 
   if (action === 'approve' && state === 'pending') {
-    // The hub's own approve link lists the world and emails its creator.
+    // The hub's own approve link lists the world and emails its creator. It
+    // approves on POST only (a GET just asks, for link scanners in mail).
     const approve = approveLink(env, next);
     if (!approve) return back('error=This+submission+has+no+approve+token');
-    const response = await http(env)(approve).catch(() => null);
+    const response = await http(env)(approve, { method: 'POST' }).catch(() => null);
     if (!response?.ok) return back('error=Saved%2C+but+approving+failed.+Try+again.');
     return redirect('/worlds');
   }

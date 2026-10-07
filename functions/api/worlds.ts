@@ -3,4 +3,4 @@
  * Pages project builds from `/`), so this route has to be exposed from here.
  * The implementation lives with the rest of the hub.
  */
-export { onRequestOptions, onRequestPost } from '../../apps/hub/functions/api/notify';
+export { onRequestGet, onRequestOptions } from '../../apps/hub/functions/api/worlds';

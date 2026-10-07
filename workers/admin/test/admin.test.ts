@@ -17,6 +17,7 @@ let env: Env;
 let clock = Date.UTC(2026, 9, 1, 12);
 let rooms: Map<string, RoomStats>;
 let fetched: string[];
+let methods: Map<string, string>;
 
 // ── Fakes ──────────────────────────────────────────────────────────────────
 
@@ -29,9 +30,10 @@ function fakeRooms(): DurableObjectNamespace {
   } as unknown as DurableObjectNamespace;
 }
 
-const fakeFetch: typeof fetch = async (input) => {
+const fakeFetch: typeof fetch = async (input, init) => {
   const url = String(input instanceof Request ? input.url : input);
   fetched.push(url);
+  methods.set(url, init?.method ?? 'GET');
   if (url.includes('down.example')) throw new TypeError('connection refused');
   if (url.startsWith(HUB)) return new Response('ok', { status: 200 });
   return new Response('nope', { status: 404 });
@@ -107,6 +109,7 @@ beforeEach(async () => {
   clock = Date.UTC(2026, 9, 1, 12);
   rooms = new Map();
   fetched = [];
+  methods = new Map();
   env = {
     DB: database.db,
     WORLDS: database.env.WORLDS as KVNamespace,
@@ -300,6 +303,7 @@ describe('what an admin sees', () => {
     const approved = await post(fields('approve'));
     expect(approved.headers.get('Location')).toBe('/worlds');
     expect(fetched).toContain(`${HUB}/api/approve?id=w1&token=tok1`);
+    expect(methods.get(`${HUB}/api/approve?id=w1&token=tok1`)).toBe('POST');
 
     const rejected = await post(fields('reject', 'w2'));
     expect(rejected.headers.get('Location')).toBe('/worlds');
