@@ -62,6 +62,11 @@ const PRESENCE_ENDPOINT =
 const SCREENSHOT_ENDPOINT =
   (import.meta.env.VITE_SCREENSHOT_ENDPOINT as string | undefined) ||
   'https://worldmesh-screenshot.elias-willnat.workers.dev';
+/**
+ * Door views (up close, walk-mode doors show the world itself) are off until
+ * they are smooth on phones. Build with VITE_DOOR_VIEWS=on to turn them on.
+ */
+const DOOR_VIEWS = import.meta.env.VITE_DOOR_VIEWS === 'on';
 
 function getDemoWorldUrl(envKey: string, localPort: number, defaultSubdomain: string): string {
   const envVal = import.meta.env[envKey] as string | undefined;
@@ -431,7 +436,7 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
       start,
       light: walkIsLight(),
       presenceEndpoint: PRESENCE_ENDPOINT,
-      doorViewEndpoint: SCREENSHOT_ENDPOINT,
+      doorViewEndpoint: DOOR_VIEWS ? SCREENSHOT_ENDPOINT : undefined,
       playerName: getUsername,
       private: loadWalkPrivate(),
       color,
