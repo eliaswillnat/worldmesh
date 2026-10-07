@@ -15,8 +15,18 @@ bucket_name = "worldmesh-screenshots"
 # e.g. https://screenshots.worldmesh.net
 R2_PUBLIC_URL = "https://pub-b622cf770b414a1c9869157e73dab3c1.r2.dev"
 
-# Set secrets in Cloudflare with:
-# npx wrangler secret put SCREENSHOT_SECRET
+# Origins whose pages may call this worker from a browser: saving a submission
+# and one screenshot of the submitted world, rate-limited. Everything else
+# (door views, cover uploads, reading submissions) needs SCREENSHOT_SECRET.
+ALLOWED_ORIGINS = "https://worldmesh.net,https://www.worldmesh.net"
+# Browser-requested screenshots allowed per hour, across everyone.
+BROWSER_SCREENSHOTS_PER_HOUR = "20"
+
+# Required. Server callers (hub admin functions, workers/admin) send it as
+# Authorization: Bearer <secret>. Set the same value in all three places:
+#   npx wrangler secret put SCREENSHOT_SECRET                       (here)
+#   npx wrangler secret put SCREENSHOT_SECRET --config ../admin/wrangler.toml
+#   hub Pages project → Settings → Variables and Secrets → SCREENSHOT_SECRET
 
 # Door views for hub doors: requests queue a capture, this worker takes it.
 # Create the queue once before deploying: npx wrangler queues create worldmesh-door-views
