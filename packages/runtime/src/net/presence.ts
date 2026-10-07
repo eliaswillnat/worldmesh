@@ -26,8 +26,12 @@ export interface PresenceOptions {
   onArrive?: (x: number, z: number) => void;
   /** Called with each remote figure as it is made, already outlined. */
   onFigure?: (root: Object3D) => void;
-  /** Someone in the room left, last seen at (x, z). */
-  onDepart?: (x: number, z: number) => void;
+  /**
+   * Someone in the room left, last seen at (x, z). Return true to keep their
+   * figure in the scene a little longer (to finish an exit effect); hand it
+   * back with `dropFigure` when done. Otherwise it is removed straight away.
+   */
+  onDepart?: (x: number, z: number, root: Object3D) => boolean | void;
   /**
    * Where this visitor is listening from. When set, everyone else's footsteps,
    * jumps and landings are heard, fading with distance and silent far off.
@@ -144,7 +148,7 @@ export class Presence implements NetworkAdapter {
   private getColor: () => string | null;
   private onArrive: (x: number, z: number) => void;
   private onFigure: (root: Object3D) => void;
-  private onDepart: (x: number, z: number) => void;
+  private onDepart: NonNullable<PresenceOptions['onDepart']>;
   private listener: (() => Vector3 | null) | null;
   private onShared: NonNullable<PresenceOptions['onShared']>;
   private place: PresenceOptions['place'];
@@ -216,6 +220,11 @@ export class Presence implements NetworkAdapter {
     if (!socket || socket.readyState !== WebSocket.OPEN || !this.selfId) return false;
     socket.send(JSON.stringify({ t: 'o', k: key, v: value }));
     return true;
+  }
+
+  /** Remove a figure kept by `onDepart` once its exit is over. */
+  dropFigure(root: Object3D): void {
+    disposeObject(root);
   }
 
   /** Everyone else's body where it is drawn, so walking into them stops where they appear to be. */
@@ -413,8 +422,9 @@ export class Presence implements NetworkAdapter {
       case 'leave': {
         const remote = this.remotes.get(message.id);
         if (remote) {
-          this.onDepart(remote.root.position.x, remote.root.position.z);
-          disposeObject(remote.root);
+          const kept = this.onDepart(remote.root.position.x, remote.root.position.z, remote.root) === true;
+          if (kept) dropBubble(remote);
+          else disposeObject(remote.root);
         }
         this.remotes.delete(message.id);
         break;

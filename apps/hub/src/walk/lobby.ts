@@ -32,6 +32,7 @@ import {
   RingGeometry,
   Scene,
   ShaderMaterial,
+  Sprite,
   Vector2,
   Vector3,
   WebGLRenderer,
@@ -287,8 +288,14 @@ const LENS_OUT_S = 0.7;
 const WARP_SHARE_S = 6;
 /** Seconds the figure takes to warp away when leaving through a door: as quick as it arrives. */
 const LEAVE_TIME = 0.12;
-/** Someone else stepping through a portal fades a little slower, so it reads from across the hall. */
-const OTHER_LEAVE_TIME = 0.45;
+/**
+ * Someone else stepping through a portal fades slower than our own figure,
+ * so it reads from across the hall. Their page leaves the room sooner than
+ * this; the figure is kept until the warp has played out.
+ */
+const OTHER_LEAVE_TIME = 0.9;
+/** How far their figure is carried on through the doorway as it warps out, in metres. */
+const OTHER_LEAVE_DRIFT = 1.4;
 /** A portal or figure this close to where someone went through is the one they used. */
 const WARP_MATCH = 3;
 /** Seconds after which a figure that warped out but never left is shown again. */
@@ -531,7 +538,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   let newestFigure: Object3D | null = null;
   // Everyone else's figures, so one stepping through a portal can be warped out.
   const figures = new Set<Object3D>();
-  const departing: Array<{ root: Object3D; time: number; axis: Vector3 }> = [];
+  const departing: Array<{ root: Object3D; time: number; axis: Vector3; from: Vector3; left: boolean }> = [];
   const throughAxis = new Vector3();
   // Coming out of a world happens as the page loads, often before presence
   // has connected: hold the warp until it can be shared.
@@ -639,7 +646,13 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         // Everyone else's footsteps, jumps and landings, heard from where we stand.
         listener: () => listenerPoint.fromArray(world.getState().position),
         // Someone leaving, by a door or by closing the page: the same sound as our own leaving.
-        onDepart: (x, z) => playWarpSound(false, 0, loudnessAt(x, z)),
+        // One warping out through a door is kept until the warp has played out.
+        onDepart: (x, z, root) => {
+          playWarpSound(false, 0, loudnessAt(x, z));
+          const entry = departing.find((candidate) => candidate.root === root);
+          if (entry) entry.left = true;
+          return !!entry;
+        },
       })
     : undefined;
   const listenerPoint = new Vector3();
@@ -1099,7 +1112,9 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         figure = root;
       }
     }
-    if (figure && !departing.some((entry) => entry.root === figure)) departing.push({ root: figure, time: 0, axis: door.through(new Vector3()) });
+    if (figure && !departing.some((entry) => entry.root === figure)) {
+      departing.push({ root: figure, time: 0, axis: door.through(new Vector3()), from: figure.position.clone(), left: false });
+    }
   }
 
   /** Figures of people who went through a portal, warping out. */
@@ -1112,12 +1127,27 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         continue;
       }
       const t = Math.min(1, entry.time / OTHER_LEAVE_TIME);
-      setLocalAppear(entry.root, 1 - t * t * (3 - 2 * t), entry.axis);
+      const amount = 1 - t * t * (3 - 2 * t);
+      // Carried on into the portal as they smear through it, quickening as they go.
+      // (`axis` points out of the door into the hall, so in is against it.)
+      entry.root.position.copy(entry.from).addScaledVector(entry.axis, -OTHER_LEAVE_DRIFT * t * t);
+      setLocalAppear(entry.root, amount, entry.axis);
+      for (const child of entry.root.children) {
+        if (child instanceof Sprite) child.material.opacity = amount;
+      }
       entry.root.visible = t < 1;
+      if (t >= 1 && entry.left) {
+        presence?.dropFigure(entry.root);
+        departing.splice(i, 1);
+        continue;
+      }
       // Still here long after: they never left (a failed load), so show them again.
       if (entry.time > WARP_GIVE_UP) {
         entry.root.visible = true;
         setLocalAppear(entry.root, 1);
+        for (const child of entry.root.children) {
+          if (child instanceof Sprite) child.material.opacity = 1;
+        }
         departing.splice(i, 1);
       }
     }
