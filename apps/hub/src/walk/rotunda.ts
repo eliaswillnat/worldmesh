@@ -2,7 +2,6 @@ import {
   BufferGeometry,
   CanvasTexture,
   CatmullRomCurve3,
-  CircleGeometry,
   CylinderGeometry,
   DoubleSide,
   Group,
@@ -155,7 +154,7 @@ export function buildDome(radius: number): { glass: BufferGeometry; solid: Buffe
 
 /**
  * Galleries round the drum above the screens: a glass balcony with a
- * frameless glass balustrade at each level, and downlights under it. Doors line the wall behind (lobby.ts).
+ * frameless glass balustrade at each level. Doors line the wall behind (lobby.ts).
  */
 export function buildGalleries(
   radius: number,
@@ -178,7 +177,6 @@ export function buildGalleries(
 
   GALLERY_LEVELS.forEach((level, index) => {
     const edge = galleryEdge(radius, index);
-    const depth = GALLERY_DEPTHS[index];
     // Slab, all glass: the edge facing the hall, the deck and its underside.
     const fascia = new CylinderGeometry(edge, edge, SLAB, 160, 1, true);
     fascia.translate(0, level - SLAB / 2, 0);
@@ -203,16 +201,6 @@ export function buildGalleries(
       colliders.push(pane.clone());
       // The same glass as the deck, so the panes read as a balustrade.
       decks.push(flat(pane));
-    }
-    // Downlights under the balcony.
-    const lights = Math.round((Math.PI * 2 * (edge + depth / 2)) / 3);
-    for (let i = 0; i < lights; i++) {
-      const angle = ((i + 0.5) / lights) * Math.PI * 2;
-      const r = edge + depth * 0.5;
-      const spot = new CircleGeometry(0.13, 12);
-      spot.rotateX(Math.PI / 2);
-      spot.translate(Math.sin(angle) * r, level - SLAB - 0.01, Math.cos(angle) * r);
-      glow.push(flat(spot));
     }
   });
   return { solid, glow, glass, decks, colliders };
