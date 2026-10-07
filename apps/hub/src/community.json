@@ -133,5 +133,16 @@
     "portfolio": "https://x.com/andersonmancini",
     "addedAt": "2026-10-07T14:00:00Z",
     "categories": ["games"]
+  },
+  {
+    "id": "mount-allison-f4j8nc",
+    "name": "Mount Allison",
+    "url": "https://mount-alison-3d.vercel.app/",
+    "description": "Explore Mount Allison University in Sackville, New Brunswick, Canada.",
+    "cover": "/covers/mount-allison.webp",
+    "creator": "Turk",
+    "portfolio": "https://x.com/0xbigturk",
+    "addedAt": "2026-10-07T16:00:00Z",
+    "categories": ["explore"]
   }
 ]
