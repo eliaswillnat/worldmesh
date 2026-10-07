@@ -24,6 +24,7 @@ import { Overlay } from '../ui/overlay.js';
 import { isTouchDevice } from '../controls/touch.js';
 import { immersiveVrSupported, requestImmersiveVr } from '../xr/session.js';
 import { Emitter } from './events.js';
+import { captureDoorView, type DoorViewOptions } from '../capture/doorView.js';
 import { DEFAULT_PRESENCE_SERVER, Presence } from '../net/presence.js';
 import { roomFullLabel } from '../net/roomFull.js';
 
@@ -32,6 +33,11 @@ const MAX_STEP = 1 / 60;
 /** Never simulate more than this per frame, so a backgrounded tab does not catch up violently. */
 const MAX_FRAME = 0.1;
 const DEFAULT_HUB = 'https://worldmesh.net/';
+/**
+ * Set by WorldMesh's capture service when it opens a world to take its door
+ * view. The world then stays offline, so other visitors stay out of the shot.
+ */
+export const CAPTURE_PARAM = 'worldmesh-capture';
 
 /**
  * Turn an ordinary Three.js scene into a WorldMesh world.
@@ -163,6 +169,8 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     enterVR,
     exitVR,
     isVR: () => renderer.xr.isPresenting,
+
+    captureDoorView: doCaptureDoorView,
   };
 
   applyViewVisibility();
@@ -172,7 +180,9 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
 
   if (options.autoStart !== false) start();
 
-  const network = options.network ?? createMultiplayer();
+  const capturing = isCaptureRequest();
+  if (capturing) exposeCapture();
+  const network = capturing ? undefined : options.network ?? createMultiplayer();
   if (network instanceof Presence) {
     network.setOnFull((full) => {
       overlay.setRoomFull(full ? roomFullLabel(network.url) : null, {
@@ -475,6 +485,42 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   function travelTo(url: string): void {
     input.exitPointerLock();
     window.location.href = buildTravelUrl(url);
+  }
+
+  /** Snapshot the view from where the player stands, the way they face, for hub doors. */
+  async function doCaptureDoorView(captureOptions?: DoorViewOptions) {
+    if (disposed) throw new Error('This world has been disposed.');
+    if (renderer.xr.isPresenting) throw new Error('Cannot capture a door view during VR.');
+    const wasRunning = running;
+    stop();
+    try {
+      return await captureDoorView(
+        {
+          scene,
+          renderer,
+          camera: camera as { near: number; far: number },
+          eye: controller.position.clone().setY(controller.position.y + player.eyeHeight * (controller.height / height)),
+          yaw: cameraRig.yaw,
+          hide: [player.root],
+        },
+        captureOptions,
+      );
+    } finally {
+      if (wasRunning) start();
+    }
+  }
+
+  function isCaptureRequest(): boolean {
+    try {
+      return new URLSearchParams(window.location.search).has(CAPTURE_PARAM);
+    } catch {
+      return false;
+    }
+  }
+
+  /** The capture service drives the page from outside, so give it one global to call. */
+  function exposeCapture(): void {
+    (window as unknown as { __worldmeshCaptureDoorView?: typeof doCaptureDoorView }).__worldmeshCaptureDoorView = doCaptureDoorView;
   }
 
   function handleResize(): void {

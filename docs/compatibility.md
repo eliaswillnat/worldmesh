@@ -147,6 +147,7 @@ world.refreshColliders()    // after adding geometry
 world.enterVR()             // requestSession('immersive-vr'); the Enter VR button calls this
 world.exitVR()
 world.isVR()
+world.captureDoorView()     // 360° colour + depth snapshot from the player's eye, for hub doors
 world.on(event, fn)         // returns an unsubscribe function
 world.dispose()
 ```

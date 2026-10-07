@@ -17,3 +17,15 @@ R2_PUBLIC_URL = "https://pub-b622cf770b414a1c9869157e73dab3c1.r2.dev"
 
 # Set secrets in Cloudflare with:
 # npx wrangler secret put SCREENSHOT_SECRET
+
+# Door views for hub doors: requests queue a capture, this worker takes it.
+# Create the queue once before deploying: npx wrangler queues create worldmesh-door-views
+[[queues.producers]]
+binding = "DOOR_VIEWS"
+queue = "worldmesh-door-views"
+
+[[queues.consumers]]
+queue = "worldmesh-door-views"
+max_batch_size = 1
+max_concurrency = 2
+max_retries = 0
