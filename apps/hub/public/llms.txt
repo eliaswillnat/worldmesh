@@ -9,5 +9,5 @@
 ## Reference
 
 - [Compatibility standard](https://github.com/eliaswillnat/worldmesh/blob/main/docs/compatibility.md): every option, event and method of the runtime.
-- [Terms](https://worldmesh.net/terms.html)
-- [Privacy](https://worldmesh.net/privacy.html)
+- [Terms](https://worldmesh.net/terms)
+- [Privacy](https://worldmesh.net/privacy)
