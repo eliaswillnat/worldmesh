@@ -450,10 +450,12 @@
           flex-shrink: 0;
           border-radius: 12px;
           /* A full screen each, with the header's slot as the card's own empty
-             top, so nothing of the previous card shows when the header hides. */
+             top, so nothing of the previous card shows when the header hides.
+             The same space at the bottom keeps the content centred on screen. */
           height: 100dvh;
           min-height: 100dvh;
           padding-top: var(--header-h, 0px);
+          padding-bottom: var(--header-h, 0px);
           display: flex;
           align-items: center;
           justify-content: center;
