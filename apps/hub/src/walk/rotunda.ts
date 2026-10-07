@@ -154,8 +154,8 @@ export function buildDome(radius: number): { glass: BufferGeometry; solid: Buffe
 }
 
 /**
- * Galleries round the drum above the screens: an open glass balcony at each
- * level, with downlights under it. Doors line the wall behind (lobby.ts).
+ * Galleries round the drum above the screens: a glass balcony with a
+ * frameless glass balustrade at each level, and downlights under it. Doors line the wall behind (lobby.ts).
  */
 export function buildGalleries(
   radius: number,
@@ -194,14 +194,15 @@ export function buildGalleries(
     // Solid too, so a camera following someone underneath stops below the slab.
     colliders.push(under.clone());
     decks.push(flat(under));
-    // No rail to see: the edge is open, but an invisible one still keeps
-    // people from walking off, except where something meets the gallery.
+    // A frameless glass balustrade, open wherever something meets the gallery.
     const railR = edge + 0.08;
     for (const [start, length] of railArcs(gaps[index] ?? [])) {
       const segments = Math.max(2, Math.ceil(length * 30));
       const pane = new CylinderGeometry(railR, railR, RAIL, segments, 1, true, start, length);
       pane.translate(0, level + RAIL / 2, 0);
-      colliders.push(pane);
+      colliders.push(pane.clone());
+      // The same glass as the deck, so the panes read as a balustrade.
+      decks.push(flat(pane));
     }
     // Downlights under the balcony.
     const lights = Math.round((Math.PI * 2 * (edge + depth / 2)) / 3);
