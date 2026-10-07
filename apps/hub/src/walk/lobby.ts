@@ -1033,6 +1033,18 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       chatBubble.classList.remove('visible');
       return;
     }
+    // Typing on a phone, the field sits just above the keyboard, not over the head
+    // where the keyboard would push it around. Once sent, the line goes back overhead.
+    const docked = chatting && isTouch;
+    chatBubble.classList.toggle('docked', docked);
+    if (docked) {
+      const view = window.visualViewport;
+      const bottom = view ? view.offsetTop + view.height : window.innerHeight;
+      chatBubble.style.left = `${view ? view.offsetLeft + view.width / 2 : window.innerWidth / 2}px`;
+      chatBubble.style.top = `${bottom - 12}px`;
+      chatBubble.classList.add('visible');
+      return;
+    }
     const [x, y, z] = world.getState().position;
     chatPoint.set(x, y + 2.45, z).project(camera);
     if (chatPoint.z > 1) {
