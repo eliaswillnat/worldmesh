@@ -163,8 +163,8 @@ reviewed before they appear on the hub.
   relay: deploy `workers/presence` from
   https://github.com/eliaswillnat/worldmesh and pass
   `multiplayer: { server: 'wss://their-relay.example' }`.
-- Using WorldMesh means agreeing to https://worldmesh.net/terms.html. The
-  privacy policy at https://worldmesh.net/privacy.html explains what
+- Using WorldMesh means agreeing to https://worldmesh.net/terms. The
+  privacy policy at https://worldmesh.net/privacy explains what
   multiplayer shares between visitors.
 
 Full reference: https://github.com/eliaswillnat/worldmesh/blob/main/docs/compatibility.md
