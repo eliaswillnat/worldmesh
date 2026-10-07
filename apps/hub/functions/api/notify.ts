@@ -144,6 +144,16 @@ export async function onRequestPost(context: {
       },
     );
   }
+  body.email = body.email?.trim();
+  if (!body.email || body.email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email)) {
+    return new Response(
+      JSON.stringify({ error: 'A valid creator email is required.' }),
+      {
+        status: 400,
+        headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+      },
+    );
+  }
 
   const toEmail = env.NOTIFICATION_EMAIL || 'elias.willnat@gmail.com';
   const fromEmail = env.FROM_EMAIL || 'WorldMesh <accounts@worldmesh.net>';
