@@ -139,13 +139,26 @@ export default {
       const page = await browser.newPage();
       await page.setViewport({ width, height });
 
+      // Worlds keep connections open (presence sockets, streamed assets), so the
+      // network never goes idle; wait for the load event instead.
       await page.goto(targetUrl.toString(), {
-        waitUntil: 'networkidle0',
+        waitUntil: 'load',
         timeout: 15000,
       });
 
       // Give WebGL/Three.js a moment to render
-      await page.waitForTimeout(3000);
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+
+      const webgl = await page.evaluate(() => {
+        const gl = document.createElement('canvas').getContext('webgl2');
+        if (!gl) return { supported: false };
+        const info = gl.getExtension('WEBGL_debug_renderer_info');
+        return {
+          supported: true,
+          renderer: String(gl.getParameter(info ? info.UNMASKED_RENDERER_WEBGL : gl.RENDERER)),
+          halfFloatRenderTargets: !!gl.getExtension('EXT_color_buffer_float'),
+        };
+      });
 
       const screenshot = await page.screenshot({ type: 'jpeg', quality: 85 });
       await browser.close();
@@ -158,7 +171,7 @@ export default {
       const publicBase = env.R2_PUBLIC_URL?.replace(/\/$/, '');
       const screenshotUrl = publicBase ? `${publicBase}/${key}` : key;
 
-      return json({ success: true, key, url: screenshotUrl });
+      return json({ success: true, key, url: screenshotUrl, webgl });
     } catch (err: any) {
       return json({ error: 'Screenshot failed', details: err?.message }, 500);
     }
