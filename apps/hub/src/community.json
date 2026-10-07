@@ -122,5 +122,16 @@
     "portfolio": "https://x.com/andersonmancini",
     "addedAt": "2026-10-07T12:00:00Z",
     "categories": ["games"]
+  },
+  {
+    "id": "graveyard-pinball-madness-k2p9fs",
+    "name": "Graveyard Pinball Madness",
+    "url": "https://graveyard-pinball.vercel.app/",
+    "description": "Spooky 3D pinball game with crypts, coffins, skull portals and mini-games hidden inside the table.",
+    "cover": "/covers/graveyard-pinball.webp",
+    "creator": "Anderson Mancini",
+    "portfolio": "https://x.com/andersonmancini",
+    "addedAt": "2026-10-07T14:00:00Z",
+    "categories": ["games"]
   }
 ]
