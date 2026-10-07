@@ -111,5 +111,16 @@
     "addedAt": "2026-10-06T12:00:00Z",
     "categories": ["games"],
     "tags": ["multiplayer"]
+  },
+  {
+    "id": "lantern-valley-h8d4wz",
+    "name": "Lantern Valley",
+    "url": "https://lanternvalley.vercel.app/",
+    "description": "Cozy adventure where you explore the valley, find hidden Sparks and relight its Great Lanterns.",
+    "cover": "/covers/lantern-valley.webp",
+    "creator": "Anderson Mancini",
+    "portfolio": "https://x.com/andersonmancini",
+    "addedAt": "2026-10-07T12:00:00Z",
+    "categories": ["games"]
   }
 ]
