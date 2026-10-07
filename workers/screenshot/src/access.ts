@@ -7,8 +7,8 @@
  *   everything.
  * - browser: the hub page itself, recognised by its Origin. A secret in the
  *   page would be public, so browsers get only what the submit form needs:
- *   saving the submission and one screenshot of the submitted world, under a
- *   rate limit. Scripts can fake an Origin, which is why that limit exists.
+ *   one screenshot of the submitted world, under a rate limit. Scripts can
+ *   fake an Origin, which is why that limit exists.
  */
 
 export type Caller = 'server' | 'browser' | null;
@@ -26,7 +26,7 @@ const DEFAULT_ORIGINS = 'https://worldmesh.net,https://www.worldmesh.net';
 const DEFAULT_SCREENSHOTS_PER_HOUR = 20;
 /** The same world can only be screenshotted from a browser once in this window. */
 const PER_WORLD_WINDOW = 10 * 60 * 1000;
-/** A submission is a handful of form fields. */
+/** A screenshot request is a URL. */
 export const MAX_BROWSER_BODY = 16 * 1024;
 
 export function allowedOrigin(request: Request, env: AccessEnv): string | null {

@@ -463,7 +463,6 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
           email: world.email,
           submittedAt: new Date().toISOString(),
         };
-        saveSubmissionRecord(entry);
         requestScreenshot(entry);
         notifySubmission(entry);
       },
@@ -877,23 +876,9 @@ submitWorldBtn.addEventListener('click', async () => {
   setAddingMode(false);
   setStatus('Submitted! Your world will appear once approved.');
 
-  saveSubmissionRecord(entry);
   requestScreenshot(entry);
   notifySubmission(entry);
 });
-
-async function saveSubmissionRecord(entry: WorldEntry): Promise<void> {
-  const endpoint = SCREENSHOT_ENDPOINT || '/api/screenshot';
-  try {
-    await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ submission: entry }),
-    });
-  } catch {
-    // Best-effort storage in R2
-  }
-}
 
 async function readManifest(
   url: URL,

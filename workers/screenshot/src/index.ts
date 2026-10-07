@@ -39,20 +39,6 @@ async function handle(request: Request, env: Env): Promise<Response> {
       const status = await getDoorViewStatus(doorView[1], env);
       return status ? json(status) : json({ error: 'No door view requested for this world' }, 404);
     }
-    const match = url.pathname.match(/^\/submissions\/([^/]+?)(?:\.json)?$/);
-    if (match) {
-      // Submissions hold creators' email addresses.
-      if ((await identify(request, env)) !== 'server') return json({ error: 'Unauthorized' }, 401);
-      const id = match[1];
-      const obj = await env.SCREENSHOTS.get(`submissions/${id}.json`);
-      if (!obj) {
-        return json({ error: 'Submission not found' }, 404);
-      }
-      return new Response(obj.body, {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
     return json({ error: 'Not found' }, 404);
   }
 
@@ -82,7 +68,6 @@ async function handle(request: Request, env: Env): Promise<Response> {
     width?: number;
     height?: number;
     image?: string;
-    submission?: Record<string, unknown>;
   };
   const raw = await request.text();
   if (caller === 'browser' && raw.length > MAX_BROWSER_BODY) {
@@ -92,24 +77,6 @@ async function handle(request: Request, env: Env): Promise<Response> {
     body = JSON.parse(raw);
   } catch {
     return json({ error: 'Invalid JSON' }, 400);
-  }
-
-  if (body.submission) {
-    try {
-      const given = typeof body.submission.id === 'string' ? slugify(body.submission.id) : '';
-      const id = given || `world-${Date.now()}`;
-      const key = `submissions/${id}.json`;
-      await env.SCREENSHOTS.put(key, JSON.stringify(body.submission, null, 2), {
-        httpMetadata: { contentType: 'application/json' },
-      });
-
-      const publicBase = env.R2_PUBLIC_URL?.replace(/\/$/, '');
-      const jsonUrl = publicBase ? `${publicBase}/${key}` : key;
-
-      return json({ success: true, key, url: jsonUrl });
-    } catch (err: any) {
-      return json({ error: 'Failed to save submission', details: err?.message }, 500);
-    }
   }
 
   if (body.image) {
