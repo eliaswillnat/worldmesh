@@ -1,15 +1,13 @@
 import puppeteer from '@cloudflare/puppeteer';
+import { consumeDoorViews, getDoorViewStatus, requestDoorView, type DoorViewEnv, type DoorViewJob } from './doorViews';
 
-interface Env {
-  BROWSER: Fetcher;
-  SCREENSHOTS: R2Bucket;
+interface Env extends DoorViewEnv {
   SCREENSHOT_SECRET?: string;
-  R2_PUBLIC_URL?: string;
 }
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
@@ -19,8 +17,14 @@ export default {
       return new Response(null, { status: 204, headers: CORS_HEADERS });
     }
 
+    const url = new URL(request.url);
+
     if (request.method === 'GET') {
-      const url = new URL(request.url);
+      const doorView = url.pathname.match(/^\/door-views\/([a-z0-9-]+)$/);
+      if (doorView) {
+        const status = await getDoorViewStatus(doorView[1], env);
+        return status ? json(status) : json({ error: 'No door view requested for this world' }, 404);
+      }
       const match = url.pathname.match(/^\/submissions\/([^/]+?)(?:\.json)?$/);
       if (match) {
         const id = match[1];
@@ -48,6 +52,17 @@ export default {
       if (auth !== `Bearer ${env.SCREENSHOT_SECRET}`) {
         return json({ error: 'Unauthorized' }, 401);
       }
+    }
+
+    if (url.pathname === '/door-views') {
+      let doorViewBody: { url?: string };
+      try {
+        doorViewBody = await request.json();
+      } catch {
+        return json({ error: 'Invalid JSON' }, 400);
+      }
+      const result = await requestDoorView(doorViewBody.url, env);
+      return json(result.body, result.status);
     }
 
     let body: {
@@ -175,6 +190,10 @@ export default {
     } catch (err: any) {
       return json({ error: 'Screenshot failed', details: err?.message }, 500);
     }
+  },
+
+  async queue(batch: MessageBatch<DoorViewJob>, env: Env): Promise<void> {
+    await consumeDoorViews(batch, env);
   },
 };
 

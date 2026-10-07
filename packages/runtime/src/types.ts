@@ -1,5 +1,6 @@
 import type { AvatarDescriptor } from './avatar/descriptor.js';
 import type { AvatarExpression } from './player/avatar.js';
+import type { DoorView, DoorViewOptions } from './capture/doorView.js';
 import type { Camera, Object3D, PerspectiveCamera, Scene, WebGLRenderer } from 'three';
 
 export type Vec3Tuple = [number, number, number];
@@ -320,4 +321,10 @@ export interface WorldMeshHandle {
   exitVR(): Promise<void>;
   /** True while a WebXR immersive-vr session is presenting. */
   isVR(): boolean;
+
+  /**
+   * Snapshot a 360° colour and depth view from where the player stands, the
+   * way they face. WorldMesh shows it inside this world's doors in the hub.
+   */
+  captureDoorView(options?: DoorViewOptions): Promise<DoorView>;
 }

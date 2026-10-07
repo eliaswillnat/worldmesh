@@ -64,6 +64,15 @@ or call `world.loadAvatar(descriptor)` / `world.clearAvatar()` at any time.
 `avatar:load` and `avatar:error` events report the outcome. The VRM and glTF
 loaders (`@pixiv/three-vrm`) are only downloaded when an avatar is shown.
 
+## Door views
+
+Hub doors can show a 360° snapshot of your world, with depth, so near things
+shift against far ones as visitors walk past. WorldMesh takes it for you: its
+capture service opens your world with `?worldmesh-capture=1` and calls
+`world.captureDoorView()`, which snapshots the view from the spawn point, the
+way the player faces. In that mode the world stays offline, so no other
+visitors end up in the picture. Nothing to do on your side.
+
 ## What is exported
 
 | | |
@@ -77,6 +86,7 @@ loaders (`@pixiv/three-vrm`) are only downloaded when an avatar is shown.
 | `Overlay`, `Emitter` | the shared overlay, a tiny typed emitter |
 | `immersiveVrSupported`, `requestImmersiveVr` | the shared WebXR enter-VR path |
 | `Presence`, `DEFAULT_PRESENCE_SERVER`, `NetworkAdapter` | multiplayer (`multiplayer: true`) and the seam for your own |
+| `captureDoorView`, `DOOR_VIEW_FACES`, `CAPTURE_PARAM` | the 360° colour + depth snapshot hub doors show of your world |
 | `WORLDMESH_VERSION`, `WORLDMESH_PROTOCOL` | what your world is speaking |
 
 Full option, handle and event reference:
