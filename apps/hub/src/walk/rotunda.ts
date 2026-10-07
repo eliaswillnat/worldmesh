@@ -154,8 +154,8 @@ export function buildDome(radius: number): { glass: BufferGeometry; solid: Buffe
 }
 
 /**
- * Galleries round the drum above the screens: a glass balcony with a glass
- * rail at each level and downlights under it. Doors line the wall behind (lobby.ts).
+ * Galleries round the drum above the screens: an open glass balcony at each
+ * level, with downlights under it. Doors line the wall behind (lobby.ts).
  */
 export function buildGalleries(
   radius: number,
@@ -179,10 +179,10 @@ export function buildGalleries(
   GALLERY_LEVELS.forEach((level, index) => {
     const edge = galleryEdge(radius, index);
     const depth = GALLERY_DEPTHS[index];
-    // Slab: fascia facing the hall, then a glass deck and its underside.
+    // Slab, all glass: the edge facing the hall, the deck and its underside.
     const fascia = new CylinderGeometry(edge, edge, SLAB, 160, 1, true);
     fascia.translate(0, level - SLAB / 2, 0);
-    solid.push(flat(flipInside(fascia)));
+    decks.push(flat(flipInside(fascia)));
     const deck = new RingGeometry(edge, radius, 160, 1);
     deck.rotateX(-Math.PI / 2);
     deck.translate(0, level, 0);
@@ -194,21 +194,14 @@ export function buildGalleries(
     // Solid too, so a camera following someone underneath stops below the slab.
     colliders.push(under.clone());
     decks.push(flat(under));
-    // A line of light along the fascia.
-    const line = new CylinderGeometry(edge - 0.02, edge - 0.02, 0.06, 160, 1, true);
-    line.translate(0, level - SLAB + 0.08, 0);
-    glow.push(flat(line));
-    // Glass rail with a lit handrail, open wherever something meets the gallery.
+    // No rail to see: the edge is open, but an invisible one still keeps
+    // people from walking off, except where something meets the gallery.
     const railR = edge + 0.08;
     for (const [start, length] of railArcs(gaps[index] ?? [])) {
       const segments = Math.max(2, Math.ceil(length * 30));
       const pane = new CylinderGeometry(railR, railR, RAIL, segments, 1, true, start, length);
       pane.translate(0, level + RAIL / 2, 0);
-      colliders.push(pane.clone());
-      glass.push(pane);
-      const hand = new CylinderGeometry(railR, railR, 0.07, segments, 1, true, start, length);
-      hand.translate(0, level + RAIL, 0);
-      glow.push(flat(hand));
+      colliders.push(pane);
     }
     // Downlights under the balcony.
     const lights = Math.round((Math.PI * 2 * (edge + depth / 2)) / 3);
