@@ -165,7 +165,6 @@ export class TowerCity {
   private raycaster = new Raycaster();
   private pointer = new Vector2();
   private debug: { update(dt: number): void; dispose(): void } | null = null;
-  private disposed = false;
 
   constructor(private options: TowerCityOptions) {
     this.config = resolveCityConfig(options.config);
@@ -398,7 +397,6 @@ export class TowerCity {
   }
 
   dispose(): void {
-    this.disposed = true;
     window.removeEventListener('keydown', this.handleKey);
     this.debug?.dispose();
     this.hud.dispose();
