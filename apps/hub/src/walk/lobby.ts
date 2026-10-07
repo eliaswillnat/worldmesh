@@ -1455,6 +1455,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   handleResize();
 
   setWorlds(options.worlds);
+  if (options.color) setColor(options.color);
   // Stored coordinates rather than a door to look up: community worlds arrive
   // a moment later and shift every door, and these already match the full list.
   if (options.start) emerge(options.start);
@@ -1588,10 +1589,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
   function setColor(next: string): void {
     color = next;
-    setAvatarColor(world.avatar, next);
+    if (world.avatar) setAvatarColor(world.avatar, next);
   }
-
-  if (options.color) setColor(options.color);
 
   function setPrivate(on: boolean): string | null {
     if (on === !!pendingAlias || warping || emerging) return pendingAlias;
