@@ -42,6 +42,7 @@ import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { CITY_GLOW_WHITE, applyCityTheme, applySkyTheme, createCityMaterials, createSky, createSpawnPads, flipInside, skyHorizon, type BillboardSlot } from './city';
 import { DOOR_HALF_SPAN, DOOR_HEIGHT, DOOR_TOP, DOOR_WIDTH, FRAME, Door, createLabel, worldIsFull, type DoorWorld } from './door';
+import { DoorViewManager } from './doorViews';
 import { doorFrameGeometry, frameOuterCorner, roundedOpeningGeometry } from './doorShape';
 import { describeBillboard } from './layout';
 import { playPortalSplash, playSendSound, playWarpSound, setPortalHum, stopPortalHum } from './sounds';
@@ -87,6 +88,8 @@ export interface LobbyOptions {
   light?: boolean;
   /** WebSocket base URL of the presence server. Leave empty for single-player. */
   presenceEndpoint?: string;
+  /** workers/screenshot, for door views: up close, doors show the world itself. Leave empty for covers only. */
+  doorViewEndpoint?: string;
   /** Name shown above this visitor for everyone else; null shows them as a guest. */
   playerName?: () => string | null;
   /** Start in private mode (see `Lobby.setPrivate`). */
@@ -687,6 +690,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
   const known = new Map<string, DoorWorld>();
   const doors = new Map<string, Door>();
+  const doorViews = new DoorViewManager(options.doorViewEndpoint || null);
   // Doors with no world behind them yet. Re-laid out with every list change.
   const emptyDoors: Door[] = [];
   // Empty doors round the galleries. Rebuilt with the hall.
@@ -847,6 +851,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         }
       }
       updatePortalHum(humDoor, humDistance);
+      doorViews.update(dt, doors.values(), x, y, z, camera);
       let near: Door | null = null;
       let nearest = EMPTY_DOOR_REACH;
       for (const door of [...emptyDoors, ...galleryDoors]) {
@@ -2138,6 +2143,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   }
 
   function dispose(): void {
+    doorViews.dispose();
     disposed = true;
     stopPortalHum();
     window.clearTimeout(warpTimer);
