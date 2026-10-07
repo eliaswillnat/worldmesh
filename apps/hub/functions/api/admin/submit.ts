@@ -1,6 +1,8 @@
 interface Env {
   APPROVE_SECRET?: string;
   SCREENSHOT_ENDPOINT?: string;
+  /** workers/screenshot's SCREENSHOT_SECRET: screenshots from servers need it. */
+  SCREENSHOT_SECRET?: string;
   WORLDS: KVNamespace;
 }
 
@@ -99,9 +101,11 @@ export async function onRequestPost(context: {
     const screenshotEndpoint =
       env.SCREENSHOT_ENDPOINT || DEFAULT_SCREENSHOT_ENDPOINT;
     try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (env.SCREENSHOT_SECRET) headers.Authorization = `Bearer ${env.SCREENSHOT_SECRET}`;
       await fetch(screenshotEndpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ url: body.url }),
       });
     } catch {
