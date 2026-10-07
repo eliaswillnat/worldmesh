@@ -182,7 +182,7 @@ export async function directory(env: Env): Promise<Directory> {
   return { approved, pending };
 }
 
-/** How the hub's approve link for a pending world looks (it approves on GET). */
+/** How the hub's approve link for a pending world looks (it asks on GET and approves on POST). */
 export function approveLink(env: Env, entry: DirectoryEntry): string | null {
   if (!entry.approveToken) return null;
   return `${hubOrigin(env)}/api/approve?id=${encodeURIComponent(entry.id)}&token=${encodeURIComponent(entry.approveToken)}`;

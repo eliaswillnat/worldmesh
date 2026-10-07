@@ -1,8 +1,7 @@
-interface Env {
+import { queueDoorView, type DoorViewEnv } from '../../lib/doorViews';
+
+interface Env extends DoorViewEnv {
   APPROVE_SECRET?: string;
-  SCREENSHOT_ENDPOINT?: string;
-  /** workers/screenshot's SCREENSHOT_SECRET: screenshots from servers need it. */
-  SCREENSHOT_SECRET?: string;
   WORLDS: KVNamespace;
 }
 
@@ -96,6 +95,7 @@ export async function onRequestPost(context: {
   };
 
   await env.WORLDS.put(`approved:${id}`, JSON.stringify(entry));
+  await queueDoorView(env, body.url);
 
   if (!cover) {
     const screenshotEndpoint =
