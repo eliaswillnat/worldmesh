@@ -420,7 +420,6 @@
           overflow-y: auto;
           overscroll-behavior: contain;
           scroll-snap-type: y mandatory;
-          scroll-padding-top: var(--header-h, 0px);
           -webkit-overflow-scrolling: touch;
           scrollbar-width: none;
         }
@@ -450,8 +449,11 @@
           scroll-snap-stop: always;
           flex-shrink: 0;
           border-radius: 12px;
-          height: calc(100dvh - var(--header-h, 0px));
-          min-height: calc(100dvh - var(--header-h, 0px));
+          /* A full screen each, with the header's slot as the card's own empty
+             top, so nothing of the previous card shows when the header hides. */
+          height: 100dvh;
+          min-height: 100dvh;
+          padding-top: var(--header-h, 0px);
           display: flex;
           align-items: center;
           justify-content: center;
