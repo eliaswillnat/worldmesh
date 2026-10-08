@@ -84,8 +84,13 @@ const VIEW_SPAWN_BEHIND = 0.6;
 const VIEW_EYE_HEIGHT = 1.6;
 /** How much of the eye's offset from the spawn the door view follows (see viewSample). */
 const VIEW_PARALLAX = 0.8;
-/** Share of that given up between 3 m and 12 m from the spawn. */
-const VIEW_PARALLAX_FALLOFF = 0.55;
+/**
+ * Full depth this close to the spawn point (metres), none from VIEW_FLAT on:
+ * the further from where the snapshot was taken, the more of what it never
+ * saw would show, so from further back the view stays a flat 360° window.
+ */
+const VIEW_DEPTH_FULL = 2;
+const VIEW_FLAT = 7;
 /** Steps along each view ray, out to the snapshot's far limit, to find its surface. */
 const VIEW_STEPS = 24;
 /** Halvings to settle onto the surface once a step has crossed it. */
@@ -134,8 +139,8 @@ const portalFragment = /* glsl */ `
   // start from the visitor's eyes: a third-person camera floats metres above
   // the eye height the snapshot was taken at, and seen from up there the
   // snapshot would be mostly gaps. The start moves only part of the way from
-  // the spawn point to the eyes (VIEW_PARALLAX, less from further away), as
-  // the gaps behind near things grow with that distance too.
+  // the spawn point to the eyes (VIEW_PARALLAX), and none of it from
+  // VIEW_FLAT away, as the gaps behind near things grow with that distance.
   //
   // Each ray marches outward in growing steps until it crosses the snapshot's
   // surface, then halves its way onto it. A step that ends behind something
@@ -147,7 +152,7 @@ const portalFragment = /* glsl */ `
     vec3 onDoor = vec3(p.x * ${DOOR_WIDTH.toFixed(4)}, (p.y + 0.5) * ${DOOR_HEIGHT.toFixed(4)}, -0.02) - uViewOrigin;
     vec3 r = normalize(onDoor - camera);
     vec3 eyes = uViewFeet + vec3(0.0, uViewOrigin.y, 0.0) - uViewOrigin;
-    float k = ${VIEW_PARALLAX.toFixed(3)} * (1.0 - ${VIEW_PARALLAX_FALLOFF.toFixed(3)} * smoothstep(3.0, 12.0, length(eyes)));
+    float k = ${VIEW_PARALLAX.toFixed(3)} * (1.0 - smoothstep(${VIEW_DEPTH_FULL.toFixed(1)}, ${VIEW_FLAT.toFixed(1)}, length(eyes)));
     vec3 o = eyes * k;
     // From the doorway on: never anything on this side of it.
     float t = max((onDoor.z - o.z) / min(r.z, -0.0001), 0.0) + 0.05;
