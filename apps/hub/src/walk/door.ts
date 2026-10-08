@@ -131,6 +131,9 @@ const portalFragment = /* glsl */ `
   // uPortalColor (premultiplied alpha), over a backdrop in uViewColor.
   uniform float uPortal;
   uniform float uPortalLive;
+  uniform float uViewFlat;
+  uniform float uEmbed;
+  uniform float uScreen;
   uniform sampler2D uPortalColor;
   uniform vec2 uDrawSize;
   uniform vec3 uViewOrigin;
@@ -159,6 +162,8 @@ const portalFragment = /* glsl */ `
     vec3 camera = uViewEye - uViewOrigin;
     vec3 onDoor = vec3(p.x * ${DOOR_WIDTH.toFixed(4)}, (p.y + 0.5) * ${DOOR_HEIGHT.toFixed(4)}, -0.02) - uViewOrigin;
     vec3 r = normalize(onDoor - camera);
+    // A plain 360° window: everything as if infinitely far away.
+    if (uViewFlat > 0.5) return textureCube(uViewColor, r).rgb;
     vec3 eyes = uViewFeet + vec3(0.0, uViewOrigin.y, 0.0) - uViewOrigin;
     float k = ${VIEW_PARALLAX.toFixed(3)} * (1.0 - smoothstep(${VIEW_DEPTH_FULL.toFixed(1)}, ${VIEW_FLAT.toFixed(1)}, length(eyes)));
     vec3 o = eyes * k;
@@ -328,7 +333,7 @@ const portalFragment = /* glsl */ `
     vec3 color = mix(corridor, far, uHasMap);
     // Up close, the world itself replaces the cover (not while the room is full).
     float view = uView * (1.0 - uFull);
-    if (view > 0.0) {
+    if (view > 0.0 && uEmbed < 0.5) {
       if (uPortal > 0.5) color = mix(color, portalSample(p), view);
       else color = mix(color, viewSample(p), view);
     }
@@ -340,7 +345,9 @@ const portalFragment = /* glsl */ `
     color *= shade;
     if (uFull > 0.5) color *= 0.85;
 
-    gl_FragColor = vec4(min(color, vec3(1.0)), 1.0);
+    // A live embed shows through a hole in the canvas, on screen only.
+    float alpha = uEmbed > 0.5 && uScreen > 0.5 ? 1.0 - view : 1.0;
+    gl_FragColor = vec4(min(color, vec3(1.0)) * alpha, alpha);
     #include <colorspace_fragment>
   }
 `;
@@ -378,6 +385,8 @@ export class Door {
   private cover: Texture | null = null;
   private view: LoadedDoorView | null = null;
   private viewEye = new Vector3();
+  /** Whether a live page stands behind the doorway (setEmbedded). */
+  private embedded = false;
   /** Whether this frame drew the portal scene for the doorway (setPortalFrame). */
   private portalFrame = false;
   /** Where the door stood when its portal scene was last placed behind it. */
@@ -461,6 +470,9 @@ export class Door {
           uPortalLive: { value: 0 },
           uPortalColor: { value: null },
           uDrawSize: { value: new Vector2(1, 1) },
+          uViewFlat: { value: 0 },
+          uEmbed: { value: 0 },
+          uScreen: { value: 0 },
         },
         side: DoubleSide,
       }),
@@ -470,8 +482,9 @@ export class Door {
     // The portal frame is drawn for the screen; the floor's mirror (its own
     // render target) and VR get the backdrop alone.
     this.portal.onBeforeRender = (renderer) => {
-      this.portal.material.uniforms.uPortalLive.value =
-        this.portalFrame && renderer.getRenderTarget() === null && !renderer.xr.isPresenting ? 1 : 0;
+      const screen = renderer.getRenderTarget() === null && !renderer.xr.isPresenting;
+      this.portal.material.uniforms.uPortalLive.value = this.portalFrame && screen ? 1 : 0;
+      this.portal.material.uniforms.uScreen.value = screen ? 1 : 0;
     };
 
     if (random) {
@@ -572,6 +585,20 @@ export class Door {
     if (view && this.disposed) view.dispose();
   }
 
+  /** Show the door view as a flat 360° window, without its depth. */
+  setViewFlat(flat: boolean): void {
+    this.portal.material.uniforms.uViewFlat.value = flat ? 1 : 0;
+  }
+
+  /**
+   * A live page stands behind the doorway (doorViews' embed layer, under the
+   * canvas): up close, the doorway fades to a hole that shows it.
+   */
+  setEmbedded(embedded: boolean): void {
+    this.embedded = embedded;
+    this.portal.material.uniforms.uEmbed.value = embedded ? 1 : 0;
+  }
+
   /** This door's portal scene, standing behind its doorway; null without one. */
   placedPortal(): LoadedPortal | null {
     const portal = this.view?.portal ?? null;
@@ -598,7 +625,7 @@ export class Door {
   /** Fade the door view in (show) or out, seen by `camera` with parallax from a visitor standing at `feet`. */
   stepView(dt: number, camera: Object3D, feet: Vector3, show: boolean): void {
     const uniforms = this.portal.material.uniforms;
-    const target = show && this.view !== null ? 1 : 0;
+    const target = show && (this.view !== null || this.embedded) ? 1 : 0;
     const current = uniforms.uView.value as number;
     if (current === target && target === 0) return;
     // Fully shown stays put; stepping it would dip it every other frame, a flicker.

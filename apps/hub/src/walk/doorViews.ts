@@ -1,7 +1,15 @@
-import { DOOR_VIEW_DEPTH_FAR, DOOR_VIEW_DEPTH_NEAR, DOOR_VIEW_VERSION, PORTAL_SCENE_VERSION, type PortalScene } from '@worldmesh/runtime';
+import {
+  CAPTURE_PARAM,
+  DOOR_VIEW_DEPTH_FAR,
+  DOOR_VIEW_DEPTH_NEAR,
+  DOOR_VIEW_VERSION,
+  PORTAL_SCENE_VERSION,
+  type PortalScene,
+} from '@worldmesh/runtime';
 import {
   Color,
   Plane,
+  Scene,
   SRGBColorSpace,
   Vector2,
   Vector3,
@@ -11,6 +19,7 @@ import {
   type Object3D,
   type WebGLRenderer,
 } from 'three';
+import { CSS3DObject, CSS3DRenderer } from 'three/examples/jsm/renderers/CSS3DRenderer.js';
 import { DOOR_HEIGHT, DOOR_WIDTH, loadCoverTexture, type Door } from './door';
 import { canMakeDoorViewCubes, makeDoorViewCubes } from './doorViewCube';
 import { loadPortal, type LoadedPortal } from './portalScene';
@@ -61,6 +70,27 @@ const PORTAL_RESOLUTION = 1;
 const PORTAL_MAX_SIDE = 1280;
 const CLEAR = new Color(0x000000);
 
+/**
+ * How a door shows its world up close. 'best' is the normal choice: the
+ * portal scene, else the door view, else the cover.
+ */
+export type DoorStyle = 'best' | 'cover' | 'cubemap' | 'depth' | 'portal' | 'iframe';
+
+/**
+ * Compare mode (preview only, VITE_DOOR_COMPARE): each demo world's door
+ * shows a different style, so they can be compared side by side.
+ */
+const COMPARE_STYLES: Record<string, DoorStyle> = {
+  city: 'cover',
+  medieval: 'cubemap',
+  forest: 'depth',
+  mars: 'portal',
+  space: 'iframe',
+};
+/** An embedded world's page size in CSS pixels; scaled down to fill the doorway. */
+const EMBED_WIDTH = 540;
+const EMBED_HEIGHT = Math.round((EMBED_WIDTH * DOOR_HEIGHT) / DOOR_WIDTH);
+
 /** The doorway's corners in its door's own frame, for finding it on screen. */
 const DOORWAY_CORNERS: ReadonlyArray<[number, number]> = [
   [-DOOR_WIDTH / 2, 0],
@@ -96,13 +126,27 @@ export class DoorViewManager {
   private plane = new Plane();
   private corner = new Vector3();
   private normal = new Vector3();
+  /** Compare mode's live pages, drawn under the canvas; null outside compare mode. */
+  private embeds: { renderer: CSS3DRenderer; scene: Scene; pages: Map<Door, CSS3DObject> } | null = null;
 
-  /** `endpoint` is workers/screenshot; null turns door views off, as does a renderer that can't hold them. */
+  /**
+   * `endpoint` is workers/screenshot; null turns door views off, as does a
+   * renderer that can't hold them. `compare` gives each demo world's door a
+   * different style; its iframe door needs the canvas to have an alpha channel.
+   */
   constructor(
     private endpoint: string | null,
     private renderer: WebGLRenderer,
+    private compare = false,
   ) {
     if (!canMakeDoorViewCubes(renderer)) this.endpoint = null;
+    if (compare) {
+      const css = new CSS3DRenderer();
+      css.domElement.classList.add('door-embeds');
+      css.domElement.setAttribute('aria-hidden', 'true');
+      renderer.domElement.before(css.domElement);
+      this.embeds = { renderer: css, scene: new Scene(), pages: new Map() };
+    }
     // Portal scenes cast shadows. Nothing in them moves, so each is drawn once
     // (renderPortals asks for it); the lobby itself has no shadow-casting lights.
     renderer.shadowMap.enabled = true;
@@ -118,7 +162,7 @@ export class DoorViewManager {
     const inRange: Array<{ door: Door; distance: number }> = [];
     const all: Door[] = [];
     for (const door of doors) {
-      if (!door.world || door.random || door.empty) continue;
+      if (!door.world || door.random || door.empty || this.style(door) === 'cover') continue;
       all.push(door);
       if (Math.abs(y - door.group.position.y) > 1) continue;
       const front = door.inFront(0);
@@ -134,17 +178,20 @@ export class DoorViewManager {
       if (distance === undefined) {
         this.showing.delete(door);
         door.stepView(dt, camera, this.feet, false);
-        // Faded out and out of range: free its textures.
+        // Faded out and out of range: free its textures, or its page.
         if (door.doorView && !door.viewVisible) this.release(door);
+        if (!door.viewVisible) this.unembed(door);
         continue;
       }
-      if (!door.doorView && !this.loading.has(door) && !this.unavailable.has(door.world!.url)) void this.load(door);
+      if (this.style(door) === 'iframe') this.embed(door);
+      else if (!door.doorView && !this.loading.has(door) && !this.unavailable.has(door.world!.url)) void this.load(door);
       if (distance < SHOW) this.showing.add(door);
       else if (distance > HIDE) this.showing.delete(door);
       door.stepView(dt, camera, this.feet, this.showing.has(door));
     }
     // Doors the lobby has since taken down.
     for (const door of this.showing) if (!all.includes(door)) this.showing.delete(door);
+    for (const [door] of this.embeds?.pages ?? []) if (!all.includes(door)) this.unembed(door);
     for (const [door] of this.frames) if (!all.includes(door) || !door.doorView?.portal) this.release(door, false);
     this.portals = all.filter((door) => door.doorView?.portal && door.viewVisible);
   }
@@ -156,6 +203,7 @@ export class DoorViewManager {
    * the doorway keeps the world's own ground and walls out of the hall.
    */
   renderPortals(camera: Camera): void {
+    this.renderEmbeds(camera);
     if (!this.portals.length) return;
     const renderer = this.renderer;
     const screen = renderer.getDrawingBufferSize(this.size);
@@ -217,6 +265,78 @@ export class DoorViewManager {
     this.disposed = true;
     for (const frame of this.frames.values()) frame.dispose();
     this.frames.clear();
+    for (const [door] of this.embeds?.pages ?? []) this.unembed(door);
+    this.embeds?.renderer.domElement.remove();
+  }
+
+  /** The style a door shows its world in: always 'best' outside compare mode. */
+  private style(door: Door): DoorStyle {
+    if (!this.compare || !door.world) return 'best';
+    try {
+      // preview-mars.worldmesh.net, mars.worldmesh.net, worldmesh-mars-preview.pages.dev, …
+      const host = new URL(door.world.url).hostname;
+      const name = Object.keys(COMPARE_STYLES).find((world) => new RegExp(`(^|[.-])${world}([.-]|$)`).test(host));
+      return name ? COMPARE_STYLES[name] : 'best';
+    } catch {
+      return 'best';
+    }
+  }
+
+  /**
+   * Stand the door's world, running live in an iframe, behind its doorway.
+   * Opened offline (the capture flag), so it neither joins the room nor
+   * counts as a visitor. Preview worlds sit behind the Access login, which
+   * refuses to load in a frame, so a preview world is shown from its public
+   * address instead.
+   */
+  private embed(door: Door): void {
+    if (!this.embeds || this.embeds.pages.has(door) || !door.world) return;
+    let src: URL;
+    try {
+      src = new URL(door.world.url);
+    } catch {
+      return;
+    }
+    src.hostname = src.hostname.replace(/^preview-/, '');
+    src.searchParams.set(CAPTURE_PARAM, '1');
+    const frame = document.createElement('iframe');
+    frame.src = src.toString();
+    frame.width = String(EMBED_WIDTH);
+    frame.height = String(EMBED_HEIGHT);
+    frame.tabIndex = -1;
+    frame.title = `${door.world.name}, live`;
+    frame.setAttribute('allow', '');
+    frame.style.cssText = 'border:0;display:block;background:#000;pointer-events:none';
+    const page = new CSS3DObject(frame);
+    page.scale.setScalar(DOOR_WIDTH / EMBED_WIDTH);
+    this.embeds.scene.add(page);
+    this.embeds.pages.set(door, page);
+    door.setEmbedded(true);
+  }
+
+  private unembed(door: Door): void {
+    const page = this.embeds?.pages.get(door);
+    if (!page) return;
+    page.element.remove();
+    page.removeFromParent();
+    this.embeds!.pages.delete(door);
+    door.setEmbedded(false);
+  }
+
+  /** Every frame: line the live pages up with their doorways, seen by the lobby camera. */
+  private renderEmbeds(camera: Camera): void {
+    if (!this.embeds?.pages.size) return;
+    const { renderer: css, scene, pages } = this.embeds;
+    const canvas = this.renderer.domElement;
+    const size = css.getSize();
+    if (size.width !== canvas.clientWidth || size.height !== canvas.clientHeight) css.setSize(canvas.clientWidth, canvas.clientHeight);
+    for (const [door, page] of pages) {
+      door.group.updateMatrixWorld();
+      // Just behind the doorway, facing out of it like the door.
+      page.position.set(0, DOOR_HEIGHT / 2, -0.03).applyMatrix4(door.group.matrixWorld);
+      door.group.getWorldQuaternion(page.quaternion);
+    }
+    css.render(scene, camera);
   }
 
   /** Take a door's view back, and its portal frame. */
@@ -258,7 +378,9 @@ export class DoorViewManager {
     try {
       // A recapture in progress still lists the last good view.
       const view = (await this.status(url))?.view;
-      if (view?.portal?.version === PORTAL_SCENE_VERSION && (await this.loadPortal(door, view.portal))) return;
+      const style = this.style(door);
+      const portalAllowed = style === 'best' || style === 'portal';
+      if (portalAllowed && view?.portal?.version === PORTAL_SCENE_VERSION && (await this.loadPortal(door, view.portal))) return;
       if (!view?.color || !view.depth || view.version !== DOOR_VIEW_VERSION) {
         this.unavailable.add(url);
         return;
@@ -277,6 +399,7 @@ export class DoorViewManager {
       const eyeHeight = readEyeHeight(image, depthFaceSize);
       color.dispose();
       depth.dispose();
+      door.setViewFlat(style === 'cubemap');
       door.setDoorView({ color: cubes.color, depth: cubes.depth, eyeHeight, portal: null, dispose: cubes.dispose });
     } finally {
       this.loading.delete(door);

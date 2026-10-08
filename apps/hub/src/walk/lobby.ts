@@ -90,6 +90,8 @@ export interface LobbyOptions {
   presenceEndpoint?: string;
   /** workers/screenshot, for door views: up close, doors show the world itself. Leave empty for covers only. */
   doorViewEndpoint?: string;
+  /** Preview only: give each demo world's door a different style, to compare them (see doorViews). */
+  doorCompare?: boolean;
   /** Name shown above this visitor for everyone else; null shows them as a guest. */
   playerName?: () => string | null;
   /** Start in private mode (see `Lobby.setPrivate`). */
@@ -505,7 +507,8 @@ const floorShader = {
  * the worlds themselves use.
  */
 export function createLobby(container: HTMLElement, options: LobbyOptions): Lobby {
-  const renderer = new WebGLRenderer({ antialias: true });
+  // Compare mode's live iframe shows through a hole in the canvas, so the canvas needs alpha.
+  const renderer = new WebGLRenderer({ antialias: true, alpha: options.doorCompare ?? false });
   container.appendChild(renderer.domElement);
 
   const scene = new Scene();
@@ -690,7 +693,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
   const known = new Map<string, DoorWorld>();
   const doors = new Map<string, Door>();
-  const doorViews = new DoorViewManager(options.doorViewEndpoint || null, renderer);
+  const doorViews = new DoorViewManager(options.doorViewEndpoint || null, renderer, options.doorCompare ?? false);
   // Doors with no world behind them yet. Re-laid out with every list change.
   const emptyDoors: Door[] = [];
   // Empty doors round the galleries. Rebuilt with the hall.

@@ -212,6 +212,12 @@ preview sends no emails. So, once per fresh preview database:
   locally to headless Chrome on the runner) and puts them in the preview bucket,
   with each world's portal scene (`portal.glb` and a backdrop), which doors
   draw live.
+- **Demo doors compare door styles.** The preview hub is built with
+  `VITE_DOOR_COMPARE=on`, so each demo world's door shows its world a different
+  way: City the flat cover, Medieval a flat 360° view, Forest the 360° view with
+  depth, Mars the live portal, Space the real world in an iframe. The iframe
+  loads the public `space.worldmesh.net`, as the Access login can't be shown in
+  a frame. Production doors are unaffected.
   Community worlds get door views only if they use a runtime that can take
   them, the same as in production.
 - **The views and screenshot Workers are public on `workers.dev`.** They hold only

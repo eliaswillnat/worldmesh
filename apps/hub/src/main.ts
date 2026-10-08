@@ -432,6 +432,7 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
       light: walkIsLight(),
       presenceEndpoint: PRESENCE_ENDPOINT,
       doorViewEndpoint: SCREENSHOT_ENDPOINT,
+      doorCompare: import.meta.env.VITE_DOOR_COMPARE === 'on',
       playerName: getUsername,
       private: loadWalkPrivate(),
       color,

@@ -275,6 +275,7 @@ build_apps() {
       VITE_SCREENSHOT_ENDPOINT="$screenshot" \
       VITE_VIEWS_ENDPOINT="$views" \
       VITE_ADS_ENABLED=false \
+      VITE_DOOR_COMPARE=on \
       VITE_WORLD_FOREST_URL="https://$(host_of forest)/" \
       VITE_WORLD_MARS_URL="https://$(host_of mars)/" \
       VITE_WORLD_CITY_URL="https://$(host_of city)/" \
