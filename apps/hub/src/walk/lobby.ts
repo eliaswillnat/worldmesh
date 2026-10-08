@@ -2,6 +2,9 @@ import {
   AVATAR_TICKET_PARAM,
   buildTravelUrl,
   createWorldMesh,
+  downloadAvatarModel,
+  resolveWorldMeshAvatar,
+  type AvatarDescriptor,
   isStrokeMaterial,
   Presence,
   setAvatarAppear,
@@ -71,6 +74,7 @@ import { AD_CONFIG, normalizeDestinationUrl } from '../ads/config';
 import { openAdModal } from '../ads/modal';
 import type { SignalSource } from '../discovery/ranking';
 import { canonicalUrl, type WorldRecordInput } from '../worlds/listing';
+import { CHARACTER_CHANGE_EVENT, characterTicket } from '../avatars';
 
 /** A place in the lobby and the way to face there. */
 export interface WalkSpot {
@@ -703,6 +707,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         travelUrl: (url) => travelUrl(url),
         viewMode: () => world.getViewMode(),
         color: () => (alias ? null : color),
+        character: () => (alias ? null : character),
+        characterTicket: () => characterTicket(),
         cameraDistance: { get: () => world.getCameraDistance(), set: (distance) => world.setCameraDistance(distance) },
         freeze: () => {
           warping = true;
@@ -718,6 +724,30 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       })
     : null;
   const feet = new Vector3();
+  /**
+   * The visitor's character (Avatar Wallet), shown in the lobby as well, so
+   * the figure walking through a door is already the one the world shows.
+   * Its model file is downloaded once here and handed on to walk-through
+   * worlds (walkThrough). Preview only for now, with the walk-through doors.
+   */
+  let character: { descriptor: AvatarDescriptor; data: ArrayBuffer } | null = null;
+  let characterTurn = 0;
+  async function loadCharacter(): Promise<void> {
+    const turn = ++characterTurn;
+    const ticket = alias ? null : characterTicket();
+    const descriptor = ticket ? await resolveWorldMeshAvatar(window.location.origin, ticket) : null;
+    const data = descriptor ? await downloadAvatarModel(descriptor).catch(() => null) : null;
+    if (turn !== characterTurn || disposed) return;
+    if (!descriptor || !data || alias) {
+      // Private mode already went back to the default body.
+      if (character && !alias) world.clearAvatar();
+      character = null;
+      return;
+    }
+    if ((await world.loadAvatar(descriptor, data)) && turn === characterTurn && !alias) character = { descriptor, data };
+  }
+  const onCharacterChange = () => void loadCharacter();
+  if (walkThrough) window.addEventListener(CHARACTER_CHANGE_EVENT, onCharacterChange);
   // Doors with no world behind them yet. Re-laid out with every list change.
   const emptyDoors: Door[] = [];
   // Empty doors round the galleries. Rebuilt with the hall.
@@ -925,6 +955,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     },
   });
   if (alias) ghost = makeGhost(world.avatar);
+  if (walkThrough) void loadCharacter();
 
   // Chat is a bubble over your head. Enter opens it, Enter sends it, then it
   // follows you around until it fades. There is no transcript.
@@ -1642,6 +1673,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       world.clearAvatar();
       ghost?.restore();
       ghost = alias ? makeGhost(world.avatar) : null;
+      if (walkThrough) void loadCharacter();
       spawnPad = Math.floor(Math.random() * spawnPads.pads.length);
       world.teleport(padSpawn(), padYaw());
       triggerSpawnFx();
@@ -2176,6 +2208,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   }
 
   function dispose(): void {
+    window.removeEventListener(CHARACTER_CHANGE_EVENT, onCharacterChange);
     walkThrough?.dispose();
     doorViews.dispose();
     disposed = true;

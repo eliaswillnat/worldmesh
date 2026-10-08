@@ -44,7 +44,7 @@ export {
   takeAvatarTicket,
   withAvatarTicket,
 } from './avatar/handoff.js';
-export { loadAvatarModel } from './avatar/loader.js';
+export { downloadAvatarModel, loadAvatarModel } from './avatar/loader.js';
 export type { LoadAvatarOptions, LoadedAvatar } from './avatar/loader.js';
 export { Overlay } from './ui/overlay.js';
 export { immersiveVrSupported, requestImmersiveVr, IMMERSIVE_VR } from './xr/session.js';

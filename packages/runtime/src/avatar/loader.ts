@@ -17,6 +17,19 @@ export interface LoadAvatarOptions {
   /** Refuse models larger than this. Defaults to 40 MB. */
   maxBytes?: number;
   signal?: AbortSignal;
+  /** The model file, already downloaded (downloadAvatarModel): nothing is fetched again. */
+  data?: ArrayBuffer;
+}
+
+const DEFAULT_MAX_BYTES = 40 * 1024 * 1024;
+
+/**
+ * Just the download: the model file the descriptor points at, within the size
+ * limit. Lets a page fetch it once and hand the same bytes to loadAvatarModel
+ * and on to an embedded world.
+ */
+export function downloadAvatarModel(descriptor: AvatarDescriptor, options: { maxBytes?: number; signal?: AbortSignal } = {}): Promise<ArrayBuffer> {
+  return download(descriptor.modelUrl, options.maxBytes ?? DEFAULT_MAX_BYTES, options.signal);
 }
 
 /**
@@ -26,7 +39,9 @@ export interface LoadAvatarOptions {
  * never download them.
  */
 export async function loadAvatarModel(descriptor: AvatarDescriptor, options: LoadAvatarOptions): Promise<LoadedAvatar> {
-  const buffer = await download(descriptor.modelUrl, options.maxBytes ?? 40 * 1024 * 1024, options.signal);
+  const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
+  if (options.data && options.data.byteLength > maxBytes) throw new Error('Model is too large');
+  const buffer = options.data ?? (await download(descriptor.modelUrl, maxBytes, options.signal));
   const [{ GLTFLoader }, vrmModule] = await Promise.all([
     import('three/examples/jsm/loaders/GLTFLoader.js'),
     descriptor.format === 'vrm' ? import('@pixiv/three-vrm') : Promise.resolve(null),

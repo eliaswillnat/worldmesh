@@ -1,7 +1,7 @@
 import { Euler, Group, PerspectiveCamera, Vector3 } from 'three';
 import { resolveAbilities } from '../abilities/abilities.js';
 import { parseAvatarDescriptor, type AvatarDescriptor } from '../avatar/descriptor.js';
-import { resolveWorldMeshAvatar, takeAvatarTicket } from '../avatar/handoff.js';
+import { resolveWorldMeshAvatar, setAvatarTicket, takeAvatarTicket } from '../avatar/handoff.js';
 import { rememberView, takeViewHandoff } from '../camera/viewHandoff.js';
 import { loadAvatarModel } from '../avatar/loader.js';
 import { Footsteps } from '../audio/footsteps.js';
@@ -266,8 +266,44 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
       if (!event.data.x && !event.data.z) window.removeEventListener('message', onCarry);
     };
     window.addEventListener('message', onMessage);
+    awaitCharacter();
     // Nothing secret: only tells the hub this world can be walked into.
     window.parent.postMessage({ type: 'worldmesh:ready' }, '*');
+  }
+
+  /**
+   * Embedded: the hub hands over the visitor's character (Avatar Wallet) while
+   * the world still waits, so it is on screen from the first frame they walk
+   * in: its descriptor, the model file the hub already downloaded (nothing is
+   * fetched twice), and the handoff ticket for portals onwards. Taken only
+   * from this world's own hub (`avatar.hubUrl`), and only if the world shows
+   * Avatar Wallet characters at all. Answers `worldmesh:avatar-ready`.
+   */
+  function awaitCharacter(): void {
+    const config = options.avatar;
+    if (config?.source !== 'worldmesh') return;
+    let hubOrigin: string;
+    try {
+      hubOrigin = new URL(config.hubUrl ?? DEFAULT_HUB).origin;
+    } catch {
+      return;
+    }
+    let latest = 0;
+    window.addEventListener('message', async (event: MessageEvent) => {
+      if (event.source !== window.parent || event.origin !== hubOrigin || event.data?.type !== 'worldmesh:avatar') return;
+      const turn = ++latest;
+      const { descriptor: raw, data, ticket } = event.data as { descriptor?: unknown; data?: unknown; ticket?: unknown };
+      if (typeof ticket === 'string') setAvatarTicket(ticket);
+      let loaded = false;
+      const descriptor = parseAvatarDescriptor(raw);
+      if (descriptor) {
+        loaded = await loadAvatar(descriptor, data instanceof ArrayBuffer ? data : undefined);
+      } else if (raw === null) {
+        // Back to the default body (private mode, or no character any more).
+        clearAvatar();
+      }
+      if (turn === latest && !disposed) window.parent.postMessage({ type: 'worldmesh:avatar-ready', loaded }, hubOrigin);
+    });
   }
 
   /** Where a hub had the visitor as they walked in, in this world's coordinates. Ignores anything malformed. */
@@ -331,7 +367,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     );
   }
 
-  async function loadAvatar(descriptor: AvatarDescriptor): Promise<boolean> {
+  async function loadAvatar(descriptor: AvatarDescriptor, data?: ArrayBuffer): Promise<boolean> {
     if (disposed || !player.root) return false;
     avatarLoad?.abort();
     const load = (avatarLoad = new AbortController());
@@ -340,6 +376,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
         height,
         maxBytes: options.avatar?.maxBytes,
         signal: load.signal,
+        data,
       });
       if (disposed || load.signal.aborted) {
         loaded.dispose();

@@ -220,8 +220,10 @@ preview sends no emails. So, once per fresh preview database:
   in `COMPARE_STYLES` (`apps/hub/src/walk/doorViews.ts`). A world needs an
   Access login for its own address first, as the login can't be shown in a
   frame: walk in once (it travels the usual way and logs you in), and from
-  then on, for 24 hours, that door is seamless. Production doors are
-  unaffected.
+  then on, for 24 hours, that door is seamless. A character picked in the
+  Avatar Wallet shows in the lobby too and comes along: its model file is
+  downloaded once, by the hub, and handed to the waiting world, so it is
+  already on screen when you walk in. Production doors are unaffected.
   Community worlds get door views only if they use a runtime that can take
   them, the same as in production.
 - **The views and screenshot Workers are public on `workers.dev`.** They hold only

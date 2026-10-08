@@ -329,6 +329,7 @@ async function select(connectionId: string | null, avatarId: string | null): Pro
     message = wallet?.selected
       ? { text: `${wallet.selected.name || 'Your avatar'} will join you in compatible worlds.`, error: false }
       : { text: 'Worlds will show the default WorldMesh body.', error: false };
+    announceCharacter();
   });
 }
 
@@ -358,6 +359,7 @@ async function run(task: () => Promise<void>): Promise<void> {
 // ── Handoff to worlds ────────────────────────────────────────────────────────
 
 function setTicket(next: string | null): void {
+  const changed = next !== ticket;
   ticket = next;
   try {
     if (next) sessionStorage.setItem(TICKET_KEY, next);
@@ -365,6 +367,24 @@ function setTicket(next: string | null): void {
   } catch {
     // Storage blocked: world cards still get the ticket in memory.
   }
+  if (changed) announceCharacter();
+}
+
+/** The handoff ticket for the visitor's character, if they picked one (walk mode loads it into the lobby). */
+export function characterTicket(): string | null {
+  if (ticket) return ticket;
+  try {
+    return sessionStorage.getItem(TICKET_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/** Walk mode listens for this to show the character just picked (or the default body again). */
+export const CHARACTER_CHANGE_EVENT = 'worldmesh:character-change';
+
+function announceCharacter(): void {
+  window.dispatchEvent(new Event(CHARACTER_CHANGE_EVENT));
 }
 
 /**

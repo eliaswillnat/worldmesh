@@ -1,4 +1,4 @@
-import { EMBED_PARAM, type PlayerState, type ViewMode } from '@worldmesh/runtime';
+import { EMBED_PARAM, type AvatarDescriptor, type PlayerState, type ViewMode } from '@worldmesh/runtime';
 import { Matrix3, Matrix4, Quaternion, Vector3, type Object3D, type PerspectiveCamera } from 'three';
 import { DOOR_HEIGHT, DOOR_WIDTH, type Door } from './door';
 import type { DoorViewManager } from './doorViews';
@@ -53,6 +53,14 @@ export interface WalkThroughOptions {
   viewMode: () => ViewMode;
   /** The figure's colour, carried into the world; null keeps the world's own (private mode). */
   color: () => string | null;
+  /**
+   * The visitor's character (Avatar Wallet) and its model file, as the lobby
+   * shows it; null for the default body. Handed to the waiting world as soon
+   * as it is ready, so it is loaded long before the doorway.
+   */
+  character: () => Character | null;
+  /** The character's handoff ticket, for the world's portals onwards. */
+  characterTicket: () => string | null;
   /** The lobby's third-person camera distance. */
   cameraDistance: { get(): number; set(distance: number): void };
   /** Hand-over started: stop the lobby where it is (its last frame stays up). */
@@ -61,11 +69,19 @@ export interface WalkThroughOptions {
   entered: (door: Door) => void;
 }
 
+export interface Character {
+  descriptor: AvatarDescriptor;
+  data: ArrayBuffer;
+}
+
 interface WaitingWorld {
   door: Door;
   frame: HTMLIFrameElement;
   ready: boolean;
   timeout: number;
+  /** The character last handed over (undefined: nothing yet), and whether the world has it on screen. */
+  character?: Character | null;
+  characterLoaded: boolean;
 }
 
 export class WalkThrough {
@@ -120,6 +136,8 @@ export class WalkThrough {
     }
     if (this.world && this.world.door !== this.armed && (current > UNLOAD || (nearest && nearest !== this.world.door))) this.drop();
     if (nearest && !this.world) this.load(nearest);
+    // A character picked (or dropped) while a world waits.
+    if (this.world?.ready && this.world.character !== this.options.character()) this.sendCharacter();
   }
 
   /**
@@ -283,6 +301,28 @@ export class WalkThrough {
     window.removeEventListener('touchcancel', this.onTouches, true);
   }
 
+  /**
+   * The lobby's character to the waiting world: descriptor and the model file
+   * the lobby already downloaded (copied across, never fetched again), or
+   * null for the default body.
+   */
+  private sendCharacter(): void {
+    const world = this.world;
+    if (!world) return;
+    const character = this.options.character();
+    world.character = character;
+    world.characterLoaded = false;
+    world.frame.contentWindow?.postMessage(
+      {
+        type: 'worldmesh:avatar',
+        descriptor: character?.descriptor ?? null,
+        data: character?.data ?? null,
+        ticket: character ? this.options.characterTicket() : null,
+      },
+      new URL(world.frame.src).origin,
+    );
+  }
+
   private onMessage = (event: MessageEvent): void => {
     const world = this.world;
     if (!world || event.source !== world.frame.contentWindow) return;
@@ -290,6 +330,9 @@ export class WalkThrough {
     if (data?.type === 'worldmesh:ready') {
       world.ready = true;
       window.clearTimeout(world.timeout);
+      this.sendCharacter();
+    } else if (data?.type === 'worldmesh:avatar-ready') {
+      world.characterLoaded = (data as { loaded?: unknown }).loaded === true;
     } else if (data?.type === 'worldmesh:entered' && this.handover !== null) {
       this.takeOver();
     } else if (data?.type === 'worldmesh:navigate' && this.done) {
@@ -312,7 +355,7 @@ export class WalkThrough {
     frame.tabIndex = -1;
     // Once walked into, it is the world: its own controls, sound and VR.
     frame.setAttribute('allow', 'autoplay; fullscreen; xr-spatial-tracking; gamepad');
-    const world: WaitingWorld = { door, frame, ready: false, timeout: 0 };
+    const world: WaitingWorld = { door, frame, ready: false, timeout: 0, characterLoaded: false };
     // A preview world behind its Access login never loads in a frame, nor does a world on an older runtime.
     world.timeout = window.setTimeout(() => {
       if (world.ready || this.world !== world) return;

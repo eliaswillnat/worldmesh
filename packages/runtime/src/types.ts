@@ -312,8 +312,12 @@ export interface WorldMeshHandle {
   on<K extends keyof WorldMeshEvents>(event: K, fn: (payload: WorldMeshEvents[K]) => void): () => void;
   off<K extends keyof WorldMeshEvents>(event: K, fn: (payload: WorldMeshEvents[K]) => void): void;
 
-  /** Show an external avatar. Resolves to false (default body kept) if it cannot be loaded. */
-  loadAvatar(descriptor: AvatarDescriptor): Promise<boolean>;
+  /**
+   * Show an external avatar. Resolves to false (default body kept) if it
+   * cannot be loaded. Pass `data` (downloadAvatarModel) if the model file is
+   * already downloaded, and it is not fetched again.
+   */
+  loadAvatar(descriptor: AvatarDescriptor, data?: ArrayBuffer): Promise<boolean>;
   /** Go back to the world's default body. */
   clearAvatar(): void;
 
