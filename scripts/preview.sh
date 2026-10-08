@@ -11,6 +11,8 @@
 #   scripts/preview.sh status        print the commit the preview is serving
 #
 # Needs CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID, plus curl, jq, openssl.
+# Optional PREVIEW_RESEND_API_KEY: without it, the preview hub can't record
+# world submissions (its /api/notify needs Resend), so approvals can't be tested.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -21,6 +23,7 @@ D1_NAME="worldmesh-preview"
 KV_WORLDS="worldmesh-preview-WORLDS"
 KV_VIEWS="worldmesh-preview-VIEWS"
 R2_BUCKET="worldmesh-screenshots-preview"
+QUEUE="worldmesh-door-views-preview"
 # Order matters: admin binds presence's Durable Object; auth owns the migrations.
 WORKERS=(presence views screenshot auth admin)
 # Secrets each preview Worker gets, generated at random on first deploy.
@@ -69,6 +72,7 @@ zone_id() { cf GET "/zones?name=$ZONE_NAME" | jq -r '.[0].id'; }
 project_json() { cf GET "/accounts/$ACCOUNT/pages/projects/$1" 2>/dev/null || true; }
 r2_dev_host() { cf GET "/accounts/$ACCOUNT/r2/buckets/$R2_BUCKET/domains/managed" | jq -r '.domain'; }
 workers_subdomain() { cf GET "/accounts/$ACCOUNT/workers/subdomain" | jq -r '.subdomain'; }
+queue_id() { cf GET "/accounts/$ACCOUNT/queues?per_page=100" | jq -r --arg n "$QUEUE" '.[] | select(.queue_name == $n) | .queue_id'; }
 r2_exists() { cf GET "/accounts/$ACCOUNT/r2/buckets/$R2_BUCKET" >/dev/null 2>&1; }
 
 # ── Resources ──────────────────────────────────────────────────────────────
@@ -96,6 +100,10 @@ ensure_r2() {
   fi
   cf PUT "/accounts/$ACCOUNT/r2/buckets/$R2_BUCKET/domains/managed" '{"enabled":true}' >/dev/null
   set_r2_expiry 7
+}
+
+ensure_queue() {
+  [[ -n $(queue_id) ]] || { log "Creating queue $QUEUE"; cf POST "/accounts/$ACCOUNT/queues" "{\"queue_name\":\"$QUEUE\"}" >/dev/null; }
 }
 
 ensure_pages_project() {
@@ -126,15 +134,27 @@ ensure_pages_domain() {
   fi
 }
 
-# The hub's Pages Functions see the preview directory and the preview cover bucket.
+# The hub's Pages Functions get the preview directory, cover bucket and
+# screenshot Worker. APPROVE_SECRET is made once; SCREENSHOT_SECRET is the
+# value deploy_workers just gave the screenshot and admin Workers.
 configure_hub_project() {
-  local body
-  body=$(jq -nc --arg kv "$(kv_id "$KV_WORLDS")" --arg covers "$(r2_dev_host)" --arg date "$COMPAT_DATE" '
+  local project body has_approve
+  project=$(project_of hub)
+  has_approve=$(project_json "$project" | jq -r '.deployment_configs.production.env_vars.APPROVE_SECRET != null')
+  body=$(jq -nc --arg kv "$(kv_id "$KV_WORLDS")" --arg covers "$(r2_dev_host)" --arg date "$COMPAT_DATE" \
+    --arg shot "$SCREENSHOT_URL" --arg shotSecret "$SCREENSHOT_SECRET" --arg email "$ADMIN_EMAIL" \
+    --arg approve "$([[ $has_approve == true ]] || openssl rand -hex 32)" --arg resend "${PREVIEW_RESEND_API_KEY:-}" '
     {deployment_configs: {production: {
       compatibility_date: $date,
       kv_namespaces: {WORLDS: {namespace_id: $kv}},
-      env_vars: {COVER_HOSTS: {type: "plain_text", value: $covers}}}}}')
-  cf PATCH "/accounts/$ACCOUNT/pages/projects/$(project_of hub)" "$body" >/dev/null
+      env_vars: ({
+        COVER_HOSTS: {type: "plain_text", value: $covers},
+        SCREENSHOT_ENDPOINT: {type: "plain_text", value: $shot},
+        SCREENSHOT_SECRET: {type: "secret_text", value: $shotSecret},
+        NOTIFICATION_EMAIL: {type: "plain_text", value: $email}}
+        + (if $approve != "" then {APPROVE_SECRET: {type: "secret_text", value: $approve}} else {} end)
+        + (if $resend != "" then {RESEND_API_KEY: {type: "secret_text", value: $resend}} else {} end))}}}')
+  cf PATCH "/accounts/$ACCOUNT/pages/projects/$project" "$body" >/dev/null
 }
 
 # Every hostname that serves preview pages. The pages.dev ones count too:
@@ -168,8 +188,8 @@ ensure_all() {
   ensure_kv "$KV_WORLDS"
   ensure_kv "$KV_VIEWS"
   ensure_r2
+  ensure_queue
   for app in "${APPS[@]}"; do ensure_pages_project "$app"; ensure_pages_domain "$app"; done
-  configure_hub_project
 }
 
 # ── Workers ────────────────────────────────────────────────────────────────
@@ -214,6 +234,11 @@ deploy_workers() {
       wrangler deploy --env preview --config "$config"
     fi
     ensure_secrets "$worker" "$config"
+    # Shared by the screenshot Worker, the admin Worker and the hub's Functions.
+    # A fresh value each deploy, so it never has to be read back.
+    if [[ $worker == screenshot || $worker == admin ]]; then
+      printf '%s' "$SCREENSHOT_SECRET" | wrangler secret put SCREENSHOT_SECRET --env preview --config "$config" >/dev/null
+    fi
   done
 }
 
@@ -221,7 +246,7 @@ deploy_workers() {
 
 build_apps() {
   local views="https://worldmesh-views-preview.$(workers_subdomain).workers.dev"
-  local screenshot="https://worldmesh-screenshot-preview.$(workers_subdomain).workers.dev"
+  local screenshot="$SCREENSHOT_URL"
   local relay="wss://preview-relay.$ZONE_NAME"
 
   log "Building runtime"
@@ -272,7 +297,10 @@ cmd_deploy() {
   local sha; sha=$(git rev-parse HEAD)
   ensure_all
   require_access
+  SCREENSHOT_URL="https://worldmesh-screenshot-preview.$(workers_subdomain).workers.dev"
+  SCREENSHOT_SECRET=$(openssl rand -hex 32)
   deploy_workers
+  configure_hub_project
   build_apps
   upload_apps "$sha"
   summary "### Preview deployed: \`$sha\`"
@@ -330,6 +358,8 @@ cmd_teardown() {
     wrangler delete --name "$name" --force 2>/dev/null || echo "  (not deployed)"
   done
 
+  local queue; queue=$(queue_id)
+  if [[ -n $queue ]]; then assert_preview "$QUEUE"; cf DELETE "/accounts/$ACCOUNT/queues/$queue" >/dev/null; fi
   if [[ -n $(d1_id) ]]; then assert_preview "$D1_NAME"; wrangler d1 delete "$D1_NAME" -y; fi
   for title in "$KV_WORLDS" "$KV_VIEWS"; do
     local id; id=$(kv_id "$title"); [[ -n $id ]] || continue

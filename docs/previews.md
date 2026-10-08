@@ -45,6 +45,8 @@ Access). The login lasts 24 hours across all the preview addresses.
 | D1 `worldmesh` | D1 `worldmesh-preview` |
 | KV `WORLDS`, `VIEWS` | KV `worldmesh-preview-WORLDS`, `worldmesh-preview-VIEWS` |
 | R2 `worldmesh-screenshots` | R2 `worldmesh-screenshots-preview` |
+| Queue `worldmesh-door-views` | Queue `worldmesh-door-views-preview` |
+| `SCREENSHOT_SECRET`, `APPROVE_SECRET` | Separate random values, made by the workflow |
 | Workers `worldmesh-presence`, `-auth`, `-admin`, `-views`, `-screenshot` | The same names with `-preview`, from the `[env.preview]` block in each `workers/*/wrangler.toml` |
 | Presence rooms (Durable Objects of `worldmesh-presence`) | Rooms of `worldmesh-presence-preview`, so preview visitors never meet production ones |
 
@@ -55,8 +57,14 @@ Left out of the preview:
 - **Sign-in with Google, Apple, GitHub and Discord.** The preview's auth Worker has no
   OAuth secrets, so the login dialog offers email + password only. No redirect URIs
   change at any provider.
-- **Emails.** The preview hub has no `RESEND_API_KEY`, so submitting a world stores it
-  but sends no email.
+- **Emails, unless you add a Resend key.** The hub's `/api/notify` refuses a
+  submission without `RESEND_API_KEY`, so by default the preview can't record world
+  submissions, and there's nothing to approve. To test submissions and approvals, add
+  a GitHub secret `PREVIEW_RESEND_API_KEY` (a Resend key; a separate one named
+  `worldmesh-preview` is easiest to revoke). The next deploy gives it to the preview
+  hub. Submission emails then come to you with an approve link on
+  preview.worldmesh.net. Approving emails the creator address on the submission, so
+  submit test worlds with your own address.
 
 Every name the script creates, changes or deletes ends in `-preview` or is a
 `preview(-*).worldmesh.net` hostname, and destructive steps check this before acting.
@@ -73,9 +81,10 @@ deploy, and the workflow refuses to deploy until it does.
 
 In Cloudflare → Workers & Pages → `worldmesh-hub` → Settings → Builds → Branch
 control, check that **Preview branch** is **None**, and the same for the five
-world projects. Previews from this setup don't use Pages branch builds, so
-nothing here needs to change; this only confirms that branches pushed to GitHub
-don't publish themselves on `*.pages.dev`.
+world projects. Previews from this setup don't use Pages branch builds. With
+anything other than **None**, every branch pushed to GitHub is published,
+publicly, at `<branch>.worldmesh-<world>.pages.dev`, where its worlds join the
+production multiplayer rooms.
 
 ### 2. API token and GitHub secrets
 
@@ -89,6 +98,7 @@ Name it `worldmesh-preview` and give it:
 | Account | Workers KV Storage: Edit |
 | Account | Workers R2 Storage: Edit |
 | Account | D1: Edit |
+| Account | Queues: Edit |
 | Account | Access: Apps and Policies: Read |
 | Account | Account Settings: Read |
 | Zone (`worldmesh.net` only) | Zone: Read |
@@ -104,6 +114,7 @@ repository secret, add:
 
 - `CLOUDFLARE_API_TOKEN`: the token
 - `CLOUDFLARE_ACCOUNT_ID`: the account ID
+- `PREVIEW_RESEND_API_KEY` (optional): see "Emails" above
 
 Or from a terminal (each command asks for the value):
 
@@ -194,9 +205,9 @@ preview sends no emails. So, once per fresh preview database:
   later: add a second Access application for just the path
   `preview.worldmesh.net/api/account/avatar/resolve` with a **Bypass** policy
   (Include: Everyone).
-- **The screenshot Worker can't see preview worlds.** It loads pages from
-  Cloudflare's browser, which has no Access login. Screenshots of external
-  world URLs work.
+- **The screenshot Worker can't see preview worlds.** It loads pages in
+  Cloudflare's browser, which has no Access login. Screenshots and door views of
+  external world URLs work.
 - **The views and screenshot Workers are public on `workers.dev`.** They hold only
   preview view counts and preview screenshots.
 - **Production builds the same commit with production settings.** Endpoints are
