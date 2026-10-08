@@ -10,7 +10,8 @@
 //   node capture.mjs <out-dir> <name>=<dist-dir> [<name>=<dist-dir> ...]
 //
 // Writes <out-dir>/<name>/{color.webp,depth.png,meta.json} for each world that
-// worked. A world that fails is reported and skipped; the exit code stays 0.
+// worked, plus {portal.glb,backdrop.webp,portal.json} where the runtime can
+// export a portal scene. A world that fails is reported and skipped; the exit code stays 0.
 // Chrome: CHROME_PATH, else the installed Google Chrome.
 
 import { createReadStream, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
@@ -83,11 +84,28 @@ async function captureOne(browser, name, dist, outDir) {
     writeFileSync(join(dir, 'depth.png'), decodeDataUrl(depth));
     writeFileSync(join(dir, 'meta.json'), JSON.stringify(meta));
     console.log(`  ${name}: door view taken`);
+    await exportPortal(page, name, dir);
   } catch (err) {
     console.log(`  ${name}: no door view (${err?.message?.split('\n')[0] ?? err})`);
   } finally {
     await page.close().catch(() => undefined);
     server.close();
+  }
+}
+
+/** The world's portal scene: its meshes near the spawn as portal.glb, the rest as backdrop.webp. */
+async function exportPortal(page, name, dir) {
+  try {
+    if (!(await page.evaluate(() => typeof globalThis.__worldmeshExportPortal === 'function'))) return;
+    const scene = await page.evaluate(() => globalThis.__worldmeshExportPortal());
+    const { glb, backdrop, ...meta } = scene;
+    const file = decodeDataUrl(glb);
+    writeFileSync(join(dir, 'portal.glb'), file);
+    writeFileSync(join(dir, 'backdrop.webp'), decodeDataUrl(backdrop));
+    writeFileSync(join(dir, 'portal.json'), JSON.stringify(meta));
+    console.log(`  ${name}: portal exported (${(file.length / 1e6).toFixed(1)} MB, ${meta.triangles} triangles)`);
+  } catch (err) {
+    console.log(`  ${name}: no portal (${err?.message?.split('\n')[0] ?? err})`);
   }
 }
 

@@ -73,6 +73,14 @@ capture service opens your world with `?worldmesh-capture=1` and calls
 way the player faces. In that mode the world stays offline, so no other
 visitors end up in the picture. Nothing to do on your side.
 
+Better still, doors can draw your world live, from wherever the visitor
+stands: `world.exportPortal()` writes the meshes within 60 m of the spawn
+point as glTF (in world coordinates, with their lights and fog alongside), and
+photographs everything else (sky, far scenery) as a 360° backdrop. It keeps
+meshes with standard, physical, basic, Lambert or Phong materials; other near
+things (custom shaders, points, sprites) are left out of both. Nothing moves
+in a portal scene yet.
+
 ## What is exported
 
 | | |
@@ -87,6 +95,7 @@ visitors end up in the picture. Nothing to do on your side.
 | `immersiveVrSupported`, `requestImmersiveVr` | the shared WebXR enter-VR path |
 | `Presence`, `DEFAULT_PRESENCE_SERVER`, `NetworkAdapter` | multiplayer (`multiplayer: true`) and the seam for your own |
 | `captureDoorView`, `DOOR_VIEW_FACES`, `CAPTURE_PARAM` | the 360° colour + depth snapshot hub doors show of your world |
+| `exportPortal`, `PortalScene`, `PORTAL_SCENE_VERSION` | the scene around your spawn point that hub doors draw live |
 | `WORLDMESH_VERSION`, `WORLDMESH_PROTOCOL` | what your world is speaking |
 
 Full option, handle and event reference:

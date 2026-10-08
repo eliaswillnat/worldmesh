@@ -7,6 +7,8 @@ export {
   captureDoorView,
 } from './capture/doorView.js';
 export type { DoorView, DoorViewOptions, DoorViewTarget } from './capture/doorView.js';
+export { PORTAL_SCENE_VERSION, exportPortal } from './capture/portalScene.js';
+export type { PortalScene, PortalSceneLight, PortalSceneOptions, PortalSceneShadow, PortalSceneTarget } from './capture/portalScene.js';
 export { Emitter } from './core/events.js';
 export { Input } from './controls/input.js';
 export { TouchControls, isTouchDevice } from './controls/touch.js';

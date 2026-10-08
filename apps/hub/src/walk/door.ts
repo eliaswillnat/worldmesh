@@ -6,6 +6,7 @@ import {
   DoubleSide,
   Group,
   LinearFilter,
+  Matrix4,
   Mesh,
   MeshStandardMaterial,
   NearestFilter,
@@ -24,6 +25,7 @@ import { DOOR_VIEW_DEPTH_FAR } from '@worldmesh/runtime';
 import { drawEntries, measureEntries } from '../entries';
 import { addFrameEdgeGlow, doorFrameGeometry, GALLERY_CORNER, ROUNDED_TOP_GLSL } from './doorShape';
 import type { LoadedDoorView } from './doorViews';
+import type { LoadedPortal } from './portalScene';
 
 export interface DoorWorld {
   name: string;
@@ -125,6 +127,12 @@ const portalFragment = /* glsl */ `
   uniform samplerCube uViewDepth;
   uniform vec3 uViewEye;
   uniform vec3 uViewFeet;
+  // Portal scene: the world's own meshes, drawn live from this camera into
+  // uPortalColor (premultiplied alpha), over a backdrop in uViewColor.
+  uniform float uPortal;
+  uniform float uPortalLive;
+  uniform sampler2D uPortalColor;
+  uniform vec2 uDrawSize;
   uniform vec3 uViewOrigin;
   varying vec2 vUv;
   ${ROUNDED_TOP_GLSL}
@@ -181,6 +189,17 @@ const portalFragment = /* glsl */ `
       else lo = mid;
     }
     return textureCube(uViewColor, normalize(o + r * hi)).rgb;
+  }
+
+  // The portal scene at point p of the doorway: what this frame drew of the
+  // world, over its backdrop seen in the same direction. The backdrop alone
+  // where the scene isn't drawn (in the floor's mirror, in VR).
+  vec3 portalSample(vec2 p) {
+    vec3 onDoor = vec3(p.x * ${DOOR_WIDTH.toFixed(4)}, (p.y + 0.5) * ${DOOR_HEIGHT.toFixed(4)}, -0.02);
+    vec3 backdrop = textureCube(uViewColor, normalize(onDoor - uViewEye)).rgb;
+    if (uPortalLive < 0.5) return backdrop;
+    vec4 near = texture2D(uPortalColor, gl_FragCoord.xy / uDrawSize);
+    return near.rgb + backdrop * (1.0 - near.a);
   }
 
   // Someone going through: rings of rippling water spread out from the
@@ -309,7 +328,10 @@ const portalFragment = /* glsl */ `
     vec3 color = mix(corridor, far, uHasMap);
     // Up close, the world itself replaces the cover (not while the room is full).
     float view = uView * (1.0 - uFull);
-    if (view > 0.0) color = mix(color, viewSample(p), view);
+    if (view > 0.0) {
+      if (uPortal > 0.5) color = mix(color, portalSample(p), view);
+      else color = mix(color, viewSample(p), view);
+    }
     // Light spilling in around the edges of the opening.
     float edge = rim;
     color = mix(color, uTint * 0.55, smoothstep(0.88, 1.0, edge) * 0.22 * uOpen);
@@ -356,6 +378,10 @@ export class Door {
   private cover: Texture | null = null;
   private view: LoadedDoorView | null = null;
   private viewEye = new Vector3();
+  /** Whether this frame drew the portal scene for the doorway (setPortalFrame). */
+  private portalFrame = false;
+  /** Where the door stood when its portal scene was last placed behind it. */
+  private portalPlacedAt = new Matrix4().makeScale(0, 0, 0);
   private placeholder: Texture;
   private halo: Mesh<PlaneGeometry, MeshBasicMaterial> | null = null;
   /** The world's colour (sampled from its cover once loaded), for the frame's glow. */
@@ -431,12 +457,22 @@ export class Door {
           uViewEye: { value: new Vector3() },
           uViewFeet: { value: new Vector3() },
           uViewOrigin: { value: new Vector3(0, VIEW_EYE_HEIGHT, -VIEW_SPAWN_BEHIND) },
+          uPortal: { value: 0 },
+          uPortalLive: { value: 0 },
+          uPortalColor: { value: null },
+          uDrawSize: { value: new Vector2(1, 1) },
         },
         side: DoubleSide,
       }),
     );
     this.portal.position.set(0, DOOR_HEIGHT / 2, -0.02);
     this.group.add(this.portal);
+    // The portal frame is drawn for the screen; the floor's mirror (its own
+    // render target) and VR get the backdrop alone.
+    this.portal.onBeforeRender = (renderer) => {
+      this.portal.material.uniforms.uPortalLive.value =
+        this.portalFrame && renderer.getRenderTarget() === null && !renderer.xr.isPresenting ? 1 : 0;
+    };
 
     if (random) {
       // A soft blue glow spilling around the frame.
@@ -519,17 +555,44 @@ export class Door {
     const old = this.view;
     this.view = view;
     const uniforms = this.portal.material.uniforms;
+    this.portalPlacedAt.makeScale(0, 0, 0);
+    this.setPortalFrame(null, 1, 1);
     if (view && !this.disposed) {
       uniforms.uViewColor.value = view.color;
       uniforms.uViewDepth.value = view.depth;
       uniforms.uViewOrigin.value.set(0, view.eyeHeight ?? VIEW_EYE_HEIGHT, -VIEW_SPAWN_BEHIND);
+      uniforms.uPortal.value = view.portal ? 1 : 0;
     } else {
       uniforms.uView.value = 0;
       uniforms.uViewColor.value = null;
       uniforms.uViewDepth.value = null;
+      uniforms.uPortal.value = 0;
     }
     old?.dispose();
     if (view && this.disposed) view.dispose();
+  }
+
+  /** This door's portal scene, standing behind its doorway; null without one. */
+  placedPortal(): LoadedPortal | null {
+    const portal = this.view?.portal ?? null;
+    if (!portal) return null;
+    this.group.updateWorldMatrix(true, false);
+    if (!this.portalPlacedAt.equals(this.group.matrixWorld)) {
+      this.portalPlacedAt.copy(this.group.matrixWorld);
+      portal.place(this.group.matrixWorld, VIEW_SPAWN_BEHIND);
+    }
+    return portal;
+  }
+
+  /**
+   * What this frame drew of the portal scene, in a target the size of the
+   * drawing buffer; null where it wasn't drawn (the doorway shows the backdrop).
+   */
+  setPortalFrame(frame: Texture | null, width: number, height: number): void {
+    const uniforms = this.portal.material.uniforms;
+    this.portalFrame = frame !== null;
+    uniforms.uPortalColor.value = frame;
+    uniforms.uDrawSize.value.set(width, height);
   }
 
   /** Fade the door view in (show) or out, seen by `camera` with parallax from a visitor standing at `feet`. */

@@ -25,6 +25,7 @@ import { isTouchDevice } from '../controls/touch.js';
 import { immersiveVrSupported, requestImmersiveVr } from '../xr/session.js';
 import { Emitter } from './events.js';
 import { captureDoorView, type DoorViewOptions } from '../capture/doorView.js';
+import { exportPortal, type PortalSceneOptions } from '../capture/portalScene.js';
 import { DEFAULT_PRESENCE_SERVER, Presence } from '../net/presence.js';
 import { roomFullLabel } from '../net/roomFull.js';
 
@@ -171,6 +172,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     isVR: () => renderer.xr.isPresenting,
 
     captureDoorView: doCaptureDoorView,
+    exportPortal: doExportPortal,
   };
 
   applyViewVisibility();
@@ -487,27 +489,41 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     window.location.href = buildTravelUrl(url);
   }
 
-  /** Snapshot the view from where the player stands, the way they face, for hub doors. */
-  async function doCaptureDoorView(captureOptions?: DoorViewOptions) {
+  /** Where captures for hub doors are taken from: the player's eyes, the way they face. */
+  function captureTarget() {
+    return {
+      scene,
+      renderer,
+      camera: camera as { near: number; far: number },
+      eye: controller.position.clone().setY(controller.position.y + player.eyeHeight * (controller.height / height)),
+      yaw: cameraRig.yaw,
+      hide: [player.root],
+    };
+  }
+
+  /** Captures resize the canvas and draw on their own, so the world's loop pauses meanwhile. */
+  async function whilePaused<T>(what: string, run: () => Promise<T>): Promise<T> {
     if (disposed) throw new Error('This world has been disposed.');
-    if (renderer.xr.isPresenting) throw new Error('Cannot capture a door view during VR.');
+    if (renderer.xr.isPresenting) throw new Error(`Cannot ${what} during VR.`);
     const wasRunning = running;
     stop();
     try {
-      return await captureDoorView(
-        {
-          scene,
-          renderer,
-          camera: camera as { near: number; far: number },
-          eye: controller.position.clone().setY(controller.position.y + player.eyeHeight * (controller.height / height)),
-          yaw: cameraRig.yaw,
-          hide: [player.root],
-        },
-        captureOptions,
-      );
+      return await run();
     } finally {
       if (wasRunning) start();
     }
+  }
+
+  /** Snapshot the view from where the player stands, the way they face, for hub doors. */
+  function doCaptureDoorView(captureOptions?: DoorViewOptions) {
+    return whilePaused('capture a door view', () => captureDoorView(captureTarget(), captureOptions));
+  }
+
+  /** The scene around where the player stands, for hub doors to draw live. */
+  function doExportPortal(portalOptions?: PortalSceneOptions) {
+    return whilePaused('export a portal scene', () =>
+      exportPortal({ ...captureTarget(), feet: controller.position.clone() }, portalOptions),
+    );
   }
 
   function isCaptureRequest(): boolean {
@@ -520,7 +536,12 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
 
   /** The capture service drives the page from outside, so give it one global to call. */
   function exposeCapture(): void {
-    (window as unknown as { __worldmeshCaptureDoorView?: typeof doCaptureDoorView }).__worldmeshCaptureDoorView = doCaptureDoorView;
+    const hooks = window as unknown as {
+      __worldmeshCaptureDoorView?: typeof doCaptureDoorView;
+      __worldmeshExportPortal?: typeof doExportPortal;
+    };
+    hooks.__worldmeshCaptureDoorView = doCaptureDoorView;
+    hooks.__worldmeshExportPortal = doExportPortal;
   }
 
   function handleResize(): void {

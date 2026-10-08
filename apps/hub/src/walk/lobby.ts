@@ -891,6 +891,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       // space, so moving the plane does not move the lines.
       mirror.position.set(Math.round(x / 10) * 10, 0, Math.round(z / 10) * 10);
       placeChatBubble();
+      // Last, with the camera where it will be drawn from: the worlds seen live through their doors.
+      doorViews.renderPortals(camera);
     },
   });
   if (alias) ghost = makeGhost(world.avatar);

@@ -120,6 +120,40 @@ export function canMakeDoorViewCubes(renderer: WebGLRenderer): boolean {
   return renderer.extensions.has('EXT_color_buffer_float') || renderer.extensions.has('EXT_color_buffer_half_float');
 }
 
+/** Draw a 3×2 atlas into a cube target with one of the fragment shaders above. */
+function drawAtlas(renderer: WebGLRenderer, target: WebGLCubeRenderTarget, fragmentShader: string, atlas: Texture, size: number): void {
+  const box = new BoxGeometry(2, 2, 2);
+  const material = new ShaderMaterial({
+    side: BackSide,
+    depthTest: false,
+    depthWrite: false,
+    uniforms: { uAtlas: { value: atlas }, uSize: { value: size } },
+    vertexShader,
+    fragmentShader,
+  });
+  const scene = new Scene();
+  scene.add(new Mesh(box, material));
+  new CubeCamera(0.1, 10, target).update(renderer, scene);
+  box.dispose();
+  material.dispose();
+}
+
+function colorTarget(faceSize: number): WebGLCubeRenderTarget {
+  const target = new WebGLCubeRenderTarget(faceSize, { generateMipmaps: false, minFilter: LinearFilter, magFilter: LinearFilter });
+  target.texture.colorSpace = SRGBColorSpace;
+  return target;
+}
+
+/**
+ * Turn a colour atlas (loaded as sRGB) into a cube map, on the GPU. Portal
+ * scenes' backdrops come this way. The atlas is only read; the caller frees it.
+ */
+export function makeColorCube(renderer: WebGLRenderer, atlas: Texture, faceSize: number): { texture: CubeTexture; dispose(): void } {
+  const target = colorTarget(faceSize);
+  drawAtlas(renderer, target, colorFragment, atlas, faceSize);
+  return { texture: target.texture, dispose: () => target.dispose() };
+}
+
 /**
  * Turn a door view's atlases into cube maps, on the GPU. The atlases are
  * only read here; the caller frees them afterwards. The colour atlas must be
@@ -133,8 +167,7 @@ export function makeDoorViewCubes(
   faceSize: number,
   depthFaceSize: number,
 ): DoorViewCubes {
-  const color = new WebGLCubeRenderTarget(faceSize, { generateMipmaps: false, minFilter: LinearFilter, magFilter: LinearFilter });
-  color.texture.colorSpace = SRGBColorSpace;
+  const color = colorTarget(faceSize);
   const depth = new WebGLCubeRenderTarget(depthFaceSize, {
     type: HalfFloatType,
     format: RedFormat,
@@ -142,32 +175,8 @@ export function makeDoorViewCubes(
     minFilter: LinearFilter,
     magFilter: LinearFilter,
   });
-
-  const box = new BoxGeometry(2, 2, 2);
-  const material = (fragmentShader: string, atlas: Texture, size: number) =>
-    new ShaderMaterial({
-      side: BackSide,
-      depthTest: false,
-      depthWrite: false,
-      uniforms: { uAtlas: { value: atlas }, uSize: { value: size } },
-      vertexShader,
-      fragmentShader,
-    });
-  const colorMaterial = material(colorFragment, colorAtlas, faceSize);
-  const depthMaterial = material(depthFragment, depthAtlas, depthFaceSize);
-  const mesh = new Mesh(box, colorMaterial);
-  const scene = new Scene();
-  scene.add(mesh);
-
-  const camera = new CubeCamera(0.1, 10, color);
-  camera.update(renderer, scene);
-  mesh.material = depthMaterial;
-  camera.renderTarget = depth;
-  camera.update(renderer, scene);
-
-  box.dispose();
-  colorMaterial.dispose();
-  depthMaterial.dispose();
+  drawAtlas(renderer, color, colorFragment, colorAtlas, faceSize);
+  drawAtlas(renderer, depth, depthFragment, depthAtlas, depthFaceSize);
 
   return {
     color: color.texture,

@@ -209,7 +209,9 @@ preview sends no emails. So, once per fresh preview database:
   Cloudflare's browser, which has no Access login. Screenshots and door views of
   external world URLs work. So each deploy takes the door views of the five
   preview worlds itself (`scripts/preview-door-views`: the fresh builds, served
-  locally to headless Chrome on the runner) and puts them in the preview bucket.
+  locally to headless Chrome on the runner) and puts them in the preview bucket,
+  with each world's portal scene (`portal.glb` and a backdrop), which doors
+  draw live.
   Community worlds get door views only if they use a runtime that can take
   them, the same as in production.
 - **The views and screenshot Workers are public on `workers.dev`.** They hold only

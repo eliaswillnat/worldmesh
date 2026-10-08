@@ -303,32 +303,43 @@ upload_apps() {
 # Door views (the world seen through a walk-mode door up close) for the five
 # preview worlds. workers/screenshot can't take them: its browser can't get
 # past Access. So take them here from the fresh builds and put them in the
-# preview bucket exactly where the worker would, status.json last.
-# Best effort: a world without one just shows its cover.
+# preview bucket exactly where the worker would, status.json last. Worlds
+# whose runtime can export one also get a portal scene (portal.glb and a
+# backdrop), which hub doors draw live instead of the door view.
+# Best effort: a world without either just shows its cover.
 seed_door_views() {
-  local out stamp app slug host prefix worlds=()
-  log "Taking door views of the preview worlds"
+  local out stamp app slug host prefix portal worlds=()
+  log "Taking door views and portal scenes of the preview worlds"
   out=$(mktemp -d)
   for app in "${APPS[@]:1}"; do worlds+=("$app=apps/$app/dist"); done
   node scripts/preview-door-views/capture.mjs "$out" "${worlds[@]}" || { echo "  (skipped: capture failed)"; return 0; }
 
   local covers; covers="https://$(r2_dev_host)"
+  put() { wrangler r2 object put "$R2_BUCKET/$1" --remote --file "$2" --content-type "$3" "${@:4}" >/dev/null; }
   for app in "${APPS[@]:1}"; do
     [[ -f $out/$app/meta.json ]] || continue
     host=$(host_of "$app")
     # doorViewSlug() of https://<host>/
     slug=$(tr -c 'a-zA-Z0-9\n' '-' <<<"$host" | tr 'A-Z' 'a-z')
     stamp=$(date +%s%3N); prefix="door-views/$slug/$stamp"
+    if ! put "$prefix/color.webp" "$out/$app/color.webp" image/webp || ! put "$prefix/depth.png" "$out/$app/depth.png" image/png; then
+      echo "  $slug: upload failed"
+      continue
+    fi
+    # The portal scene is optional: without it, doors show the door view.
+    portal='null'
+    if [[ -f $out/$app/portal.glb ]] && put "$prefix/portal.glb" "$out/$app/portal.glb" model/gltf-binary \
+      && put "$prefix/backdrop.webp" "$out/$app/backdrop.webp" image/webp; then
+      portal=$(jq -c --arg base "$covers/$prefix" '. + {glb: "\($base)/portal.glb", backdrop: "\($base)/backdrop.webp"}' "$out/$app/portal.json")
+    fi
     jq -n --arg url "https://$host/" --arg base "$covers/$prefix" --argjson stamp "$stamp" --argjson now "$(date +%s%3N)" \
-      --slurpfile meta "$out/$app/meta.json" '
+      --slurpfile meta "$out/$app/meta.json" --argjson portal "$portal" '
       {url: $url, requestedAt: $stamp, state: "ready", finishedAt: $now,
-       view: ($meta[0] + {capturedAt: $stamp, color: "\($base)/color.webp", depth: "\($base)/depth.png"})}' \
+       view: ($meta[0] + {capturedAt: $stamp, color: "\($base)/color.webp", depth: "\($base)/depth.png"}
+              + (if $portal then {portal: $portal} else {} end))}' \
       >"$out/$app/status.json"
-    if wrangler r2 object put "$R2_BUCKET/$prefix/color.webp" --remote --file "$out/$app/color.webp" --content-type image/webp >/dev/null \
-      && wrangler r2 object put "$R2_BUCKET/$prefix/depth.png" --remote --file "$out/$app/depth.png" --content-type image/png >/dev/null \
-      && wrangler r2 object put "$R2_BUCKET/door-views/$slug/status.json" --remote --file "$out/$app/status.json" \
-        --content-type application/json --cache-control no-cache >/dev/null; then
-      echo "  $slug ready"
+    if put "door-views/$slug/status.json" "$out/$app/status.json" application/json --cache-control no-cache; then
+      echo "  $slug ready$([[ $portal != null ]] && echo ', with portal')"
     else
       echo "  $slug: upload failed"
     fi
