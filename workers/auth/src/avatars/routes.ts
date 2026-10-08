@@ -203,6 +203,8 @@ async function finishConnect(request: Request, env: Env, auth: Auth, exec: WaitU
     const target = new URL('/', origin);
     target.searchParams.set('avatar', outcome);
     if (reason) target.searchParams.set('reason', reason);
+    // The gallery, not the 3D lobby: the lobby hides <main>, and the wallet dialog with it.
+    target.hash = 'list';
     const headers = new Headers({ Location: target.toString() });
     headers.append('Set-Cookie', flowCookie(origin, '', 0));
     return new Response(null, { status: 302, headers });

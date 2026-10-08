@@ -27,6 +27,9 @@ describe('inspectModel', () => {
       vrmVersion: '1.0',
     });
     expect(await inspectModel(file(glb({ extensions: { VRM: {} } }), 'old.VRM'))).toMatchObject({ format: 'vrm', vrmVersion: '0.x' });
+    // The name inside the file wins over a numeric file name.
+    expect(await inspectModel(file(glb({ extensions: { VRMC_vrm: { meta: { name: 'Aoi' } } } }), '2837576971040646108.vrm'))).toMatchObject({ name: 'Aoi' });
+    expect(await inspectModel(file(glb({ extensions: { VRM: { meta: { title: 'Kei' } } } }), '123.vrm'))).toMatchObject({ name: 'Kei' });
     expect(await inspectModel(file(glb({ asset: { version: '2.0' } }), 'Robo Knight.glb'))).toMatchObject({
       name: 'Robo Knight',
       format: 'glb',

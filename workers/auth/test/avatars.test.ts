@@ -141,7 +141,7 @@ async function connectVroid(cookie: string, account = 'vroid-user-1') {
     { headers: { Cookie: `${cookie}; ${FLOW_COOKIE}=${flow}` } },
   );
   expect(callback.status).toBe(302);
-  expect(callback.headers.get('Location')).toBe(`${ORIGIN}/?avatar=connected`);
+  expect(callback.headers.get('Location')).toBe(`${ORIGIN}/?avatar=connected#list`);
   expect(await pkceChallenge(verifier)).toBe(authorize.searchParams.get('code_challenge'));
   const wallet = (await (await call('/api/account/avatar/wallet', { headers: { Cookie: cookie } })).json()) as {
     connections: { id: string; provider: string }[];
@@ -259,13 +259,13 @@ describe('VRoid Hub', () => {
     const state = new URL(((await start.json()) as { url: string }).url).searchParams.get('state');
 
     const forged = await call(`/api/account/avatar/callback/vroid?code=x&state=forged`, { headers: { Cookie: `${cookie}; ${FLOW_COOKIE}=${flow}` } });
-    expect(forged.headers.get('Location')).toBe(`${ORIGIN}/?avatar=error`);
+    expect(forged.headers.get('Location')).toBe(`${ORIGIN}/?avatar=error#list`);
     const hijack = await call(`/api/account/avatar/callback/vroid?code=x&state=${state}`, {
       headers: { Cookie: `${other.cookie}; ${FLOW_COOKIE}=${flow}` },
     });
-    expect(hijack.headers.get('Location')).toBe(`${ORIGIN}/?avatar=error`);
+    expect(hijack.headers.get('Location')).toBe(`${ORIGIN}/?avatar=error#list`);
     const noCookie = await call(`/api/account/avatar/callback/vroid?code=x&state=${state}`, { headers: { Cookie: cookie } });
-    expect(noCookie.headers.get('Location')).toBe(`${ORIGIN}/?avatar=error`);
+    expect(noCookie.headers.get('Location')).toBe(`${ORIGIN}/?avatar=error#list`);
     expect(calls).toHaveLength(0);
   });
 
@@ -577,7 +577,7 @@ describe('at3d / AT Protocol', () => {
     const { user, cookie } = await signedInUser('at-connect@example.com');
     const { flow } = await startAtproto(cookie);
     const res = await finishAtproto(cookie, flow, await flowState(flow), GOOD_TOKEN);
-    expect(res.headers.get('Location')).toBe(`${ORIGIN}/?avatar=connected`);
+    expect(res.headers.get('Location')).toBe(`${ORIGIN}/?avatar=connected#list`);
     const row = await env.DB.prepare('select * from avatar_connection where user_id = ?').bind(user.id).first();
     expect(row).toMatchObject({
       provider: 'atproto',
@@ -595,14 +595,14 @@ describe('at3d / AT Protocol', () => {
     const { user, cookie } = await signedInUser('at-mismatch@example.com');
     const first = await startAtproto(cookie);
     const wrongIss = await finishAtproto(cookie, first.flow, await flowState(first.flow), GOOD_TOKEN, 'https://evil-as.pds-fixture.net');
-    expect(wrongIss.headers.get('Location')).toBe(`${ORIGIN}/?avatar=error`);
+    expect(wrongIss.headers.get('Location')).toBe(`${ORIGIN}/?avatar=error#list`);
 
     const second = await startAtproto(cookie);
     const otherAccount = await finishAtproto(cookie, second.flow, await flowState(second.flow), {
       ...GOOD_TOKEN,
       sub: 'did:plc:zzzzzzzzzzzzzzzzzzzzzzzz',
     });
-    expect(otherAccount.headers.get('Location')).toBe(`${ORIGIN}/?avatar=error`);
+    expect(otherAccount.headers.get('Location')).toBe(`${ORIGIN}/?avatar=error#list`);
     const rows = await env.DB.prepare('select count(*) as n from avatar_connection where user_id = ?').bind(user.id).first<{ n: number }>();
     expect(rows!.n).toBe(0);
   });
@@ -697,7 +697,7 @@ const MODEL_BLOB = { $type: 'blob', ref: { $link: 'bafkreiuploadedmodel' }, mime
 async function authorizeUpload(cookie: string, body: Record<string, unknown>) {
   const { flow } = await startAtproto(cookie, body, UPLOAD_SCOPE);
   const res = await finishAtproto(cookie, flow, await flowState(flow), UPLOAD_TOKEN);
-  expect(res.headers.get('Location')).toBe(`${ORIGIN}/?avatar=upload`);
+  expect(res.headers.get('Location')).toBe(`${ORIGIN}/?avatar=upload#list`);
   return cookieValue(res, UPLOAD_COOKIE);
 }
 
@@ -890,7 +890,7 @@ async function connectSketchfab(cookie: string) {
     `/api/account/avatar/callback/sketchfab?code=sf-code&state=${authorize.searchParams.get('state')}`,
     { headers: { Cookie: `${cookie}; ${FLOW_COOKIE}=${flow}` } },
   );
-  expect(callback.headers.get('Location')).toBe(`${ORIGIN}/?avatar=connected`);
+  expect(callback.headers.get('Location')).toBe(`${ORIGIN}/?avatar=connected#list`);
   expect(await pkceChallenge(verifier)).toBe(authorize.searchParams.get('code_challenge'));
   const wallet = (await (await call('/api/account/avatar/wallet', { headers: { Cookie: cookie } })).json()) as {
     connections: { id: string; provider: string; displayName: string }[];

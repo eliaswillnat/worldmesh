@@ -64,7 +64,10 @@ export async function inspectModel(file: File): Promise<ModelFile> {
     const mb = (bytes: number) => Math.ceil(bytes / (1024 * 1024));
     throw new Error(`This character is ${mb(file.size)} MB. ${format.toUpperCase()} characters can be up to ${mb(MAX_MODEL_BYTES[format])} MB.`);
   }
-  return { file, name: file.name.replace(/\.(vrm|glb)$/i, '').trim(), format, vrmVersion };
+  // The character's own name (VRM 1.0 meta.name, VRM 0.x meta.title) beats a file name like "2837576971040646108".
+  const meta = (extensions.VRMC_vrm ?? extensions.VRM) as { meta?: { name?: unknown; title?: unknown } } | undefined;
+  const named = [meta?.meta?.name, meta?.meta?.title].find((n): n is string => typeof n === 'string' && !!n.trim());
+  return { file, name: (named ?? file.name.replace(/\.(vrm|glb)$/i, '')).trim(), format, vrmVersion };
 }
 
 /**
