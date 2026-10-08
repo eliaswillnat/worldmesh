@@ -144,5 +144,17 @@
     "portfolio": "https://x.com/0xbigturk",
     "addedAt": "2026-10-07T16:00:00Z",
     "categories": ["explore"]
+  },
+  {
+    "id": "inkfall-p7m3qz",
+    "name": "INKFALL",
+    "url": "https://wavedash.com/games/inkfall",
+    "description": "Flip gravity across walls and ceilings and cover a floating cube arena in your team’s ink.",
+    "cover": "/covers/inkfall.webp",
+    "creator": "haruka_apps",
+    "portfolio": "https://x.com/haruka_apps",
+    "addedAt": "2026-10-08T12:00:00Z",
+    "categories": ["games"],
+    "tags": ["multiplayer"]
   }
 ]
