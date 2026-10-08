@@ -9,3 +9,12 @@ id = "f0816126ec6b4790ae02b0c258f8ff3d"
 # Then paste the id above.
 
 # Rate-limit dedup keys expire after 24h
+
+# ── Preview (docs/previews.md) ─────────────────────────────────────────────
+# Counts preview visits into their own namespace, on workers.dev.
+[env.preview]
+name = "worldmesh-views-preview"
+
+[[env.preview.kv_namespaces]]
+binding = "VIEWS"
+id = "__PREVIEW_VIEWS_KV_ID__"

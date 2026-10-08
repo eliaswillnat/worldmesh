@@ -1,0 +1,50 @@
+# Private preview deployments (docs/previews.md). Started by hand or by Claude:
+#   gh workflow run preview.yml --ref <branch> -f action=deploy
+# Production is not involved: merges to main keep deploying through the
+# Git-connected Cloudflare Pages projects exactly as before.
+name: Preview
+run-name: "Preview: ${{ inputs.action }} ${{ github.ref_name }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: What to do
+        type: choice
+        options: [deploy, remove, teardown, verify-admin, status]
+        default: deploy
+
+# One preview at a time; a second run waits rather than racing the first.
+concurrency:
+  group: preview
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Install Worker dependencies
+        if: inputs.action == 'deploy'
+        run: |
+          npm ci --prefix workers/auth
+          npm ci --prefix workers/screenshot
+
+      - name: Preview ${{ inputs.action }}
+        run: scripts/preview.sh ${{ inputs.action }}

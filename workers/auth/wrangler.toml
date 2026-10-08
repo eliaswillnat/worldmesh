@@ -60,3 +60,32 @@ simple = { limit = 20, period = 60 }
 # once all its secrets are set. Portal setup steps:
 #   docs/accounts-and-federation.md → OAuth provider setup.
 # Local development reads them from .dev.vars (see .dev.vars.example).
+
+# ── Preview (docs/previews.md) ─────────────────────────────────────────────
+# A private copy on preview.worldmesh.net with its own database. Deployed by
+# scripts/preview.sh, never by hand. No OAuth secrets are set here, so the
+# login dialog offers email + password only. __PREVIEW_D1_ID__ is filled in
+# at deploy time from the database named worldmesh-preview.
+[env.preview]
+name = "worldmesh-auth-preview"
+routes = [
+  { pattern = "preview.worldmesh.net/api/auth/*", zone_name = "worldmesh.net" },
+  { pattern = "preview.worldmesh.net/api/account/*", zone_name = "worldmesh.net" },
+]
+workers_dev = false
+
+[env.preview.vars]
+BETTER_AUTH_URL = "https://preview.worldmesh.net"
+FEDERATION_DOMAIN = "preview.worldmesh.net"
+
+[[env.preview.d1_databases]]
+binding = "DB"
+database_name = "worldmesh-preview"
+database_id = "__PREVIEW_D1_ID__"
+migrations_dir = "../../db/migrations"
+
+[[env.preview.ratelimits]]
+name = "AUTH_LIMITER"
+namespace_id = "2001"
+simple = { limit = 20, period = 60 }
+# Secret (set by scripts/preview.sh on first deploy): BETTER_AUTH_SECRET

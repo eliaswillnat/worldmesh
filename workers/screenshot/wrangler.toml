@@ -39,3 +39,32 @@ queue = "worldmesh-door-views"
 max_batch_size = 1
 max_concurrency = 2
 max_retries = 0
+
+# ── Preview (docs/previews.md) ─────────────────────────────────────────────
+# Screenshots and door views for the preview hub, in their own bucket and
+# queue. Deployed by scripts/preview.sh, which passes R2_PUBLIC_URL (the
+# bucket's r2.dev URL) and sets SCREENSHOT_SECRET.
+[env.preview]
+name = "worldmesh-screenshot-preview"
+
+[env.preview.browser]
+binding = "BROWSER"
+
+[[env.preview.r2_buckets]]
+binding = "SCREENSHOTS"
+bucket_name = "worldmesh-screenshots-preview"
+
+[env.preview.vars]
+R2_PUBLIC_URL = ""
+ALLOWED_ORIGINS = "https://preview.worldmesh.net"
+BROWSER_SCREENSHOTS_PER_HOUR = "20"
+
+[[env.preview.queues.producers]]
+binding = "DOOR_VIEWS"
+queue = "worldmesh-door-views-preview"
+
+[[env.preview.queues.consumers]]
+queue = "worldmesh-door-views-preview"
+max_batch_size = 1
+max_concurrency = 2
+max_retries = 0

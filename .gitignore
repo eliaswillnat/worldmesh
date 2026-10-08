@@ -8,3 +8,4 @@ dist/
 .env*.local
 *.local
 .dev.vars
+.preview-wrangler.toml

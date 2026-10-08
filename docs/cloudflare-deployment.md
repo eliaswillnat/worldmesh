@@ -178,3 +178,11 @@ Resend. Bucket, migration, Stripe webhook, secrets and admin accounts are in
 `workers/admin` serves `admin.worldmesh.net` (a Custom Domain) and one hand-off
 path on the hub's hostname (`/api/dashboard/*`). It reads D1, the hub's `WORLDS`
 KV, the `VIEWS` KV and the presence rooms. Setup in [admin.md](admin.md#deploy).
+
+---
+
+## 9. Private previews
+
+To try a branch on a private copy before it reaches worldmesh.net, see
+[previews.md](previews.md). It uses separate projects, Workers and data, and
+doesn't change anything above.

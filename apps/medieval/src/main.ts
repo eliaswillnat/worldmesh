@@ -17,7 +17,8 @@ const world = createWorldMesh({
   renderer,
   spawn: [0, 2, 12],
   colliders,
-  multiplayer: true,
+  // Preview builds set VITE_PRESENCE_ENDPOINT to their own relay (docs/previews.md).
+  multiplayer: import.meta.env.VITE_PRESENCE_ENDPOINT ? { server: import.meta.env.VITE_PRESENCE_ENDPOINT } : true,
   vr: true,
   view: { mode: 'third' },
   ui: {

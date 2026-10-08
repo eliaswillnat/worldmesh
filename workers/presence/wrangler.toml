@@ -15,3 +15,22 @@ new_sqlite_classes = ["Room"]
 
 # Deploy with:
 # cd workers/presence && npx wrangler deploy
+
+# ── Preview (docs/previews.md) ─────────────────────────────────────────────
+# A separate script with its own Durable Object rooms, so preview visitors
+# never meet production ones. Outside Cloudflare Access (WebSockets cannot
+# carry the Access login); it stores nothing.
+[env.preview]
+name = "worldmesh-presence-preview"
+routes = [
+  { pattern = "preview-relay.worldmesh.net", custom_domain = true },
+]
+workers_dev = false
+
+[[env.preview.durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+[[env.preview.migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]
