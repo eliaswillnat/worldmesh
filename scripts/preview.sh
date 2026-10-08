@@ -218,12 +218,30 @@ ensure_secrets() {
   done
 }
 
+# Each pending db/migrations file as one whole file. `d1 migrations apply
+# --remote` splits statements itself and cuts 0005_ads.sql's trigger in half.
+# Applied files are recorded in d1_migrations, the table wrangler itself uses.
+D1_TARGET=${D1_TARGET:---remote}
+apply_migrations() {
+  local applied file name
+  log "Applying D1 migrations to $D1_NAME"
+  wrangler d1 execute "$D1_NAME" "$D1_TARGET" -y --command \
+    "CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)" >/dev/null
+  applied=$(wrangler d1 execute "$D1_NAME" "$D1_TARGET" -y --json --command "SELECT name FROM d1_migrations" | jq -r '.[0].results[].name')
+  for file in db/migrations/*.sql; do
+    name=$(basename "$file")
+    grep -qxF "$name" <<<"$applied" && continue
+    echo "  $name"
+    wrangler d1 execute "$D1_NAME" "$D1_TARGET" -y --file "$file" >/dev/null
+    wrangler d1 execute "$D1_NAME" "$D1_TARGET" -y --command "INSERT INTO d1_migrations (name) VALUES ('$name')" >/dev/null
+  done
+}
+
 deploy_workers() {
   D1_ID=$(d1_id); WORLDS_KV_ID=$(kv_id "$KV_WORLDS"); VIEWS_KV_ID=$(kv_id "$KV_VIEWS")
   [[ -n $D1_ID && -n $WORLDS_KV_ID && -n $VIEWS_KV_ID ]] || die "preview resources missing"
 
-  log "Applying D1 migrations to $D1_NAME"
-  wrangler d1 migrations apply "$D1_NAME" --remote --env preview --config "$(preview_config auth)"
+  apply_migrations
 
   for worker in "${WORKERS[@]}"; do
     local config; config=$(preview_config "$worker")
