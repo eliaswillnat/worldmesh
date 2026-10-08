@@ -300,6 +300,42 @@ upload_apps() {
   done
 }
 
+# Door views (the world seen through a walk-mode door up close) for the five
+# preview worlds. workers/screenshot can't take them: its browser can't get
+# past Access. So take them here from the fresh builds and put them in the
+# preview bucket exactly where the worker would, status.json last.
+# Best effort: a world without one just shows its cover.
+seed_door_views() {
+  local out stamp app slug host prefix worlds=()
+  log "Taking door views of the preview worlds"
+  out=$(mktemp -d)
+  for app in "${APPS[@]:1}"; do worlds+=("$app=apps/$app/dist"); done
+  node scripts/preview-door-views/capture.mjs "$out" "${worlds[@]}" || { echo "  (skipped: capture failed)"; return 0; }
+
+  local covers; covers="https://$(r2_dev_host)"
+  for app in "${APPS[@]:1}"; do
+    [[ -f $out/$app/meta.json ]] || continue
+    host=$(host_of "$app")
+    # doorViewSlug() of https://<host>/
+    slug=$(tr -c 'a-zA-Z0-9\n' '-' <<<"$host" | tr 'A-Z' 'a-z')
+    stamp=$(date +%s%3N); prefix="door-views/$slug/$stamp"
+    jq -n --arg url "https://$host/" --arg base "$covers/$prefix" --argjson stamp "$stamp" --argjson now "$(date +%s%3N)" \
+      --slurpfile meta "$out/$app/meta.json" '
+      {url: $url, requestedAt: $stamp, state: "ready", finishedAt: $now,
+       view: ($meta[0] + {capturedAt: $stamp, color: "\($base)/color.webp", depth: "\($base)/depth.png"})}' \
+      >"$out/$app/status.json"
+    if wrangler r2 object put "$R2_BUCKET/$prefix/color.webp" --remote --file "$out/$app/color.webp" --content-type image/webp >/dev/null \
+      && wrangler r2 object put "$R2_BUCKET/$prefix/depth.png" --remote --file "$out/$app/depth.png" --content-type image/png >/dev/null \
+      && wrangler r2 object put "$R2_BUCKET/door-views/$slug/status.json" --remote --file "$out/$app/status.json" \
+        --content-type application/json --cache-control no-cache >/dev/null; then
+      echo "  $slug ready"
+    else
+      echo "  $slug: upload failed"
+    fi
+  done
+  rm -rf "$out"
+}
+
 # ── Commands ───────────────────────────────────────────────────────────────
 
 summary() {
@@ -321,6 +357,7 @@ cmd_deploy() {
   configure_hub_project
   build_apps
   upload_apps "$sha"
+  seed_door_views
   summary "### Preview deployed: \`$sha\`"
 }
 

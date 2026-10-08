@@ -47,6 +47,7 @@ jobs:
         run: |
           npm ci --prefix workers/auth
           npm ci --prefix workers/screenshot
+          npm ci --prefix scripts/preview-door-views
 
       - name: Preview ${{ inputs.action }}
         run: scripts/preview.sh ${{ inputs.action }}
