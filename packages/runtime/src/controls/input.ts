@@ -49,6 +49,9 @@ export class Input {
   private xrSprint = false;
   private xrJumpHeld = false;
   private xrInteractHeld = false;
+  /** Movement carried over from outside (a hub's joystick, still held as the visitor walked in). */
+  private carriedX = 0;
+  private carriedZ = 0;
 
   constructor(options: InputOptions) {
     this.element = options.element;
@@ -227,6 +230,12 @@ export class Input {
     return digit;
   }
 
+  /** Keep moving this way (same axes as getMoveAxis) until told otherwise; 0, 0 stops. */
+  carry(x: number, z: number): void {
+    this.carriedX = Number.isFinite(x) ? Math.max(-1, Math.min(1, x)) : 0;
+    this.carriedZ = Number.isFinite(z) ? Math.max(-1, Math.min(1, z)) : 0;
+  }
+
   /** Movement intent on the local XZ plane, already normalized. */
   getMoveAxis(): { x: number; z: number } {
     let x = (this.isDown('right') ? 1 : 0) - (this.isDown('left') ? 1 : 0);
@@ -239,6 +248,8 @@ export class Input {
     }
     x += this.xrMoveX;
     z += this.xrMoveZ;
+    x += this.carriedX;
+    z += this.carriedZ;
 
     const length = Math.hypot(x, z);
     if (length === 0) return { x: 0, z: 0 };

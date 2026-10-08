@@ -300,6 +300,10 @@ export interface WorldMeshHandle {
 
   setViewMode(mode: ViewMode): void;
   getViewMode(): ViewMode;
+  /** How far back the third-person camera sits, in metres. */
+  getCameraDistance(): number;
+  /** Move the third-person camera in or out (0.4 m at the closest); it follows at once when closer. */
+  setCameraDistance(distance: number): void;
 
   addPortal(portal: PortalOptions): void;
   /** Navigate to another WorldMesh world, carrying a `from` back-reference. */

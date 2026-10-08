@@ -72,6 +72,10 @@ const THRESHOLD = 0.1;
  * thick, so walking past the outside of the wall never goes through.
  */
 const REACH = 1;
+/** Where the backstop goes while the doorway can be walked through: far enough for the camera to follow. */
+const PASSABLE_BACKSTOP = 12;
+/** How far the floor runs on behind the doorway, through the wall: the hall's own floor stops at it. */
+const SILL_DEPTH = 1.6;
 /** Half the width a door takes up along a wall, frame included. */
 export const DOOR_HALF_SPAN = DOOR_WIDTH / 2 + FRAME;
 /** Top of the frame, where the wall closes over the doorway. */
@@ -132,8 +136,6 @@ const portalFragment = /* glsl */ `
   uniform float uPortal;
   uniform float uPortalLive;
   uniform float uViewFlat;
-  uniform float uEmbed;
-  uniform float uScreen;
   uniform sampler2D uPortalColor;
   uniform vec2 uDrawSize;
   uniform vec3 uViewOrigin;
@@ -333,7 +335,7 @@ const portalFragment = /* glsl */ `
     vec3 color = mix(corridor, far, uHasMap);
     // Up close, the world itself replaces the cover (not while the room is full).
     float view = uView * (1.0 - uFull);
-    if (view > 0.0 && uEmbed < 0.5) {
+    if (view > 0.0) {
       if (uPortal > 0.5) color = mix(color, portalSample(p), view);
       else color = mix(color, viewSample(p), view);
     }
@@ -345,9 +347,7 @@ const portalFragment = /* glsl */ `
     color *= shade;
     if (uFull > 0.5) color *= 0.85;
 
-    // A live embed shows through a hole in the canvas, on screen only.
-    float alpha = uEmbed > 0.5 && uScreen > 0.5 ? 1.0 - view : 1.0;
-    gl_FragColor = vec4(min(color, vec3(1.0)) * alpha, alpha);
+    gl_FragColor = vec4(min(color, vec3(1.0)), 1.0);
     #include <colorspace_fragment>
   }
 `;
@@ -385,8 +385,6 @@ export class Door {
   private cover: Texture | null = null;
   private view: LoadedDoorView | null = null;
   private viewEye = new Vector3();
-  /** Whether a live page stands behind the doorway (setEmbedded). */
-  private embedded = false;
   /** Whether this frame drew the portal scene for the doorway (setPortalFrame). */
   private portalFrame = false;
   /** Where the door stood when its portal scene was last placed behind it. */
@@ -445,7 +443,14 @@ export class Door {
     this.backstop = new Mesh(backstop, new MeshBasicMaterial({ visible: false, side: DoubleSide }));
     this.backstop.position.set(0, (DOOR_TOP + 1) / 2, -(REACH + 0.08));
     this.group.add(this.backstop);
-    this.blockers = [frameMesh, this.backstop];
+    // Unseen floor through the wall's thickness, for walking on through the doorway (setPassable).
+    const sill = new PlaneGeometry(DOOR_WIDTH, SILL_DEPTH);
+    this.geometries.push(sill);
+    const sillMesh = new Mesh(sill, this.backstop.material);
+    sillMesh.rotation.x = -Math.PI / 2;
+    sillMesh.position.set(0, 0, -SILL_DEPTH / 2);
+    this.group.add(sillMesh);
+    this.blockers = [frameMesh, this.backstop, sillMesh];
 
     // The world on the other side fills the doorway.
     this.placeholder = new Texture();
@@ -471,8 +476,6 @@ export class Door {
           uPortalColor: { value: null },
           uDrawSize: { value: new Vector2(1, 1) },
           uViewFlat: { value: 0 },
-          uEmbed: { value: 0 },
-          uScreen: { value: 0 },
         },
         side: DoubleSide,
       }),
@@ -482,9 +485,8 @@ export class Door {
     // The portal frame is drawn for the screen; the floor's mirror (its own
     // render target) and VR get the backdrop alone.
     this.portal.onBeforeRender = (renderer) => {
-      const screen = renderer.getRenderTarget() === null && !renderer.xr.isPresenting;
-      this.portal.material.uniforms.uPortalLive.value = this.portalFrame && screen ? 1 : 0;
-      this.portal.material.uniforms.uScreen.value = screen ? 1 : 0;
+      this.portal.material.uniforms.uPortalLive.value =
+        this.portalFrame && renderer.getRenderTarget() === null && !renderer.xr.isPresenting ? 1 : 0;
     };
 
     if (random) {
@@ -591,12 +593,12 @@ export class Door {
   }
 
   /**
-   * A live page stands behind the doorway (doorViews' embed layer, under the
-   * canvas): up close, the doorway fades to a hole that shows it.
+   * Let visitors walk on through the doorway, into the world drawn behind it
+   * (walkThrough), instead of the backstop stopping them just inside it.
    */
-  setEmbedded(embedded: boolean): void {
-    this.embedded = embedded;
-    this.portal.material.uniforms.uEmbed.value = embedded ? 1 : 0;
+  setPassable(passable: boolean): void {
+    this.backstop.position.z = passable ? -PASSABLE_BACKSTOP : -(REACH + 0.08);
+    this.backstop.updateMatrixWorld();
   }
 
   /** This door's portal scene, standing behind its doorway; null without one. */
@@ -625,7 +627,7 @@ export class Door {
   /** Fade the door view in (show) or out, seen by `camera` with parallax from a visitor standing at `feet`. */
   stepView(dt: number, camera: Object3D, feet: Vector3, show: boolean): void {
     const uniforms = this.portal.material.uniforms;
-    const target = show && (this.view !== null || this.embedded) ? 1 : 0;
+    const target = show && this.view !== null ? 1 : 0;
     const current = uniforms.uView.value as number;
     if (current === target && target === 0) return;
     // Fully shown stays put; stepping it would dip it every other frame, a flicker.

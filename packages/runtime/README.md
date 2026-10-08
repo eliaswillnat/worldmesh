@@ -96,7 +96,7 @@ in a portal scene yet.
 | `Presence`, `DEFAULT_PRESENCE_SERVER`, `NetworkAdapter` | multiplayer (`multiplayer: true`) and the seam for your own |
 | `captureDoorView`, `DOOR_VIEW_FACES`, `CAPTURE_PARAM` | the 360° colour + depth snapshot hub doors show of your world |
 | `exportPortal`, `PortalScene`, `PORTAL_SCENE_VERSION` | the scene around your spawn point that hub doors draw live |
-| `EMBED_PARAM` | a hub showing your world running in a door (`?worldmesh-embed=1`): it waits offline until the visitor walks in, then goes online without reloading, and asks the hub to open any other page |
+| `EMBED_PARAM` | a hub keeping your world loaded behind its door (`?worldmesh-embed=1`): it waits offline, drawing rarely, until the visitor walks through; it then takes over from their exact pose in the hub, goes online without reloading, and asks the hub to open any other page |
 | `WORLDMESH_VERSION`, `WORLDMESH_PROTOCOL` | what your world is speaking |
 
 Full option, handle and event reference:

@@ -31,6 +31,8 @@ export class CameraRig {
   private offset = new Vector3();
   /** Smoothed boom length so the camera does not pop when it clears a wall. */
   private currentBoom: number;
+  /** After snapBoom: ease back out slowly, a pull-back rather than a jump. */
+  private gentle = false;
 
   constructor(options: CameraRigOptions) {
     this.camera = options.camera;
@@ -61,6 +63,12 @@ export class CameraRig {
     if (mode === 'third') this.currentBoom = this.distance;
   }
 
+  /** Put the third-person camera this far back right now; it eases back to `distance` from there. */
+  snapBoom(length: number): void {
+    this.currentBoom = clamp(length, 0.4, this.maxDistance);
+    this.gentle = true;
+  }
+
   toggleMode(): ViewMode {
     this.setMode(this.mode === 'first' ? 'third' : 'first');
     return this.mode;
@@ -83,8 +91,9 @@ export class CameraRig {
     const wanted = this.collision.castDistance(this.target, this.offset, this.distance + 0.3) - 0.3;
     const boom = clamp(wanted, 0.4, this.distance);
     // Snap in fast, ease out slowly: popping into geometry is worse than lag.
-    const rate = boom < this.currentBoom ? 1 : 1 - Math.exp(-8 * dt);
+    const rate = boom < this.currentBoom ? 1 : 1 - Math.exp(-(this.gentle ? 1.6 : 8) * dt);
     this.currentBoom += (boom - this.currentBoom) * rate;
+    if (this.gentle && (boom < this.currentBoom || this.currentBoom > boom - 0.05)) this.gentle = false;
     this.camera.position.copy(this.target).addScaledVector(this.offset, this.currentBoom);
   }
 

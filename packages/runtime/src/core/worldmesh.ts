@@ -1,4 +1,4 @@
-import { Euler, Group, Vector3 } from 'three';
+import { Euler, Group, PerspectiveCamera, Vector3 } from 'three';
 import { resolveAbilities } from '../abilities/abilities.js';
 import { parseAvatarDescriptor, type AvatarDescriptor } from '../avatar/descriptor.js';
 import { resolveWorldMeshAvatar, takeAvatarTicket } from '../avatar/handoff.js';
@@ -9,7 +9,7 @@ import { CameraRig } from '../camera/cameraRig.js';
 import { Input } from '../controls/input.js';
 import { CollisionWorld } from '../movement/collision.js';
 import { MovementController } from '../movement/controller.js';
-import { expressionForDigit, isAvatarExpression } from '../player/avatar.js';
+import { expressionForDigit, isAvatarExpression, setAvatarColor } from '../player/avatar.js';
 import { Player } from '../player/player.js';
 import { PortalManager, buildTravelUrl, type ResolvedPortal } from '../portals/portals.js';
 import type {
@@ -34,6 +34,10 @@ const MAX_STEP = 1 / 60;
 /** Never simulate more than this per frame, so a backgrounded tab does not catch up violently. */
 const MAX_FRAME = 0.1;
 const DEFAULT_HUB = 'https://worldmesh.net/';
+/** An embedded world waiting to be walked into draws this rarely: enough to stay warm, little enough to leave the hub its frames. */
+const DORMANT_FRAME_MS = 250;
+/** Seconds to ease the field of view back to the world's own after taking over the hub's camera. */
+const FOV_RETURN = 1.5;
 /**
  * Set by WorldMesh's capture service when it opens a world to take its door
  * view. The world then stays offline, so other visitors stay out of the shot.
@@ -161,6 +165,10 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
 
     setViewMode,
     getViewMode: () => cameraRig.mode,
+    getCameraDistance: () => cameraRig.distance,
+    setCameraDistance: (distance) => {
+      if (Number.isFinite(distance)) cameraRig.distance = Math.max(0.4, distance);
+    },
 
     addPortal: (portal) => {
       portals.add(portal);
@@ -193,6 +201,10 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   const capturing = isCaptureRequest();
   const embedded = !capturing && isEmbedRequest();
   let network: WorldMeshOptions['network'];
+  /** Embedded and not walked into yet. */
+  let dormant = embedded;
+  /** Easing the field of view back to the world's own, after a walk-in took over the hub's. */
+  let fovReturn: { from: number; to: number; t: number } | null = null;
   if (capturing) exposeCapture();
   if (embedded) awaitEntry();
   else if (!capturing) goOnline();
@@ -220,9 +232,12 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   }
 
   /**
-   * Shown live in a hub's door: stay offline until the visitor walks through
-   * it. The hub's travel URL (its `from`, for the way back) replaces this
-   * page's own address, as if they had arrived through it.
+   * Shown live in a hub's door: stay offline, drawing only now and then,
+   * until the visitor walks through it. The hub's travel URL (its `from`, for
+   * the way back) replaces this page's own address, as if they had arrived
+   * through it. A `pose` (in this world's coordinates) puts the player and
+   * camera exactly where the hub had them, so the hand-over can't be seen;
+   * the hub hears `worldmesh:entered` once a frame from there is drawn.
    */
   function awaitEntry(): void {
     const onMessage = (event: MessageEvent) => {
@@ -234,11 +249,61 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
       } catch {
         // Keep the embed address.
       }
-      if (!disposed) goOnline();
+      if (disposed) return;
+      takePose(event.data.pose);
+      dormant = false;
+      // Walked in: playing at once, no "click to play" in between (the cursor still needs a click to look around).
+      input.requestPointerLock(isTouchDevice());
+      window.addEventListener('message', onCarry);
+      goOnline();
+      // Two frames on, the first one from the new pose has been drawn.
+      requestAnimationFrame(() => requestAnimationFrame(() => window.parent.postMessage({ type: 'worldmesh:entered' }, '*')));
+    };
+    // The hub's joystick, still held as the visitor walked in, keeps them walking until it is let go.
+    const onCarry = (event: MessageEvent) => {
+      if (event.source !== window.parent || event.data?.type !== 'worldmesh:carry') return;
+      input.carry(Number(event.data.x) || 0, Number(event.data.z) || 0);
+      if (!event.data.x && !event.data.z) window.removeEventListener('message', onCarry);
     };
     window.addEventListener('message', onMessage);
     // Nothing secret: only tells the hub this world can be walked into.
     window.parent.postMessage({ type: 'worldmesh:ready' }, '*');
+  }
+
+  /** Where a hub had the visitor as they walked in, in this world's coordinates. Ignores anything malformed. */
+  function takePose(pose: unknown): void {
+    const p = pose as Partial<{
+      position: Vec3Tuple;
+      velocity: Vec3Tuple;
+      camera: Vec3Tuple;
+      mode: ViewMode;
+      yaw: number;
+      pitch: number;
+      facing: number;
+      fov: number;
+      color: string;
+    }> | null;
+    const vec = (v: unknown): v is Vec3Tuple => Array.isArray(v) && v.length === 3 && v.every((n) => Number.isFinite(n));
+    const num = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
+    if (!p || !vec(p.position)) return;
+    controller.reset(new Vector3(...p.position));
+    if (vec(p.velocity)) controller.velocity.set(...p.velocity);
+    if (num(p.yaw)) cameraRig.yaw = p.yaw;
+    if (num(p.pitch)) cameraRig.pitch = p.pitch;
+    if (num(p.facing)) player.facing = p.facing;
+    if (p.mode === 'first' || p.mode === 'third') setViewMode(p.mode);
+    if (cameraRig.mode === 'third' && vec(p.camera)) {
+      // Same boom as the hub's camera had, measured from this world's eyes; it eases back out from there.
+      const eyes = new Vector3(...p.position).add(new Vector3(0, player.eyeHeight * (controller.height / height), 0));
+      cameraRig.snapBoom(eyes.distanceTo(new Vector3(...p.camera)));
+    }
+    // The figure keeps the colour it had in the hub (the default body only).
+    if (typeof p.color === 'string' && /^#[0-9a-f]{6}$/i.test(p.color) && player.root && !avatarDescriptor) setAvatarColor(player.root, p.color);
+    if (num(p.fov) && camera instanceof PerspectiveCamera && Math.abs(camera.fov - p.fov) > 0.01) {
+      fovReturn = { from: p.fov, to: camera.fov, t: 0 };
+      camera.fov = p.fov;
+      camera.updateProjectionMatrix();
+    }
   }
 
   /** Leave for another page; an embedded world asks its hub to go there instead. */
@@ -316,10 +381,18 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
 
   function frame(now: number): void {
     if (!running) return;
+    if (dormant && now - lastTime < DORMANT_FRAME_MS) return;
     const dt = Math.min((now - lastTime) / 1000, MAX_FRAME);
     lastTime = now;
     update(dt);
     options.onUpdate?.(dt, handle);
+    if (fovReturn && camera instanceof PerspectiveCamera) {
+      fovReturn.t = Math.min(1, fovReturn.t + dt / FOV_RETURN);
+      const k = fovReturn.t * fovReturn.t * (3 - 2 * fovReturn.t);
+      camera.fov = fovReturn.from + (fovReturn.to - fovReturn.from) * k;
+      camera.updateProjectionMatrix();
+      if (fovReturn.t >= 1) fovReturn = null;
+    }
     renderer.render(scene, camera);
   }
 

@@ -34,6 +34,8 @@ export interface LoadedPortal {
   eyeHeight: number;
   /** Nothing in the scene moves, so its shadows are drawn once, the first time it is. */
   shadowsDrawn: boolean;
+  /** From the world's own coordinates to where `place` stood it in the lobby. */
+  readonly placement: Matrix4;
   /**
    * Stand the world behind a door: its spawn point `spawnBehind` metres back
    * from the doorway, facing out of it, its ground level with the floor.
@@ -111,6 +113,7 @@ export async function loadPortal(info: PortalScene, renderer: WebGLRenderer): Pr
     backdrop: backdrop.texture,
     eyeHeight,
     shadowsDrawn: false,
+    placement: world.matrix,
     place(doorMatrixWorld, spawnBehind) {
       world.matrix
         .copy(doorMatrixWorld)

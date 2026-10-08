@@ -43,6 +43,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { CITY_GLOW_WHITE, applyCityTheme, applySkyTheme, createCityMaterials, createSky, createSpawnPads, flipInside, skyHorizon, type BillboardSlot } from './city';
 import { DOOR_HALF_SPAN, DOOR_HEIGHT, DOOR_TOP, DOOR_WIDTH, FRAME, Door, createLabel, worldIsFull, type DoorWorld } from './door';
 import { DoorViewManager } from './doorViews';
+import { WalkThrough } from './walkThrough';
 import { doorFrameGeometry, frameOuterCorner, roundedOpeningGeometry } from './doorShape';
 import { describeBillboard } from './layout';
 import { playPortalSplash, playSendSound, playWarpSound, setPortalHum, stopPortalHum } from './sounds';
@@ -507,8 +508,7 @@ const floorShader = {
  * the worlds themselves use.
  */
 export function createLobby(container: HTMLElement, options: LobbyOptions): Lobby {
-  // Compare mode's live iframe shows through a hole in the canvas, so the canvas needs alpha.
-  const renderer = new WebGLRenderer({ antialias: true, alpha: options.doorCompare ?? false });
+  const renderer = new WebGLRenderer({ antialias: true });
   container.appendChild(renderer.domElement);
 
   const scene = new Scene();
@@ -694,6 +694,30 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const known = new Map<string, DoorWorld>();
   const doors = new Map<string, Door>();
   const doorViews = new DoorViewManager(options.doorViewEndpoint || null, renderer, options.doorCompare ?? false);
+  // Compare mode's walk door: its world waits behind the hall, to be walked straight into.
+  const walkThrough = options.doorCompare
+    ? new WalkThrough(renderer.domElement, {
+        views: doorViews,
+        avatar: () => world.avatar,
+        state: () => world.getState(),
+        travelUrl: (url) => travelUrl(url),
+        viewMode: () => world.getViewMode(),
+        color: () => (alias ? null : color),
+        cameraDistance: { get: () => world.getCameraDistance(), set: (distance) => world.setCameraDistance(distance) },
+        freeze: () => {
+          warping = true;
+          world.stop();
+        },
+        entered: (door) => {
+          presence?.detach();
+          stopPortalHum();
+          const out = door.inFront(RETURN_STEP * door.group.scale.x);
+          returnTo = { position: [out.x, door.group.position.y, out.z], yaw: out.yaw };
+          if (door.world) options.onEnterWorld?.(door.world, returnTo);
+        },
+      })
+    : null;
+  const feet = new Vector3();
   // Doors with no world behind them yet. Re-laid out with every list change.
   const emptyDoors: Door[] = [];
   // Empty doors round the galleries. Rebuilt with the hall.
@@ -855,6 +879,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       }
       updatePortalHum(humDoor, humDistance);
       doorViews.update(dt, doors.values(), x, y, z, camera);
+      walkThrough?.update(doors.values(), feet.set(x, y, z));
       let near: Door | null = null;
       let nearest = EMPTY_DOOR_REACH;
       for (const door of [...emptyDoors, ...galleryDoors]) {
@@ -895,6 +920,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       mirror.position.set(Math.round(x / 10) * 10, 0, Math.round(z / 10) * 10);
       placeChatBubble();
       // Last, with the camera where it will be drawn from: the worlds seen live through their doors.
+      walkThrough?.step(camera, feet.set(x, y, z));
       doorViews.renderPortals(camera);
     },
   });
@@ -1071,6 +1097,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
   /** Walking through a lobby door: flash, then travel to the world's own URL. */
   function enter(door: Door): void {
+    // A door whose world waits behind the hall: walk on through instead.
+    if (walkThrough?.enter(door)) return;
     const target = door.random ? pickRandomWorld() : door.world;
     if (!target) return;
     door.surge();
@@ -1078,30 +1106,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     door.warp();
     presence?.share('warp', { x, y, z });
     const out = door.inFront(RETURN_STEP * door.group.scale.x);
-    const spot: WalkSpot = { position: [out.x, door.group.position.y, out.z], yaw: out.yaw };
-    if (!door.random && walkInto(target, spot, door)) return;
-    travel(target, spot, door);
-  }
-
-  /**
-   * Into a world already running live behind its door (compare mode's iframe
-   * door): no reload, the lobby fades away over it and then stops, and leaves
-   * the room. False if the door has no such world ready; travel instead.
-   */
-  function walkInto(target: DoorWorld, spot: WalkSpot, door: Door): boolean {
-    if (warping) return false;
-    const entered = doorViews.walkInto(door, travelUrl(target.url), () => {
-      world.stop();
-      presence?.detach();
-      stopPortalHum();
-    });
-    if (!entered) return false;
-    warping = true;
-    playPortalSplash(1);
-    returnTo = spot;
-    options.onEnterWorld?.(target, spot);
-    document.exitPointerLock?.();
-    return true;
+    travel(target, { position: [out.x, door.group.position.y, out.z], yaw: out.yaw }, door);
   }
 
   /**
@@ -2171,6 +2176,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   }
 
   function dispose(): void {
+    walkThrough?.dispose();
     doorViews.dispose();
     disposed = true;
     stopPortalHum();

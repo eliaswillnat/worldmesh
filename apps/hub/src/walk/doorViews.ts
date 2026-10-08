@@ -1,6 +1,4 @@
 import {
-  CAPTURE_PARAM,
-  EMBED_PARAM,
   DOOR_VIEW_DEPTH_FAR,
   DOOR_VIEW_DEPTH_NEAR,
   DOOR_VIEW_VERSION,
@@ -10,7 +8,6 @@ import {
 import {
   Color,
   Plane,
-  Scene,
   SRGBColorSpace,
   Vector2,
   Vector3,
@@ -20,7 +17,6 @@ import {
   type Object3D,
   type WebGLRenderer,
 } from 'three';
-import { CSS3DObject, CSS3DRenderer } from 'three/examples/jsm/renderers/CSS3DRenderer.js';
 import { DOOR_HEIGHT, DOOR_WIDTH, loadCoverTexture, type Door } from './door';
 import { canMakeDoorViewCubes, makeDoorViewCubes } from './doorViewCube';
 import { loadPortal, type LoadedPortal } from './portalScene';
@@ -75,7 +71,7 @@ const CLEAR = new Color(0x000000);
  * How a door shows its world up close. 'best' is the normal choice: the
  * portal scene, else the door view, else the cover.
  */
-export type DoorStyle = 'best' | 'cover' | 'cubemap' | 'depth' | 'portal' | 'iframe';
+export type DoorStyle = 'best' | 'cover' | 'cubemap' | 'depth' | 'portal' | 'walk';
 
 /**
  * Compare mode (preview only, VITE_DOOR_COMPARE): each demo world's door
@@ -86,24 +82,8 @@ const COMPARE_STYLES: Record<string, DoorStyle> = {
   medieval: 'cubemap',
   forest: 'depth',
   mars: 'portal',
-  space: 'iframe',
+  space: 'walk',
 };
-/** An embedded world's page size in CSS pixels; scaled down to fill the doorway. */
-const EMBED_WIDTH = 540;
-const EMBED_HEIGHT = Math.round((EMBED_WIDTH * DOOR_HEIGHT) / DOOR_WIDTH);
-/** Seconds an embedded world has to say it can be walked into, before the door shows its public copy instead. */
-const EMBED_READY_TIMEOUT = 10;
-/** Seconds for the lobby to fade away over a live page walked into. */
-const ENTER_FADE = 0.6;
-
-/** A world running live behind its door (compare mode's iframe door). */
-interface EmbeddedPage {
-  object: CSS3DObject;
-  frame: HTMLIFrameElement;
-  /** Its world said it waits to be walked into (EMBED_PARAM); false while loading, or for the public fallback. */
-  ready: boolean;
-  fallback: number;
-}
 
 /** The doorway's corners in its door's own frame, for finding it on screen. */
 const DOORWAY_CORNERS: ReadonlyArray<[number, number]> = [
@@ -140,15 +120,13 @@ export class DoorViewManager {
   private plane = new Plane();
   private corner = new Vector3();
   private normal = new Vector3();
-  /** Compare mode's live pages, drawn under the canvas; null outside compare mode. */
-  private embeds: { renderer: CSS3DRenderer; scene: Scene; pages: Map<Door, EmbeddedPage> } | null = null;
-  /** The live page the visitor walked into: it fills the screen, and the lobby is gone. */
-  private entered: EmbeddedPage | null = null;
+  /** Drawn inside one door's portal scene too: the visitor's own figure, part way through it (walkThrough). */
+  private guest: { door: Door; object: Object3D } | null = null;
 
   /**
    * `endpoint` is workers/screenshot; null turns door views off, as does a
    * renderer that can't hold them. `compare` gives each demo world's door a
-   * different style; its iframe door needs the canvas to have an alpha channel.
+   * different style.
    */
   constructor(
     private endpoint: string | null,
@@ -156,14 +134,6 @@ export class DoorViewManager {
     private compare = false,
   ) {
     if (!canMakeDoorViewCubes(renderer)) this.endpoint = null;
-    if (compare) {
-      const css = new CSS3DRenderer();
-      css.domElement.classList.add('door-embeds');
-      css.domElement.setAttribute('aria-hidden', 'true');
-      renderer.domElement.before(css.domElement);
-      this.embeds = { renderer: css, scene: new Scene(), pages: new Map() };
-      window.addEventListener('message', this.onMessage);
-    }
     // Portal scenes cast shadows. Nothing in them moves, so each is drawn once
     // (renderPortals asks for it); the lobby itself has no shadow-casting lights.
     renderer.shadowMap.enabled = true;
@@ -195,20 +165,17 @@ export class DoorViewManager {
       if (distance === undefined) {
         this.showing.delete(door);
         door.stepView(dt, camera, this.feet, false);
-        // Faded out and out of range: free its textures, or its page.
-        if (door.doorView && !door.viewVisible) this.release(door);
-        if (!door.viewVisible) this.unembed(door);
+        // Faded out and out of range: free its textures.
+        if (door.doorView && !door.viewVisible && this.guest?.door !== door) this.release(door);
         continue;
       }
-      if (this.style(door) === 'iframe') this.embed(door);
-      else if (!door.doorView && !this.loading.has(door) && !this.unavailable.has(door.world!.url)) void this.load(door);
+      if (!door.doorView && !this.loading.has(door) && !this.unavailable.has(door.world!.url)) void this.load(door);
       if (distance < SHOW) this.showing.add(door);
       else if (distance > HIDE) this.showing.delete(door);
       door.stepView(dt, camera, this.feet, this.showing.has(door));
     }
     // Doors the lobby has since taken down.
     for (const door of this.showing) if (!all.includes(door)) this.showing.delete(door);
-    for (const [door] of this.embeds?.pages ?? []) if (!all.includes(door)) this.unembed(door);
     for (const [door] of this.frames) if (!all.includes(door) || !door.doorView?.portal) this.release(door, false);
     this.portals = all.filter((door) => door.doorView?.portal && door.viewVisible);
   }
@@ -220,7 +187,6 @@ export class DoorViewManager {
    * the doorway keeps the world's own ground and walls out of the hall.
    */
   renderPortals(camera: Camera): void {
-    this.renderEmbeds(camera);
     if (!this.portals.length) return;
     const renderer = this.renderer;
     const screen = renderer.getDrawingBufferSize(this.size);
@@ -268,7 +234,16 @@ export class DoorViewManager {
           portal.shadowsDrawn = true;
         }
         renderer.setRenderTarget(frame);
-        renderer.render(portal.scene, camera);
+        // The visitor's figure, once part of it is through the doorway, is
+        // drawn in the world too (lit by its lights); the hall's pass draws the rest.
+        const guest = this.guest?.door === door ? this.guest.object : null;
+        const home = guest?.parent ?? null;
+        if (guest) portal.scene.add(guest);
+        try {
+          renderer.render(portal.scene, camera);
+        } finally {
+          if (guest) home ? home.add(guest) : guest.removeFromParent();
+        }
         door.setPortalFrame(frame.texture, screen.x, screen.y);
       }
     } finally {
@@ -282,67 +257,17 @@ export class DoorViewManager {
     this.disposed = true;
     for (const frame of this.frames.values()) frame.dispose();
     this.frames.clear();
-    if (this.entered) return; // The visitor is in that world now; the page stays.
-    for (const [door] of this.embeds?.pages ?? []) this.unembed(door);
-    this.embeds?.renderer.domElement.remove();
-    window.removeEventListener('message', this.onMessage);
   }
 
-  /**
-   * Walking into a door whose world runs live behind it: that same page
-   * becomes the whole screen while the lobby fades away over it, so the
-   * visitor carries on in the world without a reload. `url` is the address
-   * the world would have been opened at (with `from`, for the way back).
-   * `onEntered` runs once the lobby has faded out, to stop it. False if this
-   * door has no page ready to walk into; travel the usual way then.
-   */
-  walkInto(door: Door, url: string, onEntered: () => void): boolean {
-    const page = this.embeds?.pages.get(door);
-    if (!page?.ready || this.entered) return false;
-    this.entered = page;
-    const css = this.embeds!.renderer.domElement;
-    const frame = page.frame;
-    // Out of the 3D layer's transforms, its view and camera elements and the
-    // page's own (not out of the DOM: moving an iframe reloads it).
-    css.classList.add('entered');
-    for (let element: HTMLElement | null = frame; element && element !== css; element = element.parentElement) {
-      element.style.transform = 'none';
-    }
-    frame.style.pointerEvents = 'auto';
-    frame.removeAttribute('aria-hidden');
-    frame.tabIndex = 0;
-    css.removeAttribute('aria-hidden');
-    // Over the lobby, fading in: the lobby seems to dissolve into the world.
-    const done = () => {
-      document.documentElement.classList.add('world-entered');
-      onEntered();
-    };
-    css.animate([{ opacity: 0 }, { opacity: 1 }], { duration: ENTER_FADE * 1000, easing: 'ease-out' }).finished.then(done, done);
-    frame.contentWindow?.postMessage({ type: 'worldmesh:enter', url }, new URL(frame.src).origin);
-    frame.focus();
-    // Back returns to the lobby, which comes back at this door (the hub saved the spot).
-    window.history.pushState({ worldmeshEntered: true }, '');
-    window.addEventListener('popstate', () => window.location.reload(), { once: true });
-    return true;
-  }
 
-  /** Embedded worlds report they can be walked into, and ask to be taken elsewhere. */
-  private onMessage = (event: MessageEvent): void => {
-    const type = (event.data as { type?: unknown } | null)?.type;
-    for (const page of this.embeds?.pages.values() ?? []) {
-      if (event.source !== page.frame.contentWindow) continue;
-      if (type === 'worldmesh:ready') {
-        page.ready = true;
-        window.clearTimeout(page.fallback);
-      } else if (type === 'worldmesh:navigate' && page === this.entered) {
-        const url = (event.data as { url?: unknown }).url;
-        if (typeof url === 'string' && /^https?:\/\//.test(url)) window.location.href = url;
-      }
-    }
-  };
+  /** Also draw `object` inside this door's portal scene, or stop (null). */
+  setGuest(door: Door, object: Object3D | null): void {
+    if (object) this.guest = { door, object };
+    else if (this.guest?.door === door) this.guest = null;
+  }
 
   /** The style a door shows its world in: always 'best' outside compare mode. */
-  private style(door: Door): DoorStyle {
+  style(door: Door): DoorStyle {
     if (!this.compare || !door.world) return 'best';
     try {
       // preview-mars.worldmesh.net, mars.worldmesh.net, worldmesh-mars-preview.pages.dev, …
@@ -354,75 +279,6 @@ export class DoorViewManager {
     }
   }
 
-  /**
-   * Stand the door's world, running live in an iframe, behind its doorway.
-   * Opened to wait offline (EMBED_PARAM), so it neither joins the room nor
-   * counts as a visitor until someone walks in. A preview world sits behind
-   * the Access login, which can't show in a frame: if it hasn't said it is
-   * ready in time (no login yet for that address, or an older runtime), the
-   * door shows its public copy instead, offline (the capture flag), and
-   * walking in travels the usual way.
-   */
-  private embed(door: Door): void {
-    if (!this.embeds || this.embeds.pages.has(door) || !door.world) return;
-    let src: URL;
-    try {
-      src = new URL(door.world.url);
-    } catch {
-      return;
-    }
-    src.searchParams.set(EMBED_PARAM, '1');
-    const frame = document.createElement('iframe');
-    frame.src = src.toString();
-    frame.width = String(EMBED_WIDTH);
-    frame.height = String(EMBED_HEIGHT);
-    frame.tabIndex = -1;
-    frame.title = `${door.world.name}, live`;
-    frame.setAttribute('aria-hidden', 'true');
-    // Once walked into, it is the world: its own controls, sound and VR.
-    frame.setAttribute('allow', 'autoplay; fullscreen; xr-spatial-tracking; gamepad');
-    frame.style.cssText = 'border:0;display:block;background:#000;pointer-events:none';
-    const object = new CSS3DObject(frame);
-    object.scale.setScalar(DOOR_WIDTH / EMBED_WIDTH);
-    const page: EmbeddedPage = { object, frame, ready: false, fallback: 0 };
-    page.fallback = window.setTimeout(() => {
-      if (page.ready) return;
-      const fallback = new URL(src);
-      fallback.hostname = fallback.hostname.replace(/^preview-/, '');
-      fallback.searchParams.delete(EMBED_PARAM);
-      fallback.searchParams.set(CAPTURE_PARAM, '1');
-      frame.src = fallback.toString();
-    }, EMBED_READY_TIMEOUT * 1000);
-    this.embeds.scene.add(object);
-    this.embeds.pages.set(door, page);
-    door.setEmbedded(true);
-  }
-
-  private unembed(door: Door): void {
-    const page = this.embeds?.pages.get(door);
-    if (!page || page === this.entered) return;
-    window.clearTimeout(page.fallback);
-    page.object.element.remove();
-    page.object.removeFromParent();
-    this.embeds!.pages.delete(door);
-    door.setEmbedded(false);
-  }
-
-  /** Every frame: line the live pages up with their doorways, seen by the lobby camera. */
-  private renderEmbeds(camera: Camera): void {
-    if (!this.embeds?.pages.size || this.entered) return;
-    const { renderer: css, scene, pages } = this.embeds;
-    const canvas = this.renderer.domElement;
-    const size = css.getSize();
-    if (size.width !== canvas.clientWidth || size.height !== canvas.clientHeight) css.setSize(canvas.clientWidth, canvas.clientHeight);
-    for (const [door, { object }] of pages) {
-      door.group.updateMatrixWorld();
-      // Just behind the doorway, facing out of it like the door.
-      object.position.set(0, DOOR_HEIGHT / 2, -0.03).applyMatrix4(door.group.matrixWorld);
-      door.group.getWorldQuaternion(object.quaternion);
-    }
-    css.render(scene, camera);
-  }
 
   /** Take a door's view back, and its portal frame. */
   private release(door: Door, view = true): void {
@@ -464,7 +320,7 @@ export class DoorViewManager {
       // A recapture in progress still lists the last good view.
       const view = (await this.status(url))?.view;
       const style = this.style(door);
-      const portalAllowed = style === 'best' || style === 'portal';
+      const portalAllowed = style === 'best' || style === 'portal' || style === 'walk';
       if (portalAllowed && view?.portal?.version === PORTAL_SCENE_VERSION && (await this.loadPortal(door, view.portal))) return;
       if (!view?.color || !view.depth || view.version !== DOOR_VIEW_VERSION) {
         this.unavailable.add(url);
