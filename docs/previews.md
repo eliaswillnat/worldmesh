@@ -198,13 +198,27 @@ preview sends no emails. So, once per fresh preview database:
 
 ## Known limitations
 
-- **Cross-origin calls between preview addresses are blocked by Access.** A
-  world asking the hub to resolve an Avatar Wallet handoff, or the hub reading a
-  preview world's `worldmesh.json`, gets the Access login page instead. The
-  Avatar Wallet is off in the preview anyway (no `AVATAR_SECRET`). If it's needed
-  later: add a second Access application for just the path
-  `preview.worldmesh.net/api/account/avatar/resolve` with a **Bypass** policy
-  (Include: Everyone).
+- **Cross-origin calls between preview addresses are blocked by Access.** The
+  hub reading a preview world's `worldmesh.json` gets the Access login page
+  instead. For the Avatar Wallet, see below.
+- **Avatar Wallet: at3d only, and two paths must skip Access.** The preview
+  auth Worker gets its own random `AVATAR_SECRET`, so "Choose your character"
+  and "Upload from device" are on. Sketchfab and VRoid Hub don't appear (no
+  client secrets in the preview). Two requests come from outside your browser
+  and would otherwise get the Access login page: AT Protocol servers fetching
+  the sign-in description, and worlds resolving the avatar handoff. In Zero
+  Trust → Access → Applications, add a second **Self-hosted** application,
+  `WorldMesh preview avatar bypass`, with these two public hostnames (domain
+  `worldmesh.net`, subdomain `preview`) and paths:
+
+  | Path |
+  | :--- |
+  | `api/account/avatar/atproto/client-metadata.json` |
+  | `api/account/avatar/resolve` |
+
+  Policy: action **Bypass**, Include → **Everyone**. Both answer only public
+  data: the client metadata is public by design, and resolve needs a sealed
+  handoff ticket.
 - **The screenshot Worker can't see preview worlds.** It loads pages in
   Cloudflare's browser, which has no Access login. Screenshots and door views of
   external world URLs work.

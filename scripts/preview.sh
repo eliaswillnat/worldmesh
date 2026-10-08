@@ -27,7 +27,7 @@ QUEUE="worldmesh-door-views-preview"
 # Order matters: admin binds presence's Durable Object; auth owns the migrations.
 WORKERS=(presence views screenshot auth admin)
 # Secrets each preview Worker gets, generated at random on first deploy.
-SECRETS_auth="BETTER_AUTH_SECRET"
+SECRETS_auth="BETTER_AUTH_SECRET AVATAR_SECRET"
 SECRETS_admin="ADMIN_SECRET"
 # The preview admin (must match ADMIN_EMAILS in workers/admin [env.preview]).
 ADMIN_EMAIL="elias.willnat@gmail.com"
