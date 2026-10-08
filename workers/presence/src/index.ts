@@ -93,6 +93,12 @@ const SHARED_KEY = /^[a-z0-9:_-]{1,32}$/;
 const MAX_SHARED_KEYS = 32;
 /** Shortest gap between two shared-state writes from one peer. */
 const SHARED_MIN_MS = 80;
+/**
+ * Shortest gap between two storage writes of shared state for a whole room.
+ * Peers still see every change live; only the copy kept for when the room
+ * goes idle is batched, so busy or abusive sockets cannot run up writes.
+ */
+const PERSIST_MS = 5_000;
 /** Public occupancy reads are counts only; never peer names. */
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -211,6 +217,10 @@ function worldOrigin(header: string | null): string | null {
 export class Room extends DurableObject<Env> {
   /** Shared state by key, kept in storage too so it outlives the room going idle. */
   private shared = new Map<string, Shared>();
+  /** Keys changed since the last storage write. */
+  private dirty = new Set<string>();
+  /** The pending storage write, if one is scheduled. Keeps the room awake until it runs. */
+  private persistTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -390,7 +400,7 @@ export class Room extends DurableObject<Env> {
     const v = Object.fromEntries(entries.map(([name, n]) => [name, round(n as number)]));
     const entry = { v, at: now };
     this.shared.set(key, entry);
-    this.ctx.waitUntil(this.ctx.storage.put(`o:${key}`, entry));
+    this.schedulePersist(key);
     const message = JSON.stringify({ t: 'o', id: peer.id, k: key, v });
     for (const socket of this.ctx.getWebSockets()) {
       try {
@@ -399,6 +409,22 @@ export class Room extends DurableObject<Env> {
         // The socket is closing; its own close handler cleans up.
       }
     }
+  }
+
+  /** Mark a key for storage; at most one write per room every PERSIST_MS. */
+  private schedulePersist(key: string): void {
+    this.dirty.add(key);
+    if (this.persistTimer) return;
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = null;
+      const entries: Record<string, Shared> = {};
+      for (const k of this.dirty) {
+        const entry = this.shared.get(k);
+        if (entry) entries[`o:${k}`] = entry;
+      }
+      this.dirty.clear();
+      this.ctx.waitUntil(this.ctx.storage.put(entries).catch((error) => console.error('shared state write failed', error)));
+    }, PERSIST_MS);
   }
 
   private leave(ws: WebSocket): void {
