@@ -265,7 +265,8 @@ function uploadSection(provider: { id: string }, connection: WalletConnection | 
 
   const picker = document.createElement('input');
   picker.type = 'file';
-  picker.accept = '.vrm,.glb';
+  // No `accept` filter: iOS knows no type for .vrm and greys such files out.
+  // inspectModel() checks the name and the contents instead.
   picker.hidden = true;
   let handle: string | undefined;
   picker.addEventListener('change', () => {
