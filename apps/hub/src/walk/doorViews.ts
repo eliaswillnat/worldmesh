@@ -1,5 +1,5 @@
 import { DOOR_VIEW_DEPTH_FAR, DOOR_VIEW_DEPTH_NEAR, DOOR_VIEW_VERSION } from '@worldmesh/runtime';
-import type { CubeTexture, Object3D, WebGLRenderer } from 'three';
+import { Vector3, type CubeTexture, type Object3D, type WebGLRenderer } from 'three';
 import { loadCoverTexture, type Door } from './door';
 import { canMakeDoorViewCubes, makeDoorViewCubes } from './doorViewCube';
 
@@ -55,6 +55,7 @@ export class DoorViewManager {
   private unavailable = new Set<string>();
   private showing = new Set<Door>();
   private disposed = false;
+  private feet = new Vector3();
 
   /** `endpoint` is workers/screenshot; null turns door views off, as does a renderer that can't hold them. */
   constructor(
@@ -81,13 +82,14 @@ export class DoorViewManager {
       if (distance < PRELOAD) inRange.push({ door, distance });
     }
     inRange.sort((a, b) => a.distance - b.distance);
+    this.feet.set(x, y, z);
     const wanted = new Map(inRange.slice(0, MAX_HELD).map(({ door, distance }) => [door, distance]));
 
     for (const door of all) {
       const distance = wanted.get(door);
       if (distance === undefined) {
         this.showing.delete(door);
-        door.stepView(dt, camera, false);
+        door.stepView(dt, camera, this.feet, false);
         // Faded out and out of range: free its textures.
         if (door.doorView && !door.viewVisible) door.setDoorView(null);
         continue;
@@ -95,7 +97,7 @@ export class DoorViewManager {
       if (!door.doorView && !this.loading.has(door) && !this.unavailable.has(door.world!.url)) void this.load(door);
       if (distance < SHOW) this.showing.add(door);
       else if (distance > HIDE) this.showing.delete(door);
-      door.stepView(dt, camera, this.showing.has(door));
+      door.stepView(dt, camera, this.feet, this.showing.has(door));
     }
     // Doors the lobby has since taken down.
     for (const door of this.showing) if (!all.includes(door)) this.showing.delete(door);

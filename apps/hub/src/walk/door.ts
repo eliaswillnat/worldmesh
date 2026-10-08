@@ -20,6 +20,7 @@ import {
   Vector2,
   Vector3,
 } from 'three';
+import { DOOR_VIEW_DEPTH_FAR } from '@worldmesh/runtime';
 import { drawEntries, measureEntries } from '../entries';
 import { addFrameEdgeGlow, doorFrameGeometry, GALLERY_CORNER, ROUNDED_TOP_GLSL } from './doorShape';
 import type { LoadedDoorView } from './doorViews';
@@ -85,8 +86,10 @@ const VIEW_EYE_HEIGHT = 1.6;
 const VIEW_PARALLAX = 0.8;
 /** Share of that given up between 3 m and 12 m from the spawn. */
 const VIEW_PARALLAX_FALLOFF = 0.55;
-/** Steps along each view ray to settle on the snapshot's depth. */
-const VIEW_STEPS = 16;
+/** Steps along each view ray, out to the snapshot's far limit, to find its surface. */
+const VIEW_STEPS = 24;
+/** Halvings to settle onto the surface once a step has crossed it. */
+const VIEW_REFINE = 5;
 const portalVertex = /* glsl */ `
   varying vec2 vUv;
   void main() {
@@ -116,34 +119,63 @@ const portalFragment = /* glsl */ `
   uniform samplerCube uViewColor;
   uniform samplerCube uViewDepth;
   uniform vec3 uViewEye;
+  uniform vec3 uViewFeet;
   uniform vec3 uViewOrigin;
   varying vec2 vUv;
   ${ROUNDED_TOP_GLSL}
 
-  // The world seen through point p of the doorway from where the camera really
-  // is: follow the view ray until it meets the snapshot's depth, so near things
-  // slide against far ones as people walk past.
+  // Distance from the spawn point to whatever it saw in direction d.
+  float viewDepth(vec3 d) {
+    return textureCube(uViewDepth, d).r;
+  }
+
+  // The world seen through point p of the doorway. Rays run in the camera's
+  // own directions, so the view turns like a window as the camera moves, but
+  // start from the visitor's eyes: a third-person camera floats metres above
+  // the eye height the snapshot was taken at, and seen from up there the
+  // snapshot would be mostly gaps. The start moves only part of the way from
+  // the spawn point to the eyes (VIEW_PARALLAX, less from further away), as
+  // the gaps behind near things grow with that distance too.
   //
-  // The ray starts only part of the way from the spawn point to the eye
-  // (VIEW_PARALLAX, less from further away). The snapshot has nothing for what
-  // near things hide, and those gaps grow with the distance from the spawn;
-  // at 0 the view would still turn the right way but without any depth.
+  // Each ray marches outward in growing steps until it crosses the snapshot's
+  // surface, then halves its way onto it. A step that ends behind something
+  // much nearer than where the ray just was is passing behind it, not into
+  // it, so the march goes on and the gap shows what lies beyond instead of a
+  // smear of the near thing.
   vec3 viewSample(vec2 p) {
-    vec3 eye = uViewEye - uViewOrigin;
+    vec3 camera = uViewEye - uViewOrigin;
     vec3 onDoor = vec3(p.x * ${DOOR_WIDTH.toFixed(4)}, (p.y + 0.5) * ${DOOR_HEIGHT.toFixed(4)}, -0.02) - uViewOrigin;
-    vec3 r = normalize(onDoor - eye);
-    float k = ${VIEW_PARALLAX.toFixed(3)} * (1.0 - ${VIEW_PARALLAX_FALLOFF.toFixed(3)} * smoothstep(3.0, 12.0, length(eye)));
-    vec3 o = eye * k;
-    // Never anything on this side of the doorway.
-    float tDoor = max((onDoor.z - o.z) / min(r.z, -0.0001), 0.0);
-    float b = dot(o, r);
-    float c = dot(o, o);
-    float t = tDoor + 2.0;
+    vec3 r = normalize(onDoor - camera);
+    vec3 eyes = uViewFeet + vec3(0.0, uViewOrigin.y, 0.0) - uViewOrigin;
+    float k = ${VIEW_PARALLAX.toFixed(3)} * (1.0 - ${VIEW_PARALLAX_FALLOFF.toFixed(3)} * smoothstep(3.0, 12.0, length(eyes)));
+    vec3 o = eyes * k;
+    // From the doorway on: never anything on this side of it.
+    float t = max((onDoor.z - o.z) / min(r.z, -0.0001), 0.0) + 0.05;
+    float grow = pow(${DOOR_VIEW_DEPTH_FAR.toFixed(1)} / t, ${(1 / VIEW_STEPS).toFixed(6)});
+    float before = length(o + r * t);
+    float lo = t;
+    float hi = -1.0;
     for (int i = 0; i < ${VIEW_STEPS}; i++) {
-      float D = textureCube(uViewDepth, normalize(o + r * t)).r;
-      t = max(-b + sqrt(max(b * b - c + D * D, 0.0)), tDoor);
+      float next = t * grow;
+      vec3 q = o + r * next;
+      float surface = viewDepth(normalize(q));
+      float here = length(q);
+      if (here >= surface && before <= surface + max(0.2, surface * 0.05)) {
+        lo = t;
+        hi = next;
+        break;
+      }
+      t = next;
+      before = here;
     }
-    return textureCube(uViewColor, normalize(o + r * t)).rgb;
+    if (hi < 0.0) return textureCube(uViewColor, r).rgb;
+    for (int i = 0; i < ${VIEW_REFINE}; i++) {
+      float mid = 0.5 * (lo + hi);
+      vec3 q = o + r * mid;
+      if (length(q) >= viewDepth(normalize(q))) hi = mid;
+      else lo = mid;
+    }
+    return textureCube(uViewColor, normalize(o + r * hi)).rgb;
   }
 
   // Someone going through: rings of rippling water spread out from the
@@ -392,6 +424,7 @@ export class Door {
           uViewColor: { value: null },
           uViewDepth: { value: null },
           uViewEye: { value: new Vector3() },
+          uViewFeet: { value: new Vector3() },
           uViewOrigin: { value: new Vector3(0, VIEW_EYE_HEIGHT, -VIEW_SPAWN_BEHIND) },
         },
         side: DoubleSide,
@@ -494,8 +527,8 @@ export class Door {
     if (view && this.disposed) view.dispose();
   }
 
-  /** Fade the door view in (show) or out, drawn from where `camera` stands. */
-  stepView(dt: number, camera: Object3D, show: boolean): void {
+  /** Fade the door view in (show) or out, seen by `camera` with parallax from a visitor standing at `feet`. */
+  stepView(dt: number, camera: Object3D, feet: Vector3, show: boolean): void {
     const uniforms = this.portal.material.uniforms;
     const target = show && this.view !== null ? 1 : 0;
     const current = uniforms.uView.value as number;
@@ -507,6 +540,7 @@ export class Door {
     // The shader works in the door's own frame.
     camera.getWorldPosition(this.viewEye);
     uniforms.uViewEye.value.copy(this.group.worldToLocal(this.viewEye));
+    uniforms.uViewFeet.value.copy(this.group.worldToLocal(this.viewEye.copy(feet)));
   }
 
   /** Show this door's gate number above its name; null takes it down. */
