@@ -74,15 +74,16 @@ const CLEAR = new Color(0x000000);
 export type DoorStyle = 'best' | 'cover' | 'cubemap' | 'depth' | 'portal' | 'walk';
 
 /**
- * Compare mode (preview only, VITE_DOOR_COMPARE): each demo world's door
- * shows a different style, so they can be compared side by side.
+ * Preview only (VITE_DOOR_COMPARE): the demo worlds' doors in a style still
+ * being tried out. Every demo door can be walked straight through for now;
+ * set one to another style to compare the two side by side.
  */
 const COMPARE_STYLES: Record<string, DoorStyle> = {
-  city: 'cover',
-  medieval: 'cubemap',
+  city: 'walk',
+  medieval: 'walk',
   forest: 'walk',
-  mars: 'portal',
-  space: 'depth',
+  mars: 'walk',
+  space: 'walk',
 };
 
 /** The doorway's corners in its door's own frame, for finding it on screen. */
