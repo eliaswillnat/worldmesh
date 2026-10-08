@@ -34,6 +34,7 @@ const world = createWorldMesh({
     moveBeforeLock: true,
     title: 'Mars - Demo',
     badge: false,
+    crosshair: false,
     hubUrl:
       import.meta.env.VITE_WORLDMESH_HUB ??
       (import.meta.env.DEV
