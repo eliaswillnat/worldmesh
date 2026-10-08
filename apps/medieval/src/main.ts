@@ -20,19 +20,20 @@ const world = createWorldMesh({
   multiplayer: true,
   vr: true,
   view: { mode: 'third' },
+  // Visitors arriving from the hub with a character picked in their Avatar
+  // Wallet walk around as it; everyone else keeps the default body.
+  avatar: {
+    source: 'worldmesh',
+    hubUrl: import.meta.env.VITE_WORLDMESH_HUB ?? (import.meta.env.DEV ? 'http://localhost:5170/' : 'https://worldmesh.net/'),
+  },
+  // Same overlay chrome as the lobby: no badge, no crosshair; WASD from the
+  // first frame; Esc opens the pause menu.
   ui: {
-    // No click-to-enter panel: WASD works from the first frame, Esc brings up the menu.
-    deferLockPanel: true,
-    moveBeforeLock: true,
     title: 'Medieval Village - Demo',
     badge: false,
-    hubUrl:
-      import.meta.env.VITE_WORLDMESH_HUB ??
-      (import.meta.env.DEV
-        ? 'http://localhost:5170/'
-        : import.meta.env.VITE_WORLDS_BASE_DOMAIN
-          ? `https://${import.meta.env.VITE_WORLDS_BASE_DOMAIN}/`
-          : 'https://worldmesh-hub.pages.dev/'),
+    crosshair: false,
+    deferLockPanel: true,
+    moveBeforeLock: true,
   },
   // Portals disabled for now — URL-paste in the hub is the primary navigation.
   // portals: [
