@@ -207,6 +207,27 @@ const CSS = `
   border-color: rgba(255,255,255,0.6);
 }
 .wm-overlay[data-locked="true"] .wm-prompt[data-visible="true"] { display: block; }
+.wm-status {
+  position: absolute;
+  left: 50%;
+  top: calc(max(14px, env(safe-area-inset-top)) + 52px);
+  transform: translateX(-50%);
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: rgba(8,11,16,0.6);
+  border: 1px solid rgba(255,255,255,0.18);
+  font-size: 12px;
+  letter-spacing: .04em;
+  color: rgba(255,255,255,0.85);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .25s ease;
+}
+.wm-status[data-visible="true"] { opacity: 1; }
+.wm-status[data-busy="true"] { animation: wm-status-pulse 1.6s ease-in-out infinite; }
+@keyframes wm-status-pulse { 50% { color: rgba(255,255,255,0.5); } }
+@media (prefers-reduced-motion: reduce) { .wm-status[data-busy="true"] { animation: none; } }
 .wm-badge {
   position: absolute;
   left: max(14px, env(safe-area-inset-left));
@@ -369,6 +390,7 @@ const KEY_LEGEND: [string, string][] = [
 export class Overlay {
   readonly root: HTMLDivElement;
   private prompt: HTMLDivElement;
+  private status: HTMLDivElement;
   private lock: HTMLDivElement;
   private vrLaunch: HTMLButtonElement;
   private vrMenu: HTMLButtonElement;
@@ -489,6 +511,12 @@ export class Overlay {
     });
     this.root.appendChild(this.prompt);
 
+    this.status = document.createElement('div');
+    this.status.className = 'wm-status';
+    this.status.setAttribute('role', 'status');
+    this.status.dataset.visible = 'false';
+    this.root.appendChild(this.status);
+
     if (options.badge !== false) {
       const badge = document.createElement('a');
       badge.className = 'wm-badge';
@@ -603,6 +631,13 @@ export class Overlay {
     }
     this.prompt.textContent = text;
     this.prompt.dataset.visible = 'true';
+  }
+
+  /** A short line at the top while something is under way (busy) or just went wrong; null hides it. */
+  setStatus(text: string | null, busy = false): void {
+    this.status.dataset.visible = String(!!text);
+    this.status.dataset.busy = String(!!text && busy);
+    if (text) this.status.textContent = text;
   }
 
   dispose(): void {

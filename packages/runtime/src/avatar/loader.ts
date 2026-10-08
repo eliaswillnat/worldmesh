@@ -26,8 +26,9 @@ export interface LoadAvatarOptions {
  * never download them.
  */
 export async function loadAvatarModel(descriptor: AvatarDescriptor, options: LoadAvatarOptions): Promise<LoadedAvatar> {
-  const buffer = await download(descriptor.modelUrl, options.maxBytes ?? 40 * 1024 * 1024, options.signal);
-  const [{ GLTFLoader }, vrmModule] = await Promise.all([
+  // The model and the loader code arrive side by side.
+  const [buffer, { GLTFLoader }, vrmModule] = await Promise.all([
+    fetchModel(descriptor.modelUrl, options.maxBytes ?? 40 * 1024 * 1024, options.signal),
     import('three/examples/jsm/loaders/GLTFLoader.js'),
     descriptor.format === 'vrm' ? import('@pixiv/three-vrm') : Promise.resolve(null),
   ]);
@@ -75,6 +76,63 @@ export async function loadAvatarModel(descriptor: AvatarDescriptor, options: Loa
       else disposeTree(model);
     },
   };
+}
+
+// ── Keeping models on the device ─────────────────────────────────────────────
+// A model addressed by its content hash never changes, so this browser keeps
+// a copy (per site, in Cache Storage) and the next visit skips the download.
+// Today that is an AT Protocol blob (at3d): getBlob?did=…&cid=…, where the CID
+// is the hash. Expiring links (VRoid Hub, Sketchfab) are always downloaded.
+
+const MODEL_CACHE = 'worldmesh-avatar-models-v1';
+/** A few characters' worth: the current one and some recent switches. */
+const MODEL_CACHE_ENTRIES = 3;
+
+function isContentAddressed(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.pathname === '/xrpc/com.atproto.sync.getBlob' && !!parsed.searchParams.get('cid');
+  } catch {
+    return false;
+  }
+}
+
+async function fetchModel(url: string, maxBytes: number, signal?: AbortSignal): Promise<ArrayBuffer> {
+  const cache = isContentAddressed(url) ? await openModelCache() : null;
+  if (cache) {
+    try {
+      const hit = await cache.match(url);
+      if (hit) {
+        const bytes = await hit.arrayBuffer();
+        if (bytes.byteLength > 0 && bytes.byteLength <= maxBytes) return bytes;
+      }
+    } catch {
+      // A broken entry: download it again.
+    }
+  }
+  const bytes = await download(url, maxBytes, signal);
+  if (cache) void keepModel(cache, url, bytes);
+  return bytes;
+}
+
+async function openModelCache(): Promise<Cache | null> {
+  try {
+    return typeof caches === 'undefined' ? null : await caches.open(MODEL_CACHE);
+  } catch {
+    // Private browsing, or storage blocked.
+    return null;
+  }
+}
+
+async function keepModel(cache: Cache, url: string, bytes: ArrayBuffer): Promise<void> {
+  try {
+    await cache.put(url, new Response(bytes.slice(0), { headers: { 'Content-Type': 'application/octet-stream' } }));
+    // Oldest first: drop all but the most recent few.
+    const keys = await cache.keys();
+    for (const request of keys.slice(0, Math.max(0, keys.length - MODEL_CACHE_ENTRIES))) await cache.delete(request);
+  } catch {
+    // Out of space or storage blocked: it simply downloads next time.
+  }
 }
 
 async function download(url: string, maxBytes: number, signal?: AbortSignal): Promise<ArrayBuffer> {

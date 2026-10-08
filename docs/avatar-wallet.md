@@ -169,6 +169,12 @@ that has `uploads`.
    cookies). The answer is `{ avatar: AvatarDescriptor | null }`.
 4. Portals add the ticket to the next world's URL, so the avatar follows.
 
+While a character loads, the runtime shows "Loading your character…" over the
+default body. An at3d model is addressed by its content hash (the blob CID), so
+each site keeps the last few in the visitor's own Cache Storage and skips the
+download next time; expiring links (VRoid Hub, Sketchfab) are always fetched.
+The model and the VRM loader code download side by side.
+
 The hub's own walk-mode lobby wears the character too: it resolves the same
 ticket, same-origin, and loads the model into the local player (not in private
 mode, where the visitor is a ghost in the default figure). Other visitors in

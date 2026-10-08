@@ -120,6 +120,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   const footsteps = options.footsteps ? new Footsteps() : null;
   let avatarDescriptor: AvatarDescriptor | null = null;
   let avatarLoad: AbortController | null = null;
+  let avatarStatusTimer = 0;
   let xrSession: XRSession | null = null;
   const xrOrigin = new Group();
   xrOrigin.name = 'worldmesh-xr-origin';
@@ -223,6 +224,9 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     if (disposed || !player.root) return false;
     avatarLoad?.abort();
     const load = (avatarLoad = new AbortController());
+    // The default body stands in meanwhile; say why it is not the visitor's own yet.
+    window.clearTimeout(avatarStatusTimer);
+    overlay.setStatus('Loading your character…', true);
     try {
       const loaded = await loadAvatarModel(descriptor, {
         height,
@@ -233,22 +237,33 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
         loaded.dispose();
         return false;
       }
-      if (!player.setExternalBody(loaded)) return false;
+      if (!player.setExternalBody(loaded)) {
+        overlay.setStatus(null);
+        return false;
+      }
       avatarDescriptor = descriptor;
       applyViewVisibility();
+      overlay.setStatus(null);
       events.emit('avatar:load', { descriptor });
       return true;
     } catch (error) {
       if (load.signal.aborted) return false;
       console.warn('[worldmesh] Could not load the avatar; keeping the default body.', error);
       events.emit('avatar:error', { descriptor, error });
+      if (!disposed) {
+        overlay.setStatus('Could not load your character');
+        avatarStatusTimer = window.setTimeout(() => overlay.setStatus(null), 4000);
+      }
       return false;
     } finally {
+      // A newer load (or clearAvatar) owns the status line now.
       if (avatarLoad === load) avatarLoad = null;
     }
   }
 
   function clearAvatar(): void {
+    window.clearTimeout(avatarStatusTimer);
+    overlay.setStatus(null);
     avatarLoad?.abort();
     player.clearExternalBody();
     avatarDescriptor = null;
@@ -555,6 +570,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
       void session.end().catch(() => undefined);
     }
     avatarLoad?.abort();
+    window.clearTimeout(avatarStatusTimer);
     window.removeEventListener('resize', handleResize);
     network?.detach?.();
     input.dispose();
