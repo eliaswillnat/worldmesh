@@ -20,7 +20,6 @@ import {
   Vector2,
   Vector3,
 } from 'three';
-import { DOOR_VIEW_DEPTH_FAR, DOOR_VIEW_DEPTH_NEAR } from '@worldmesh/runtime';
 import { drawEntries, measureEntries } from '../entries';
 import { addFrameEdgeGlow, doorFrameGeometry, GALLERY_CORNER, ROUNDED_TOP_GLSL } from './doorShape';
 import type { LoadedDoorView } from './doorViews';
@@ -82,6 +81,12 @@ const VIEW_FADE = 0.7;
 const VIEW_SPAWN_BEHIND = 0.6;
 /** Door views are drawn with the world's own sizes; this eye height is used if the snapshot lacks one. */
 const VIEW_EYE_HEIGHT = 1.6;
+/** How much of the eye's offset from the spawn the door view follows (see viewSample). */
+const VIEW_PARALLAX = 0.8;
+/** Share of that given up between 3 m and 12 m from the spawn. */
+const VIEW_PARALLAX_FALLOFF = 0.55;
+/** Steps along each view ray to settle on the snapshot's depth. */
+const VIEW_STEPS = 16;
 const portalVertex = /* glsl */ `
   varying vec2 vUv;
   void main() {
@@ -108,65 +113,37 @@ const portalFragment = /* glsl */ `
   uniform vec2 uBreath;
   // Door view: the world's 360° colour + depth snapshot from its spawn point.
   uniform float uView;
-  uniform sampler2D uViewColor;
-  uniform sampler2D uViewDepth;
-  uniform vec2 uViewSize;
+  uniform samplerCube uViewColor;
+  uniform samplerCube uViewDepth;
   uniform vec3 uViewEye;
   uniform vec3 uViewOrigin;
   varying vec2 vUv;
   ${ROUNDED_TOP_GLSL}
 
-  // Where direction d lands in a 3×2 cube-face atlas (layout: DOOR_VIEW_FACES
-  // in @worldmesh/runtime). Inset half a pixel so faces do not bleed together.
-  vec2 viewAtlas(vec3 d, float size) {
-    vec3 a = abs(d);
-    vec3 F;
-    vec3 U;
-    float face;
-    if (a.x >= a.y && a.x >= a.z) {
-      face = d.x > 0.0 ? 0.0 : 1.0;
-      F = vec3(sign(d.x), 0.0, 0.0);
-      U = vec3(0.0, 1.0, 0.0);
-    } else if (a.y >= a.z) {
-      face = d.y > 0.0 ? 2.0 : 3.0;
-      F = vec3(0.0, sign(d.y), 0.0);
-      U = vec3(0.0, 0.0, sign(d.y));
-    } else {
-      face = d.z > 0.0 ? 4.0 : 5.0;
-      F = vec3(0.0, 0.0, sign(d.z));
-      U = vec3(0.0, 1.0, 0.0);
-    }
-    vec3 R = cross(F, U);
-    vec2 uv = vec2(dot(d, R), dot(d, U)) / dot(d, F) * 0.5 + 0.5;
-    uv = clamp(uv, 0.5 / size, 1.0 - 0.5 / size);
-    float col = mod(face, 3.0);
-    float row = floor(face / 3.0);
-    return vec2((col + uv.x) / 3.0, 1.0 - (row + 1.0 - uv.y) / 2.0);
-  }
-
-  // Distance from the spawn point to whatever it sees along d (16-bit log depth in red + green).
-  float viewDistance(vec3 d) {
-    vec4 t = texture2D(uViewDepth, viewAtlas(d, uViewSize.y));
-    float q = (t.r * 65280.0 + t.g * 255.0) / 65535.0;
-    return ${DOOR_VIEW_DEPTH_NEAR.toFixed(4)} * exp(q * ${Math.log(DOOR_VIEW_DEPTH_FAR / DOOR_VIEW_DEPTH_NEAR).toFixed(6)});
-  }
-
   // The world seen through point p of the doorway from where the camera really
   // is: follow the view ray until it meets the snapshot's depth, so near things
   // slide against far ones as people walk past.
+  //
+  // The ray starts only part of the way from the spawn point to the eye
+  // (VIEW_PARALLAX, less from further away). The snapshot has nothing for what
+  // near things hide, and those gaps grow with the distance from the spawn;
+  // at 0 the view would still turn the right way but without any depth.
   vec3 viewSample(vec2 p) {
-    vec3 o = uViewEye - uViewOrigin;
+    vec3 eye = uViewEye - uViewOrigin;
     vec3 onDoor = vec3(p.x * ${DOOR_WIDTH.toFixed(4)}, (p.y + 0.5) * ${DOOR_HEIGHT.toFixed(4)}, -0.02) - uViewOrigin;
-    vec3 r = normalize(onDoor - o);
-    float tDoor = length(onDoor - o);
+    vec3 r = normalize(onDoor - eye);
+    float k = ${VIEW_PARALLAX.toFixed(3)} * (1.0 - ${VIEW_PARALLAX_FALLOFF.toFixed(3)} * smoothstep(3.0, 12.0, length(eye)));
+    vec3 o = eye * k;
+    // Never anything on this side of the doorway.
+    float tDoor = max((onDoor.z - o.z) / min(r.z, -0.0001), 0.0);
     float b = dot(o, r);
     float c = dot(o, o);
     float t = tDoor + 2.0;
-    for (int i = 0; i < 10; i++) {
-      float D = viewDistance(normalize(o + r * t));
+    for (int i = 0; i < ${VIEW_STEPS}; i++) {
+      float D = textureCube(uViewDepth, normalize(o + r * t)).r;
       t = max(-b + sqrt(max(b * b - c + D * D, 0.0)), tDoor);
     }
-    return texture2D(uViewColor, viewAtlas(normalize(o + r * t), uViewSize.x)).rgb;
+    return textureCube(uViewColor, normalize(o + r * t)).rgb;
   }
 
   // Someone going through: rings of rippling water spread out from the
@@ -411,9 +388,9 @@ export class Door {
           uHasMap: { value: 0 },
           uFit: { value: new Vector2(1, 1) },
           uView: { value: 0 },
-          uViewColor: { value: this.placeholder },
-          uViewDepth: { value: this.placeholder },
-          uViewSize: { value: new Vector2(1, 1) },
+          // Cube maps; three binds an empty one while there is none.
+          uViewColor: { value: null },
+          uViewDepth: { value: null },
           uViewEye: { value: new Vector3() },
           uViewOrigin: { value: new Vector3(0, VIEW_EYE_HEIGHT, -VIEW_SPAWN_BEHIND) },
         },
@@ -507,19 +484,14 @@ export class Door {
     if (view && !this.disposed) {
       uniforms.uViewColor.value = view.color;
       uniforms.uViewDepth.value = view.depth;
-      uniforms.uViewSize.value.set(view.faceSize, view.depthFaceSize);
       uniforms.uViewOrigin.value.set(0, view.eyeHeight ?? VIEW_EYE_HEIGHT, -VIEW_SPAWN_BEHIND);
     } else {
       uniforms.uView.value = 0;
-      uniforms.uViewColor.value = this.placeholder;
-      uniforms.uViewDepth.value = this.placeholder;
+      uniforms.uViewColor.value = null;
+      uniforms.uViewDepth.value = null;
     }
-    old?.color.dispose();
-    old?.depth.dispose();
-    if (view && this.disposed) {
-      view.color.dispose();
-      view.depth.dispose();
-    }
+    old?.dispose();
+    if (view && this.disposed) view.dispose();
   }
 
   /** Fade the door view in (show) or out, drawn from where `camera` stands. */
@@ -528,7 +500,10 @@ export class Door {
     const target = show && this.view !== null ? 1 : 0;
     const current = uniforms.uView.value as number;
     if (current === target && target === 0) return;
-    uniforms.uView.value = target > current ? Math.min(1, current + dt / VIEW_FADE) : Math.max(0, current - dt / VIEW_FADE);
+    // Fully shown stays put; stepping it would dip it every other frame, a flicker.
+    if (current !== target) {
+      uniforms.uView.value = target > current ? Math.min(1, current + dt / VIEW_FADE) : Math.max(0, current - dt / VIEW_FADE);
+    }
     // The shader works in the door's own frame.
     camera.getWorldPosition(this.viewEye);
     uniforms.uViewEye.value.copy(this.group.worldToLocal(this.viewEye));

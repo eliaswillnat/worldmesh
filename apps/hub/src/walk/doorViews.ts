@@ -1,6 +1,7 @@
 import { DOOR_VIEW_DEPTH_FAR, DOOR_VIEW_DEPTH_NEAR, DOOR_VIEW_VERSION } from '@worldmesh/runtime';
-import { CanvasTexture, NearestFilter, NoColorSpace, type Object3D, type Texture } from 'three';
+import type { CubeTexture, Object3D, WebGLRenderer } from 'three';
 import { loadCoverTexture, type Door } from './door';
+import { canMakeDoorViewCubes, makeDoorViewCubes } from './doorViewCube';
 
 /**
  * Door views: up close, a door stops showing its world's cover and shows the
@@ -8,18 +9,19 @@ import { loadCoverTexture, type Door } from './door';
  * workers/screenshot takes. Near things slide against far ones as people walk
  * past, so the doorway reads as a window rather than a poster.
  *
- * Snapshots are big (a 3072×2048 colour atlas is about 25 MB on the GPU), so
- * only the nearest few doors hold one, and each is freed again once its door
- * is out of range.
+ * Snapshots are big (with 1024 px faces, about 25 MB of colour and 12 MB of
+ * depth on the GPU), so only the nearest few doors hold one, and each is
+ * freed again once its door is out of range.
  */
 
 export interface LoadedDoorView {
-  color: Texture;
-  depth: Texture;
-  faceSize: number;
-  depthFaceSize: number;
+  color: CubeTexture;
+  /** Distance from the spawn point in metres, in the red channel. */
+  depth: CubeTexture;
   /** Spawn eye height above the ground, read from the snapshot's own depth; null if unreadable. */
   eyeHeight: number | null;
+  /** Free both cube maps. */
+  dispose(): void;
 }
 
 interface DoorViewStatus {
@@ -32,7 +34,7 @@ const PRELOAD = 24;
 /** Fade it in this close, and back out past HIDE. */
 const SHOW = 15;
 const HIDE = 18;
-/** Doors that hold a view at once. Each costs about 30 MB of GPU memory. */
+/** Doors that hold a view at once. Each costs about 37 MB of GPU memory. */
 const MAX_HELD = 3;
 
 /** Matches doorViewSlug in workers/screenshot. */
@@ -54,8 +56,13 @@ export class DoorViewManager {
   private showing = new Set<Door>();
   private disposed = false;
 
-  /** `endpoint` is workers/screenshot; null turns door views off. */
-  constructor(private endpoint: string | null) {}
+  /** `endpoint` is workers/screenshot; null turns door views off, as does a renderer that can't hold them. */
+  constructor(
+    private endpoint: string | null,
+    private renderer: WebGLRenderer,
+  ) {
+    if (!canMakeDoorViewCubes(renderer)) this.endpoint = null;
+  }
 
   /**
    * Every frame: hand views to the nearest doors, fade them by distance, and
@@ -110,27 +117,20 @@ export class DoorViewManager {
         return;
       }
       const [color, depth] = await Promise.all([loadCoverTexture(view.color), loadCoverTexture(view.depth, true)]);
-      if (!color || !depth || this.disposed) {
+      const image = depth?.image as (CanvasImageSource & { width: number; height: number }) | undefined;
+      const depthFaceSize = view.depthFaceSize ?? (image ? image.height / 2 : 0);
+      if (!color || !depth || !image || this.disposed || image.width !== depthFaceSize * 3 || image.height !== depthFaceSize * 2) {
         color?.dispose();
         depth?.dispose();
         if (!this.disposed) this.unavailable.add(url);
         return;
       }
-      const depthFaceSize = view.depthFaceSize ?? (depth.image as { height: number }).height / 2;
-      const prepared = prepareDepth(depth.image as CanvasImageSource & { width: number; height: number }, depthFaceSize);
+      const faceSize = view.faceSize ?? (color.image as { height: number }).height / 2;
+      const cubes = makeDoorViewCubes(this.renderer, color, depth, faceSize, depthFaceSize);
+      const eyeHeight = readEyeHeight(image, depthFaceSize);
+      color.dispose();
       depth.dispose();
-      if (!prepared) {
-        color.dispose();
-        this.unavailable.add(url);
-        return;
-      }
-      door.setDoorView({
-        color,
-        depth: prepared.texture,
-        faceSize: view.faceSize ?? (color.image as { height: number }).height / 2,
-        depthFaceSize,
-        eyeHeight: prepared.eyeHeight,
-      });
+      door.setDoorView({ color: cubes.color, depth: cubes.depth, eyeHeight, dispose: cubes.dispose });
     } finally {
       this.loading.delete(door);
     }
@@ -152,65 +152,18 @@ export class DoorViewManager {
 }
 
 /**
- * Ready the depth atlas for drawing. Near things grow by one pixel, so the
- * soft edge pixels of the colour image (part object, part background) move
- * with the object instead of staying behind as a ghost outline. Each face is
- * filtered on its own so faces do not bleed into each other.
- *
- * Also reads the spawn's eye height: the distance straight down, at the
- * middle of the downward face (face 3: column 0, row 1), which puts the
- * world's ground level with the lobby floor.
+ * The spawn's eye height: the distance straight down, at the middle of the
+ * downward face (face 3: column 0, row 1). Puts the world's ground level with
+ * the lobby floor. Null if it is not a plausible standing height.
  */
-function prepareDepth(
-  image: CanvasImageSource & { width: number; height: number },
-  faceSize: number,
-): { texture: Texture; eyeHeight: number | null } | null {
-  const { width, height } = image;
-  if (width !== faceSize * 3 || height !== faceSize * 2) return null;
+function readEyeHeight(image: CanvasImageSource, faceSize: number): number | null {
   const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
+  canvas.width = canvas.height = 1;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) return null;
-  ctx.drawImage(image, 0, 0);
-  const source = ctx.getImageData(0, 0, width, height);
-  const out = ctx.createImageData(width, height);
-  const src = source.data;
-  const dst = out.data;
-  const at = (x: number, y: number) => (y * width + x) * 4;
-  for (let y = 0; y < height; y++) {
-    const top = Math.floor(y / faceSize) * faceSize;
-    for (let x = 0; x < width; x++) {
-      const left = Math.floor(x / faceSize) * faceSize;
-      let best = 65535;
-      for (let dy = -1; dy <= 1; dy++) {
-        const sy = y + dy;
-        if (sy < top || sy >= top + faceSize) continue;
-        for (let dx = -1; dx <= 1; dx++) {
-          const sx = x + dx;
-          if (sx < left || sx >= left + faceSize) continue;
-          const i = at(sx, sy);
-          const q = src[i] * 256 + src[i + 1];
-          if (q < best) best = q;
-        }
-      }
-      const o = at(x, y);
-      dst[o] = best >> 8;
-      dst[o + 1] = best & 255;
-      dst[o + 3] = 255;
-    }
-  }
-  ctx.putImageData(out, 0, 0);
-
-  const down = at(Math.floor(faceSize / 2), Math.floor(faceSize * 1.5));
-  const q = (src[down] * 256 + src[down + 1]) / 65535;
+  ctx.drawImage(image, Math.floor(faceSize / 2), Math.floor(faceSize * 1.5), 1, 1, 0, 0, 1, 1);
+  const [r, g] = ctx.getImageData(0, 0, 1, 1).data;
+  const q = (r * 256 + g) / 65535;
   const eyeHeight = DOOR_VIEW_DEPTH_NEAR * Math.exp(q * Math.log(DOOR_VIEW_DEPTH_FAR / DOOR_VIEW_DEPTH_NEAR));
-
-  const texture = new CanvasTexture(canvas);
-  // Read as exact numbers: no colour conversion, no blending between texels.
-  texture.colorSpace = NoColorSpace;
-  texture.minFilter = NearestFilter;
-  texture.magFilter = NearestFilter;
-  texture.generateMipmaps = false;
-  return { texture, eyeHeight: eyeHeight > 0.3 && eyeHeight < 5 ? eyeHeight : null };
+  return eyeHeight > 0.3 && eyeHeight < 5 ? eyeHeight : null;
 }

@@ -690,7 +690,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
   const known = new Map<string, DoorWorld>();
   const doors = new Map<string, Door>();
-  const doorViews = new DoorViewManager(options.doorViewEndpoint || null);
+  const doorViews = new DoorViewManager(options.doorViewEndpoint || null, renderer);
   // Doors with no world behind them yet. Re-laid out with every list change.
   const emptyDoors: Door[] = [];
   // Empty doors round the galleries. Rebuilt with the hall.

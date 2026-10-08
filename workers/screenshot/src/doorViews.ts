@@ -34,6 +34,8 @@ const LOAD_TIMEOUT = 30_000;
 const RUNTIME_TIMEOUT = 30_000;
 /** Lets textures and models that load after the runtime starts arrive before the shot. */
 const SETTLE_TIME = 4_000;
+/** Depth as sharp as colour, so outlines in the two line up on hub doors. */
+const CAPTURE_OPTIONS = { depthFaceSize: 1024 };
 
 export function doorViewSlug(url: URL): string {
   return `${url.hostname}${url.pathname}`.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase();
@@ -101,7 +103,7 @@ async function captureOne(job: DoorViewJob, env: DoorViewEnv): Promise<void> {
     }
     await new Promise((resolve) => setTimeout(resolve, SETTLE_TIME));
 
-    const view = (await page.evaluate(() => (globalThis as any).__worldmeshCaptureDoorView())) as {
+    const view = (await page.evaluate((options) => (globalThis as any).__worldmeshCaptureDoorView(options), CAPTURE_OPTIONS)) as {
       color: string;
       depth: string;
       [key: string]: unknown;

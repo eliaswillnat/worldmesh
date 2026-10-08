@@ -23,6 +23,8 @@ const CAPTURE_PARAM = 'worldmesh-capture';
 const LOAD_TIMEOUT = 30_000;
 const RUNTIME_TIMEOUT = 30_000;
 const SETTLE_TIME = 4_000;
+// Depth as sharp as colour, so outlines in the two line up.
+const CAPTURE_OPTIONS = { depthFaceSize: 1024 };
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -73,7 +75,7 @@ async function captureOne(browser, name, dist, outDir) {
       timeout: RUNTIME_TIMEOUT,
     });
     await page.waitForTimeout(SETTLE_TIME);
-    const view = await page.evaluate(() => globalThis.__worldmeshCaptureDoorView());
+    const view = await page.evaluate((options) => globalThis.__worldmeshCaptureDoorView(options), CAPTURE_OPTIONS);
     const { color, depth, ...meta } = view;
     const dir = join(outDir, name);
     mkdirSync(dir, { recursive: true });
