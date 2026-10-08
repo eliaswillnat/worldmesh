@@ -493,6 +493,8 @@ export class Overlay {
       const badge = document.createElement('a');
       badge.className = 'wm-badge';
       badge.href = options.hubUrl ?? 'https://worldmesh.net';
+      // Shown inside a hub's door: back to the hub replaces the whole page, not the frame.
+      if (window.parent !== window) badge.target = '_top';
       const dot = document.createElement('span');
       dot.className = 'wm-badge-dot';
       const label = document.createElement('span');

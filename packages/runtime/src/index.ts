@@ -1,4 +1,4 @@
-export { CAPTURE_PARAM, createWorldMesh } from './core/worldmesh.js';
+export { CAPTURE_PARAM, EMBED_PARAM, createWorldMesh } from './core/worldmesh.js';
 export {
   DOOR_VIEW_DEPTH_FAR,
   DOOR_VIEW_DEPTH_NEAR,

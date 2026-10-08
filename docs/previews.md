@@ -215,9 +215,13 @@ preview sends no emails. So, once per fresh preview database:
 - **Demo doors compare door styles.** The preview hub is built with
   `VITE_DOOR_COMPARE=on`, so each demo world's door shows its world a different
   way: City the flat cover, Medieval a flat 360° view, Forest the 360° view with
-  depth, Mars the live portal, Space the real world in an iframe. The iframe
-  loads the public `space.worldmesh.net`, as the Access login can't be shown in
-  a frame. Production doors are unaffected.
+  depth, Mars the live portal, Space the real world in an iframe. Walking into
+  the Space door carries on in that same running world, without a reload (the
+  lobby fades away over it; Back returns to the door). That needs an Access
+  login for `preview-space.worldmesh.net` itself, so open it once first: the
+  login can't be shown in a frame. Without one, the door shows the public
+  `space.worldmesh.net` after 10 seconds and walking in travels the usual way.
+  Production doors are unaffected.
   Community worlds get door views only if they use a runtime that can take
   them, the same as in production.
 - **The views and screenshot Workers are public on `workers.dev`.** They hold only

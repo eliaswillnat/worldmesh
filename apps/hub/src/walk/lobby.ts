@@ -1078,7 +1078,30 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     door.warp();
     presence?.share('warp', { x, y, z });
     const out = door.inFront(RETURN_STEP * door.group.scale.x);
-    travel(target, { position: [out.x, door.group.position.y, out.z], yaw: out.yaw }, door);
+    const spot: WalkSpot = { position: [out.x, door.group.position.y, out.z], yaw: out.yaw };
+    if (!door.random && walkInto(target, spot, door)) return;
+    travel(target, spot, door);
+  }
+
+  /**
+   * Into a world already running live behind its door (compare mode's iframe
+   * door): no reload, the lobby fades away over it and then stops, and leaves
+   * the room. False if the door has no such world ready; travel instead.
+   */
+  function walkInto(target: DoorWorld, spot: WalkSpot, door: Door): boolean {
+    if (warping) return false;
+    const entered = doorViews.walkInto(door, travelUrl(target.url), () => {
+      world.stop();
+      presence?.detach();
+      stopPortalHum();
+    });
+    if (!entered) return false;
+    warping = true;
+    playPortalSplash(1);
+    returnTo = spot;
+    options.onEnterWorld?.(target, spot);
+    document.exitPointerLock?.();
+    return true;
   }
 
   /**

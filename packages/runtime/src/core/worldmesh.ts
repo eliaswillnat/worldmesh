@@ -39,6 +39,14 @@ const DEFAULT_HUB = 'https://worldmesh.net/';
  * view. The world then stays offline, so other visitors stay out of the shot.
  */
 export const CAPTURE_PARAM = 'worldmesh-capture';
+/**
+ * Set by a hub that shows the world live in one of its doors. The world
+ * waits offline until the hub posts `{ type: 'worldmesh:enter' }` (the
+ * visitor walked through the door), then goes online without reloading.
+ * While embedded, it asks the hub to take the visitor anywhere else
+ * (`{ type: 'worldmesh:navigate', url }`), as the page around it is the hub's.
+ */
+export const EMBED_PARAM = 'worldmesh-embed';
 
 /**
  * Turn an ordinary Three.js scene into a WorldMesh world.
@@ -183,24 +191,61 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   if (options.autoStart !== false) start();
 
   const capturing = isCaptureRequest();
+  const embedded = !capturing && isEmbedRequest();
+  let network: WorldMeshOptions['network'];
   if (capturing) exposeCapture();
-  const network = capturing ? undefined : options.network ?? createMultiplayer();
-  if (network instanceof Presence) {
-    network.setOnFull((full) => {
-      overlay.setRoomFull(full ? roomFullLabel(network.url) : null, {
-        onRetry: full ? () => network.rejoin() : undefined,
-      });
-      if (full) input.exitPointerLock();
-      events.emit('room:full', { full });
-    });
-  }
-  network?.attach(handle);
-  if (network?.bodies) controller.bodies = () => network.bodies!();
+  if (embedded) awaitEntry();
+  else if (!capturing) goOnline();
 
   startAvatar();
   if (vrEnabled) void offerVr();
 
   return handle;
+
+  function goOnline(): void {
+    network = options.network ?? createMultiplayer();
+    if (network instanceof Presence) {
+      const presence = network;
+      presence.setOnFull((full) => {
+        overlay.setRoomFull(full ? roomFullLabel(presence.url) : null, {
+          onRetry: full ? () => presence.rejoin() : undefined,
+        });
+        if (full) input.exitPointerLock();
+        events.emit('room:full', { full });
+      });
+    }
+    network?.attach(handle);
+    const bodies = network?.bodies?.bind(network);
+    if (bodies) controller.bodies = () => bodies();
+  }
+
+  /**
+   * Shown live in a hub's door: stay offline until the visitor walks through
+   * it. The hub's travel URL (its `from`, for the way back) replaces this
+   * page's own address, as if they had arrived through it.
+   */
+  function awaitEntry(): void {
+    const onMessage = (event: MessageEvent) => {
+      if (event.source !== window.parent || event.data?.type !== 'worldmesh:enter') return;
+      window.removeEventListener('message', onMessage);
+      const url = typeof event.data.url === 'string' ? event.data.url : null;
+      try {
+        if (url && new URL(url).origin === window.location.origin) window.history.replaceState(null, '', url);
+      } catch {
+        // Keep the embed address.
+      }
+      if (!disposed) goOnline();
+    };
+    window.addEventListener('message', onMessage);
+    // Nothing secret: only tells the hub this world can be walked into.
+    window.parent.postMessage({ type: 'worldmesh:ready' }, '*');
+  }
+
+  /** Leave for another page; an embedded world asks its hub to go there instead. */
+  function leaveFor(url: string): void {
+    if (embedded) window.parent.postMessage({ type: 'worldmesh:navigate', url }, '*');
+    else window.location.href = url;
+  }
 
   /** Brings in the visitor's own avatar, if the world asked for one. The default body stays until it is ready. */
   function startAvatar(): void {
@@ -431,7 +476,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     });
     if (cancelled) return;
     input.exitPointerLock();
-    window.location.href = url;
+    leaveFor(url);
   }
 
   function setViewMode(mode: ViewMode): void {
@@ -486,7 +531,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
 
   function travelTo(url: string): void {
     input.exitPointerLock();
-    window.location.href = buildTravelUrl(url);
+    leaveFor(buildTravelUrl(url));
   }
 
   /** Where captures for hub doors are taken from: the player's eyes, the way they face. */
@@ -524,6 +569,14 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     return whilePaused('export a portal scene', () =>
       exportPortal({ ...captureTarget(), feet: controller.position.clone() }, portalOptions),
     );
+  }
+
+  function isEmbedRequest(): boolean {
+    try {
+      return window.parent !== window && new URLSearchParams(window.location.search).has(EMBED_PARAM);
+    } catch {
+      return false;
+    }
   }
 
   function isCaptureRequest(): boolean {

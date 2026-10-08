@@ -1026,6 +1026,11 @@
       .walk-root canvas { display: block; position: relative; transition: filter .45s ease-out; }
       /* Compare mode's live iframe doors, drawn under the canvas and seen through holes in it. */
       .walk-root .door-embeds { position: absolute; inset: 0; pointer-events: none; }
+      /* Walked into: the live page is the whole screen, over the lobby, which then goes. */
+      .walk-root .door-embeds.entered { position: fixed; z-index: 2; width: 100% !important; height: 100% !important; perspective: none !important; pointer-events: auto; }
+      .walk-root .door-embeds.entered div { width: 100% !important; height: 100% !important; transform-style: flat !important; }
+      .walk-root .door-embeds.entered iframe { inset: 0; width: 100% !important; height: 100% !important; }
+      html.world-entered body > :not(.walk-root), html.world-entered .walk-root > :not(.door-embeds) { display: none !important; }
       /* Through a portal: the view softens and saturates as the lens pulls wide, and clears coming out. */
       .walk-root canvas.lensing { filter: blur(3px) saturate(1.5); transition: filter .45s ease-in; }
       .walk-flash {

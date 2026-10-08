@@ -1,5 +1,6 @@
 import {
   CAPTURE_PARAM,
+  EMBED_PARAM,
   DOOR_VIEW_DEPTH_FAR,
   DOOR_VIEW_DEPTH_NEAR,
   DOOR_VIEW_VERSION,
@@ -90,6 +91,19 @@ const COMPARE_STYLES: Record<string, DoorStyle> = {
 /** An embedded world's page size in CSS pixels; scaled down to fill the doorway. */
 const EMBED_WIDTH = 540;
 const EMBED_HEIGHT = Math.round((EMBED_WIDTH * DOOR_HEIGHT) / DOOR_WIDTH);
+/** Seconds an embedded world has to say it can be walked into, before the door shows its public copy instead. */
+const EMBED_READY_TIMEOUT = 10;
+/** Seconds for the lobby to fade away over a live page walked into. */
+const ENTER_FADE = 0.6;
+
+/** A world running live behind its door (compare mode's iframe door). */
+interface EmbeddedPage {
+  object: CSS3DObject;
+  frame: HTMLIFrameElement;
+  /** Its world said it waits to be walked into (EMBED_PARAM); false while loading, or for the public fallback. */
+  ready: boolean;
+  fallback: number;
+}
 
 /** The doorway's corners in its door's own frame, for finding it on screen. */
 const DOORWAY_CORNERS: ReadonlyArray<[number, number]> = [
@@ -127,7 +141,9 @@ export class DoorViewManager {
   private corner = new Vector3();
   private normal = new Vector3();
   /** Compare mode's live pages, drawn under the canvas; null outside compare mode. */
-  private embeds: { renderer: CSS3DRenderer; scene: Scene; pages: Map<Door, CSS3DObject> } | null = null;
+  private embeds: { renderer: CSS3DRenderer; scene: Scene; pages: Map<Door, EmbeddedPage> } | null = null;
+  /** The live page the visitor walked into: it fills the screen, and the lobby is gone. */
+  private entered: EmbeddedPage | null = null;
 
   /**
    * `endpoint` is workers/screenshot; null turns door views off, as does a
@@ -146,6 +162,7 @@ export class DoorViewManager {
       css.domElement.setAttribute('aria-hidden', 'true');
       renderer.domElement.before(css.domElement);
       this.embeds = { renderer: css, scene: new Scene(), pages: new Map() };
+      window.addEventListener('message', this.onMessage);
     }
     // Portal scenes cast shadows. Nothing in them moves, so each is drawn once
     // (renderPortals asks for it); the lobby itself has no shadow-casting lights.
@@ -265,9 +282,64 @@ export class DoorViewManager {
     this.disposed = true;
     for (const frame of this.frames.values()) frame.dispose();
     this.frames.clear();
+    if (this.entered) return; // The visitor is in that world now; the page stays.
     for (const [door] of this.embeds?.pages ?? []) this.unembed(door);
     this.embeds?.renderer.domElement.remove();
+    window.removeEventListener('message', this.onMessage);
   }
+
+  /**
+   * Walking into a door whose world runs live behind it: that same page
+   * becomes the whole screen while the lobby fades away over it, so the
+   * visitor carries on in the world without a reload. `url` is the address
+   * the world would have been opened at (with `from`, for the way back).
+   * `onEntered` runs once the lobby has faded out, to stop it. False if this
+   * door has no page ready to walk into; travel the usual way then.
+   */
+  walkInto(door: Door, url: string, onEntered: () => void): boolean {
+    const page = this.embeds?.pages.get(door);
+    if (!page?.ready || this.entered) return false;
+    this.entered = page;
+    const css = this.embeds!.renderer.domElement;
+    const frame = page.frame;
+    // Out of the 3D layer's transforms, its view and camera elements and the
+    // page's own (not out of the DOM: moving an iframe reloads it).
+    css.classList.add('entered');
+    for (let element: HTMLElement | null = frame; element && element !== css; element = element.parentElement) {
+      element.style.transform = 'none';
+    }
+    frame.style.pointerEvents = 'auto';
+    frame.removeAttribute('aria-hidden');
+    frame.tabIndex = 0;
+    css.removeAttribute('aria-hidden');
+    // Over the lobby, fading in: the lobby seems to dissolve into the world.
+    const done = () => {
+      document.documentElement.classList.add('world-entered');
+      onEntered();
+    };
+    css.animate([{ opacity: 0 }, { opacity: 1 }], { duration: ENTER_FADE * 1000, easing: 'ease-out' }).finished.then(done, done);
+    frame.contentWindow?.postMessage({ type: 'worldmesh:enter', url }, new URL(frame.src).origin);
+    frame.focus();
+    // Back returns to the lobby, which comes back at this door (the hub saved the spot).
+    window.history.pushState({ worldmeshEntered: true }, '');
+    window.addEventListener('popstate', () => window.location.reload(), { once: true });
+    return true;
+  }
+
+  /** Embedded worlds report they can be walked into, and ask to be taken elsewhere. */
+  private onMessage = (event: MessageEvent): void => {
+    const type = (event.data as { type?: unknown } | null)?.type;
+    for (const page of this.embeds?.pages.values() ?? []) {
+      if (event.source !== page.frame.contentWindow) continue;
+      if (type === 'worldmesh:ready') {
+        page.ready = true;
+        window.clearTimeout(page.fallback);
+      } else if (type === 'worldmesh:navigate' && page === this.entered) {
+        const url = (event.data as { url?: unknown }).url;
+        if (typeof url === 'string' && /^https?:\/\//.test(url)) window.location.href = url;
+      }
+    }
+  };
 
   /** The style a door shows its world in: always 'best' outside compare mode. */
   private style(door: Door): DoorStyle {
@@ -284,10 +356,12 @@ export class DoorViewManager {
 
   /**
    * Stand the door's world, running live in an iframe, behind its doorway.
-   * Opened offline (the capture flag), so it neither joins the room nor
-   * counts as a visitor. Preview worlds sit behind the Access login, which
-   * refuses to load in a frame, so a preview world is shown from its public
-   * address instead.
+   * Opened to wait offline (EMBED_PARAM), so it neither joins the room nor
+   * counts as a visitor until someone walks in. A preview world sits behind
+   * the Access login, which can't show in a frame: if it hasn't said it is
+   * ready in time (no login yet for that address, or an older runtime), the
+   * door shows its public copy instead, offline (the capture flag), and
+   * walking in travels the usual way.
    */
   private embed(door: Door): void {
     if (!this.embeds || this.embeds.pages.has(door) || !door.world) return;
@@ -297,44 +371,55 @@ export class DoorViewManager {
     } catch {
       return;
     }
-    src.hostname = src.hostname.replace(/^preview-/, '');
-    src.searchParams.set(CAPTURE_PARAM, '1');
+    src.searchParams.set(EMBED_PARAM, '1');
     const frame = document.createElement('iframe');
     frame.src = src.toString();
     frame.width = String(EMBED_WIDTH);
     frame.height = String(EMBED_HEIGHT);
     frame.tabIndex = -1;
     frame.title = `${door.world.name}, live`;
-    frame.setAttribute('allow', '');
+    frame.setAttribute('aria-hidden', 'true');
+    // Once walked into, it is the world: its own controls, sound and VR.
+    frame.setAttribute('allow', 'autoplay; fullscreen; xr-spatial-tracking; gamepad');
     frame.style.cssText = 'border:0;display:block;background:#000;pointer-events:none';
-    const page = new CSS3DObject(frame);
-    page.scale.setScalar(DOOR_WIDTH / EMBED_WIDTH);
-    this.embeds.scene.add(page);
+    const object = new CSS3DObject(frame);
+    object.scale.setScalar(DOOR_WIDTH / EMBED_WIDTH);
+    const page: EmbeddedPage = { object, frame, ready: false, fallback: 0 };
+    page.fallback = window.setTimeout(() => {
+      if (page.ready) return;
+      const fallback = new URL(src);
+      fallback.hostname = fallback.hostname.replace(/^preview-/, '');
+      fallback.searchParams.delete(EMBED_PARAM);
+      fallback.searchParams.set(CAPTURE_PARAM, '1');
+      frame.src = fallback.toString();
+    }, EMBED_READY_TIMEOUT * 1000);
+    this.embeds.scene.add(object);
     this.embeds.pages.set(door, page);
     door.setEmbedded(true);
   }
 
   private unembed(door: Door): void {
     const page = this.embeds?.pages.get(door);
-    if (!page) return;
-    page.element.remove();
-    page.removeFromParent();
+    if (!page || page === this.entered) return;
+    window.clearTimeout(page.fallback);
+    page.object.element.remove();
+    page.object.removeFromParent();
     this.embeds!.pages.delete(door);
     door.setEmbedded(false);
   }
 
   /** Every frame: line the live pages up with their doorways, seen by the lobby camera. */
   private renderEmbeds(camera: Camera): void {
-    if (!this.embeds?.pages.size) return;
+    if (!this.embeds?.pages.size || this.entered) return;
     const { renderer: css, scene, pages } = this.embeds;
     const canvas = this.renderer.domElement;
     const size = css.getSize();
     if (size.width !== canvas.clientWidth || size.height !== canvas.clientHeight) css.setSize(canvas.clientWidth, canvas.clientHeight);
-    for (const [door, page] of pages) {
+    for (const [door, { object }] of pages) {
       door.group.updateMatrixWorld();
       // Just behind the doorway, facing out of it like the door.
-      page.position.set(0, DOOR_HEIGHT / 2, -0.03).applyMatrix4(door.group.matrixWorld);
-      door.group.getWorldQuaternion(page.quaternion);
+      object.position.set(0, DOOR_HEIGHT / 2, -0.03).applyMatrix4(door.group.matrixWorld);
+      door.group.getWorldQuaternion(object.quaternion);
     }
     css.render(scene, camera);
   }
