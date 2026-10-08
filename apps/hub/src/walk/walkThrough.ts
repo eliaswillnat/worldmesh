@@ -39,9 +39,9 @@ const HANDOVER_TIMEOUT = 3;
 /** The camera starts gliding in once the visitor is this close in front of the doorway (metres)... */
 const GLIDE_FROM = 2;
 /** ...and is right behind them by this far through it, before the wall behind the door stops them. */
-const GLIDE_TO = -0.4;
+const GLIDE_TO = -0.55;
 /** How far behind the visitor the camera ends up, metres. */
-const GLIDE_NEAR = 0.5;
+const GLIDE_NEAR = 1;
 
 export interface WalkThroughOptions {
   views: DoorViewManager;

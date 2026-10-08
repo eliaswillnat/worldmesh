@@ -80,9 +80,9 @@ export type DoorStyle = 'best' | 'cover' | 'cubemap' | 'depth' | 'portal' | 'wal
 const COMPARE_STYLES: Record<string, DoorStyle> = {
   city: 'cover',
   medieval: 'cubemap',
-  forest: 'depth',
+  forest: 'walk',
   mars: 'portal',
-  space: 'walk',
+  space: 'depth',
 };
 
 /** The doorway's corners in its door's own frame, for finding it on screen. */
