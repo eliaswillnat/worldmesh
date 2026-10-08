@@ -169,6 +169,11 @@ that has `uploads`.
    cookies). The answer is `{ avatar: AvatarDescriptor | null }`.
 4. Portals add the ticket to the next world's URL, so the avatar follows.
 
+The hub's own walk-mode lobby wears the character too: it resolves the same
+ticket, same-origin, and loads the model into the local player (not in private
+mode, where the visitor is a ghost in the default figure). Other visitors in
+the lobby still see the default figure.
+
 A ticket resolves to *whatever is selected now*: picking "Continue without
 character" or disconnecting a platform stops every outstanding ticket at once.
 It can reveal the chosen avatar's descriptor to whoever holds it, and nothing

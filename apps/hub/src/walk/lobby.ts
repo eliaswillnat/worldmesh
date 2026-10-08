@@ -2,6 +2,8 @@ import {
   AVATAR_TICKET_PARAM,
   buildTravelUrl,
   createWorldMesh,
+  parseAvatarDescriptor,
+  type AvatarDescriptor,
   isStrokeMaterial,
   Presence,
   setAvatarAppear,
@@ -143,6 +145,12 @@ export interface Lobby {
   setPrivate(on: boolean): string | null;
   /** Tint the default character. Has no effect once a custom avatar is on. */
   setColor(color: string): void;
+  /**
+   * Wear the visitor's picked character (an Avatar Wallet descriptor), or the
+   * default figure again with null. Kept aside while private: a ghost wears
+   * the default figure.
+   */
+  setAvatar(descriptor: unknown): void;
   /** The made-up name while private, or null while public. */
   readonly alias: string | null;
   dispose(): void;
@@ -607,6 +615,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   // The name presence sends right now. It only changes together with a
   // rejoin, so the old connection never carries the new name.
   let alias: string | null = options.private ? randomAlias() : null;
+  /** The visitor's picked character, worn while public. */
+  let wornAvatar: AvatarDescriptor | null = null;
   // Where a switch in progress is heading; equal to alias otherwise.
   let pendingAlias = alias;
   let ghost: Ghost | null = null;
@@ -1474,6 +1484,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     setTheme,
     setPrivate,
     setColor,
+    setAvatar,
     get alias() {
       return pendingAlias;
     },
@@ -1597,6 +1608,19 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     if (world.avatar) setAvatarColor(world.avatar, next);
   }
 
+  function setAvatar(value: unknown): void {
+    const next = value == null ? null : parseAvatarDescriptor(value);
+    // The same model again (a new ticket for the same pick): keep the one already on.
+    if (next && wornAvatar && next.avatarId === wornAvatar.avatarId && next.modelUrl === wornAvatar.modelUrl) return;
+    wornAvatar = next;
+    wearAvatar();
+  }
+
+  function wearAvatar(): void {
+    if (wornAvatar && !alias) void world.loadAvatar(wornAvatar);
+    else world.clearAvatar();
+  }
+
   function setPrivate(on: boolean): string | null {
     if (on === !!pendingAlias || warping || emerging) return pendingAlias;
     const next = on ? randomAlias() : null;
@@ -1609,6 +1633,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       world.clearAvatar();
       ghost?.restore();
       ghost = alias ? makeGhost(world.avatar) : null;
+      // Back to public: put the picked character on again.
+      if (!alias) wearAvatar();
       spawnPad = Math.floor(Math.random() * spawnPads.pads.length);
       world.teleport(padSpawn(), padYaw());
       triggerSpawnFx();

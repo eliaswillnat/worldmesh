@@ -60,6 +60,8 @@ let rerender: () => void = () => {};
 /** Back from authorizing an upload: the waiting file (or the next one chosen) goes straight to the account. */
 let uploadAuthorized = false;
 let uploadResumed = false;
+/** Told when the picked character (or the ticket that reaches it) changes, so the lobby can wear it. */
+const characterListeners = new Set<() => void>();
 
 /**
  * Wire up the wallet. Returns the outcome of a provider connection the
@@ -370,6 +372,7 @@ async function loadWallet(): Promise<void> {
 }
 
 function applyWallet(next: Wallet): void {
+  const changed = (wallet?.selected?.avatarId ?? null) !== (next.selected?.avatarId ?? null);
   wallet = next;
   setHint(!!next.selected);
   if (next.selected) {
@@ -380,6 +383,7 @@ function applyWallet(next: Wallet): void {
   for (const id of [...listings.keys()]) {
     if (!next.connections.some((c) => c.id === id && c.status === 'active')) listings.delete(id);
   }
+  if (changed) notifyCharacter();
 }
 
 async function loadAvatars(connection: WalletConnection): Promise<void> {
@@ -498,8 +502,42 @@ async function run(task: () => Promise<void>): Promise<void> {
 
 // ── Handoff to worlds ────────────────────────────────────────────────────────
 
+/** Runs `listener` whenever the picked character may have changed. Returns an unsubscribe. */
+export function onCharacterChange(listener: () => void): () => void {
+  characterListeners.add(listener);
+  return () => characterListeners.delete(listener);
+}
+
+function notifyCharacter(): void {
+  for (const listener of characterListeners) listener();
+}
+
+/**
+ * The picked character exactly as a world receives it (the same /resolve a
+ * world calls with the ticket), so the hub's own lobby can wear it too.
+ * Null when there is none, or no ticket yet: `onCharacterChange` fires once
+ * one is minted.
+ */
+export async function characterDescriptor(): Promise<unknown | null> {
+  if (!ticket) return null;
+  try {
+    const response = await fetch('/api/account/avatar/resolve', {
+      method: 'POST',
+      credentials: 'omit',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ticket }),
+    });
+    if (!response.ok) return null;
+    return ((await response.json()) as { avatar?: unknown }).avatar ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function setTicket(next: string | null): void {
+  const changed = next !== ticket;
   ticket = next;
+  if (changed) notifyCharacter();
   try {
     if (next) sessionStorage.setItem(TICKET_KEY, next);
     else sessionStorage.removeItem(TICKET_KEY);

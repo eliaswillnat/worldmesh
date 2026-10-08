@@ -148,6 +148,7 @@ function lobbyWorlds(): WorldEntry[] {
 }
 
 import { getAccountId, getUsername, initAccount, onAccountChange } from './account';
+import { characterDescriptor, onCharacterChange } from './avatars';
 
 initAccount();
 
@@ -481,6 +482,7 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
     walkColor = color && WALK_COLORS.includes(color) ? color : savedWalkColor() ?? randomWalkColor();
     lobby.setColor(walkColor);
     showWalkColor(walkColor);
+    wearCharacter();
     history.replaceState(null, '', '#walk');
     setWalkToggleLabel('Gallery mode');
   } catch (error) {
@@ -500,6 +502,19 @@ function showWalkOnline(): void {
   const visits = viewCounts[HUB_VISIT_KEY];
   walkOnline.textContent = visits ? `${count} online · ${visits.toLocaleString('en')} visits` : `${count} online`;
 }
+
+/** The lobby wears the character picked in the Avatar Wallet, like worlds do. */
+let characterRequest = 0;
+function wearCharacter(): void {
+  if (!lobby) return;
+  const request = ++characterRequest;
+  const target = lobby;
+  void characterDescriptor().then((descriptor) => {
+    // Only the latest answer, and only for the lobby that asked.
+    if (request === characterRequest && lobby === target) target.setAvatar(descriptor);
+  });
+}
+onCharacterChange(wearCharacter);
 
 function exitWalkMode(): void {
   lobby?.dispose();
