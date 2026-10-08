@@ -5,8 +5,10 @@
  * Hub-only, same-origin and session-bound:
  *   GET  /wallet                     connected providers and the selected avatar (D1 only)
  *   GET  /connections/:id/avatars    live listing from the provider
- *   POST /connect/:provider          { handle? } → { url } to the provider's authorization page
+ *   POST /connect/:provider          { handle?, upload? } → { url } to the provider's authorization page
  *   GET  /callback/:provider         provider redirect target
+ *   POST /upload/session             → where the browser sends a model file (after authorizing an upload)
+ *   POST /upload/finish              { name, format, vrmVersion, file } or { cancel: true } → { connectionId, avatar }
  *   POST /disconnect                 { connectionId }
  *   POST /select                     { connectionId, avatarId } or { avatarId: null }
  *   POST /handoff                    → { ticket, expiresAt } for worlds (see handoff.ts)
@@ -25,7 +27,15 @@ import { mintTicket, readTicket } from './handoff';
 import { UnsafeUrlError } from './net';
 import { sketchfabProvider } from './sketchfab';
 import * as store from './store';
-import { AvatarError, type AvatarProvider, type AvatarProviderId, type ConnectionRow, type OAuthFlow, type ProviderContext } from './types';
+import {
+  AvatarError,
+  type AvatarProvider,
+  type AvatarProviderId,
+  type ConnectionRow,
+  type OAuthFlow,
+  type ProviderContext,
+  type UploadedModel,
+} from './types';
 import { vroidProvider } from './vroid';
 
 export const AVATAR_BASE_PATH = '/api/account/avatar';
@@ -99,9 +109,16 @@ export async function handleAvatarRequest(
     const connect = /^\/connect\/([a-z]+)$/.exec(path);
     if (connect && method === 'POST') {
       const provider = providerFor(env, connect[1]);
-      const body = (await readJson(request, 1024)) as { handle?: unknown } | null;
-      const handle = typeof body?.handle === 'string' ? body.handle.slice(0, 256) : undefined;
-      const { url: authorizeUrl, flow } = await provider.connect(context(env, exec, origin, provider.id), { userId, handle });
+      const body = (await readJson(request, 1024)) as { handle?: unknown; upload?: unknown } | null;
+      let handle = typeof body?.handle === 'string' && body.handle.trim() ? body.handle.slice(0, 256) : undefined;
+      const upload = body?.upload === true;
+      if (upload) {
+        if (!provider.uploads) throw new HttpError(400, 'Uploads are not available for this platform.');
+        // Already connected: authorize the same account again, without asking who it is.
+        handle ??= (await store.connectionsOf(env.DB, userId)).find((c) => c.provider === provider.id)?.provider_account_id;
+        if (!handle) throw new HttpError(400, 'Enter your handle first.');
+      }
+      const { url: authorizeUrl, flow } = await provider.connect(context(env, exec, origin, provider.id), { userId, handle, upload });
       const sealed = await seal(env.AVATAR_SECRET, 'oauth-flow-v1', 'flow', flow);
       return json({ url: authorizeUrl }, 200, { 'Set-Cookie': flowCookie(origin, sealed, 600) });
     }
@@ -134,6 +151,15 @@ export async function handleAvatarRequest(
     }
 
     if (path === '/handoff' && method === 'POST') return json(await mintTicket(env.AVATAR_SECRET, userId));
+
+    if (path === '/upload/session' && method === 'POST') {
+      const pending = await readUploadGrant(request, env, origin, userId);
+      const target = pending && PROVIDERS[pending.provider].uploads?.target(pending.grant);
+      if (!target) throw new HttpError(409, 'Your upload permission ran out. Please choose the file again.');
+      return json(target);
+    }
+
+    if (path === '/upload/finish' && method === 'POST') return await finishUpload(request, env, exec, origin, userId);
   } catch (error) {
     if (error instanceof HttpError) throw error;
     if (error instanceof UnsafeUrlError) throw new HttpError(400, 'That account points at a server WorldMesh will not contact.');
@@ -151,7 +177,7 @@ async function wallet(env: Env, userId: string) {
   const [connections, selected] = await Promise.all([store.connectionsOf(env.DB, userId), store.selectedAvatar(env.DB, userId)]);
   return {
     enabled: true,
-    providers: configuredProviders(env).map((p) => ({ id: p.id, label: p.label })),
+    providers: configuredProviders(env).map((p) => ({ id: p.id, label: p.label, uploads: !!p.uploads })),
     connections: connections.map((c) => ({
       id: c.id,
       provider: c.provider,
@@ -173,7 +199,7 @@ async function wallet(env: Env, userId: string) {
 }
 
 async function finishConnect(request: Request, env: Env, auth: Auth, exec: WaitUntil, origin: string, providerId: string): Promise<Response> {
-  const done = (outcome: 'connected' | 'error', reason?: string) => {
+  const done = (outcome: 'connected' | 'upload' | 'error', reason?: string) => {
     const target = new URL('/', origin);
     target.searchParams.set('avatar', outcome);
     if (reason) target.searchParams.set('reason', reason);
@@ -201,13 +227,103 @@ async function finishConnect(request: Request, env: Env, auth: Auth, exec: WaitU
 
   try {
     const provider = providerFor(env, providerId);
-    const account = await provider.completeConnect(context(env, exec, origin, provider.id), params, flow);
-    await store.saveConnection(env.DB, env.AVATAR_SECRET, flow.userId, provider.id, account);
-    return done('connected');
+    const ctx = context(env, exec, origin, provider.id);
+    const account = await provider.completeConnect(ctx, params, flow);
+    try {
+      await store.saveConnection(env.DB, env.AVATAR_SECRET, flow.userId, provider.id, account);
+    } catch (error) {
+      if (account.uploadGrant) ctx.waitUntil(provider.uploads!.end(ctx, account.uploadGrant));
+      throw error;
+    }
+    if (!account.uploadGrant) return done('connected');
+    const sealed = await seal(env.AVATAR_SECRET, 'upload-grant-v1', flow.userId, {
+      provider: provider.id,
+      grant: account.uploadGrant,
+    } satisfies PendingUpload);
+    // Browsers drop cookies over 4 KB without a word; fail here rather than later.
+    if (sealed.length > 3800) {
+      ctx.waitUntil(provider.uploads!.end(ctx, account.uploadGrant));
+      return done('error');
+    }
+    const response = done('upload');
+    response.headers.append('Set-Cookie', uploadCookie(origin, sealed, UPLOAD_COOKIE_SECONDS));
+    return response;
   } catch (error) {
     if (!(error instanceof AvatarError)) console.error('avatar connect failed', error);
     return done('error');
   }
+}
+
+// ── Upload from device ───────────────────────────────────────────────────────
+// The browser sends the file straight to the provider with the grant's token;
+// WorldMesh only creates the avatar record that points at it, then revokes the
+// grant. The grant lives in a sealed, HttpOnly cookie bound to the user, never
+// in D1.
+
+interface PendingUpload {
+  provider: AvatarProviderId;
+  grant: unknown;
+}
+
+const UPLOAD_COOKIE_SECONDS = 15 * 60;
+
+async function readUploadGrant(request: Request, env: Env, origin: string, userId: string): Promise<PendingUpload | null> {
+  const sealed = readCookie(request, uploadCookieName(origin));
+  const pending = sealed ? await open<PendingUpload>(env.AVATAR_SECRET, 'upload-grant-v1', userId, sealed) : null;
+  return pending && PROVIDERS[pending.provider]?.uploads ? pending : null;
+}
+
+async function finishUpload(request: Request, env: Env, exec: WaitUntil, origin: string, userId: string): Promise<Response> {
+  const body = (await readJson(request, 8192)) as Record<string, unknown> | null;
+  const pending = await readUploadGrant(request, env, origin, userId);
+  const clear = { 'Set-Cookie': uploadCookie(origin, '', 0) };
+  if (!pending) {
+    if (body?.cancel === true) return json({ cancelled: true }, 200, clear);
+    throw new HttpError(409, 'Your upload permission ran out. Please choose the file again.');
+  }
+  const provider = PROVIDERS[pending.provider];
+  const uploads = provider.uploads!;
+  const ctx = context(env, exec, origin, provider.id);
+  if (body?.cancel === true) {
+    ctx.waitUntil(uploads.end(ctx, pending.grant));
+    return json({ cancelled: true }, 200, clear);
+  }
+
+  try {
+    const connection = (await store.connectionsOf(env.DB, userId)).find(
+      (c) => c.provider === provider.id && c.provider_account_id === uploads.account(pending.grant),
+    );
+    if (!connection) throw new HttpError(409, 'Your upload permission ran out. Please choose the file again.');
+    const format = body?.format;
+    if (format !== 'vrm' && format !== 'glb') throw new HttpError(400, 'Choose a .vrm or .glb file.');
+    const model: UploadedModel = {
+      name: typeof body?.name === 'string' ? body.name.slice(0, 256) : null,
+      format,
+      vrmVersion: format === 'vrm' && (body?.vrmVersion === '0.x' || body?.vrmVersion === '1.0') ? body.vrmVersion : null,
+      file: body?.file,
+    };
+    const avatar = await uploads.createAvatar(ctx, connection, pending.grant, model);
+    return json({ connectionId: connection.id, avatar }, 200, clear);
+  } catch (error) {
+    if (error instanceof HttpError || error instanceof AvatarError) {
+      return json({ error: error.message }, error.status, clear);
+    }
+    if (error instanceof UnsafeUrlError) return json({ error: 'That account points at a server WorldMesh will not contact.' }, 400, clear);
+    console.error('avatar upload failed', error);
+    return json({ error: 'Your account could not be reached. Try again later.' }, 502, clear);
+  } finally {
+    // One upload per grant, whatever happened. Only now: revoking ends the access token too.
+    ctx.waitUntil(uploads.end(ctx, pending.grant));
+  }
+}
+
+function uploadCookieName(origin: string): string {
+  return origin.startsWith('https:') ? '__Secure-worldmesh.avatar_upload' : 'worldmesh.avatar_upload';
+}
+
+function uploadCookie(origin: string, value: string, maxAge: number): string {
+  const secure = origin.startsWith('https:') ? '; Secure' : '';
+  return `${uploadCookieName(origin)}=${value}; Path=${AVATAR_BASE_PATH}/upload; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${secure}`;
 }
 
 /** The world-facing endpoint: a ticket in, a descriptor out. No cookies, any origin. */

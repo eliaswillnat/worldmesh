@@ -3,7 +3,7 @@ import { getPlatformProxy } from 'wrangler';
 import { createTestDatabase, type TestDatabase } from '../../../db/test/d1';
 import worker, { type Env } from '../src/index';
 import { createAuth } from '../src/auth';
-import { atprotoClientId } from '../src/avatars/atproto';
+import { atprotoClientId, CLIENT_SCOPE } from '../src/avatars/atproto';
 import { fromBase64url, pkceChallenge, seal } from '../src/avatars/crypto';
 
 const ORIGIN = 'https://worldmesh.net';
@@ -12,6 +12,7 @@ const SECRET = 'test-secret-test-secret-test-secret-123';
 const AVATAR_SECRET = 'avatar-secret-avatar-secret-avatar-secret';
 const SESSION_COOKIE = '__Secure-worldmesh.session_token';
 const FLOW_COOKIE = '__Secure-worldmesh.avatar_flow';
+const UPLOAD_COOKIE = '__Secure-worldmesh.avatar_upload';
 const VROID = 'https://hub.vroid.com';
 const S3_URL = 'https://vroid-hub.s3.ap-northeast-1.amazonaws.com/model.vrm?X-Amz-Signature=abc';
 const SKETCHFAB = 'https://sketchfab.com';
@@ -200,9 +201,9 @@ describe('avatar wallet', () => {
     expect(await res.json()).toEqual({
       enabled: true,
       providers: [
-        { id: 'sketchfab', label: 'Sketchfab' },
-        { id: 'vroid', label: 'VRoid Hub' },
-        { id: 'atproto', label: 'at3d' },
+        { id: 'sketchfab', label: 'Sketchfab', uploads: false },
+        { id: 'vroid', label: 'VRoid Hub', uploads: false },
+        { id: 'atproto', label: 'at3d', uploads: true },
       ],
       connections: [],
       selected: null,
@@ -211,7 +212,7 @@ describe('avatar wallet', () => {
 
   it('refuses cross-site state changes', async () => {
     const { cookie } = await signedInUser('csrf-avatar@example.com');
-    for (const path of ['connect/vroid', 'select', 'disconnect', 'handoff']) {
+    for (const path of ['connect/vroid', 'select', 'disconnect', 'handoff', 'upload/session', 'upload/finish']) {
       const res = await post(`/api/account/avatar/${path}`, cookie, {}, 'https://evil.example.org');
       expect(res.status).toBe(403);
     }
@@ -484,7 +485,9 @@ async function verifyDpop(request: Request): Promise<Record<string, unknown>> {
   return decode(payload);
 }
 
-async function startAtproto(cookie: string) {
+const UPLOAD_SCOPE = 'atproto repo:app.at3d.avatar?action=create blob?accept=model/gltf-binary&accept=application/octet-stream';
+
+async function startAtproto(cookie: string, body: Record<string, unknown> = { handle: `@${HANDLE}` }, scope = 'atproto') {
   stubIdentity();
   stubAuthorizationServer();
   let parCalls = 0;
@@ -500,12 +503,12 @@ async function startAtproto(cookie: string) {
       response_type: 'code',
       code_challenge_method: 'S256',
       redirect_uri: `${ORIGIN}/api/account/avatar/callback/atproto`,
-      scope: 'atproto',
+      scope,
       login_hint: HANDLE,
     });
     return reply({ request_uri: 'urn:ietf:params:oauth:request_uri:req-1', expires_in: 300 }, 201, { 'DPoP-Nonce': 'nonce-2' });
   });
-  const start = await post('/api/account/avatar/connect/atproto', cookie, { handle: `@${HANDLE}` });
+  const start = await post('/api/account/avatar/connect/atproto', cookie, body);
   expect(start.status).toBe(200);
   expect(parCalls).toBe(2);
   const url = new URL(((await start.json()) as { url: string }).url);
@@ -559,13 +562,14 @@ describe('at3d / AT Protocol', () => {
       grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],
       redirect_uris: [`${ORIGIN}/api/account/avatar/callback/atproto`],
-      scope: 'atproto',
+      scope: UPLOAD_SCOPE,
       token_endpoint_auth_method: 'none',
       dpop_bound_access_tokens: true,
     });
     expect(atprotoClientId('http://127.0.0.1:5170', 'http://127.0.0.1:5170/api/account/avatar/callback/atproto')).toBe(
-      'http://localhost?redirect_uri=http%3A%2F%2F127.0.0.1%3A5170%2Fapi%2Faccount%2Favatar%2Fcallback%2Fatproto&scope=atproto',
+      `http://localhost?redirect_uri=http%3A%2F%2F127.0.0.1%3A5170%2Fapi%2Faccount%2Favatar%2Fcallback%2Fatproto&scope=${encodeURIComponent(UPLOAD_SCOPE).replace(/%20/g, '+')}`,
     );
+    expect(CLIENT_SCOPE).toBe(UPLOAD_SCOPE);
     expect(() => atprotoClientId('http://localhost:5170', 'x')).toThrow(/127\.0\.0\.1/);
   });
 
@@ -682,6 +686,160 @@ describe('at3d / AT Protocol', () => {
         sourceUrl: null,
       },
     });
+  });
+});
+
+// ── at3d: upload from device ─────────────────────────────────────────────────
+
+const UPLOAD_TOKEN = { ...GOOD_TOKEN, access_token: 'at-upload-access', refresh_token: 'at-upload-refresh', scope: UPLOAD_SCOPE, expires_in: 900 };
+const MODEL_BLOB = { $type: 'blob', ref: { $link: 'bafkreiuploadedmodel' }, mimeType: 'model/gltf-binary', size: 2_000_000 };
+
+async function authorizeUpload(cookie: string, body: Record<string, unknown>) {
+  const { flow } = await startAtproto(cookie, body, UPLOAD_SCOPE);
+  const res = await finishAtproto(cookie, flow, await flowState(flow), UPLOAD_TOKEN);
+  expect(res.headers.get('Location')).toBe(`${ORIGIN}/?avatar=upload`);
+  return cookieValue(res, UPLOAD_COOKIE);
+}
+
+function stubCreateRecord(check: (body: Record<string, unknown>) => void = () => {}) {
+  let attempts = 0;
+  route('POST', `${PDS}/xrpc/com.atproto.repo.createRecord`, async (request) => {
+    attempts++;
+    const proof = await verifyDpop(request);
+    expect(request.headers.get('Authorization')).toBe('DPoP at-upload-access');
+    const ath = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode('at-upload-access')));
+    expect(proof).toMatchObject({ htm: 'POST', htu: `${PDS}/xrpc/com.atproto.repo.createRecord`, ath: btoa(String.fromCharCode(...ath)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '') });
+    // The PDS keeps its own nonce.
+    if (!proof.nonce) return reply({ error: 'use_dpop_nonce' }, 401, { 'DPoP-Nonce': 'pds-nonce-1', 'WWW-Authenticate': 'DPoP error="use_dpop_nonce"' });
+    expect(proof.nonce).toBe('pds-nonce-1');
+    const body = (await request.json()) as Record<string, unknown>;
+    check(body);
+    return reply({ uri: `at://${DID}/app.at3d.avatar/3lupload`, cid: 'bafyreinewrecord' });
+  });
+  return () => attempts;
+}
+
+/** An upload call with its grant cookie; waits for background work (revocation) to finish. */
+async function uploadCall(path: string, cookie: string, grant: string, body: unknown) {
+  const pending: Promise<unknown>[] = [];
+  const ctx = { waitUntil: (promise: Promise<unknown>) => void pending.push(promise), passThroughOnException() {} } as unknown as ExecutionContext;
+  const res = await worker.fetch(
+    new Request(`${ORIGIN}/api/account/avatar/upload/${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: ORIGIN, Cookie: `${cookie}; ${UPLOAD_COOKIE}=${grant}` },
+      body: JSON.stringify(body),
+    }),
+    env,
+    ctx,
+  );
+  await Promise.all(pending);
+  return res;
+}
+
+describe('at3d / upload from device', () => {
+  it('asks for create-avatar and model-upload permission only, and keeps the grant out of D1', async () => {
+    const { user, cookie } = await signedInUser('at-upload@example.com');
+    const grant = await authorizeUpload(cookie, { handle: HANDLE, upload: true });
+    // Not revoked yet, and nothing stored but the connection.
+    expect(calls.some((c) => c.url === `${AS}/oauth/revoke`)).toBe(false);
+    const row = await env.DB.prepare('select * from avatar_connection where user_id = ?').bind(user.id).first();
+    expect(row).toMatchObject({ provider_account_id: DID, token_enc: null });
+    expect(decodeURIComponent(grant)).not.toMatch(/at-upload/);
+
+    const session = await uploadCall('session', cookie, grant, {});
+    expect(session.status).toBe(200);
+    const target = (await session.json()) as { url: string; accessToken: string; dpopKey: JsonWebKey };
+    expect(target.url).toBe(`${PDS}/xrpc/com.atproto.repo.uploadBlob`);
+    expect(target.accessToken).toBe('at-upload-access');
+    expect(target.dpopKey).toMatchObject({ kty: 'EC', crv: 'P-256' });
+
+    // Someone else's session cannot use the grant.
+    const other = await signedInUser('at-upload-other@example.com');
+    const stolen = await uploadCall('session', other.cookie, grant, {});
+    expect(stolen.status).toBe(409);
+  });
+
+  it('creates an app.at3d.avatar record for the uploaded blob, then revokes the grant', async () => {
+    const { cookie } = await signedInUser('at-upload-create@example.com');
+    const grant = await authorizeUpload(cookie, { handle: HANDLE, upload: true });
+    let record: Record<string, unknown> = {};
+    const attempts = stubCreateRecord((body) => {
+      expect(body).toMatchObject({ repo: DID, collection: 'app.at3d.avatar' });
+      record = body.record as Record<string, unknown>;
+    });
+    route('POST', `${AS}/oauth/revoke`, () => new Response(null, { status: 200 }));
+    const res = await uploadCall('finish', cookie, grant, {
+      name: 'Robo Knight',
+      format: 'vrm',
+      vrmVersion: '1.0',
+      file: { ...MODEL_BLOB, extra: 'dropped' },
+    });
+    expect(res.status).toBe(200);
+    expect(attempts()).toBe(2);
+    expect(record).toEqual({
+      $type: 'app.at3d.avatar',
+      name: 'Robo Knight',
+      format: 'vrm',
+      appearance: {
+        $type: 'app.at3d.avatar#vrmAppearance',
+        model: { $type: 'blob', ref: { $link: 'bafkreiuploadedmodel' }, mimeType: 'model/gltf-binary', size: 2_000_000 },
+        vrmVersion: '1.0',
+      },
+      createdAt: expect.any(String),
+      updatedAt: expect.any(String),
+    });
+    const { connectionId, avatar } = (await res.json()) as { connectionId: string; avatar: Record<string, unknown> };
+    expect(avatar).toEqual({
+      id: `at://${DID}/app.at3d.avatar/3lupload`,
+      name: 'Robo Knight',
+      thumbnail: null,
+      format: 'vrm',
+      metadata: { modelCid: 'bafkreiuploadedmodel', vrmVersion: '1.0' },
+    });
+    expect(typeof connectionId).toBe('string');
+    expect(res.headers.getSetCookie().some((c) => c.startsWith(`${UPLOAD_COOKIE}=;`) && c.includes('Max-Age=0'))).toBe(true);
+    const revoke = calls.find((c) => c.url === `${AS}/oauth/revoke`);
+    expect(new URLSearchParams(await revoke!.text()).get('token')).toBe('at-upload-refresh');
+    // Revoked only once the record exists.
+    expect(calls.findIndex((c) => c.url === `${AS}/oauth/revoke`)).toBeGreaterThan(
+      calls.findLastIndex((c) => c.url.endsWith('createRecord')),
+    );
+  });
+
+  it('re-authorizes an already connected account without asking for the handle', async () => {
+    const { cookie } = await signedInUser('at-upload-again@example.com');
+    const { flow } = await startAtproto(cookie);
+    await finishAtproto(cookie, flow, await flowState(flow), GOOD_TOKEN);
+    await authorizeUpload(cookie, { upload: true });
+
+    const { cookie: fresh } = await signedInUser('at-upload-nohandle@example.com');
+    expect((await post('/api/account/avatar/connect/atproto', fresh, { upload: true })).status).toBe(400);
+  });
+
+  it('refuses a malformed blob or an unknown format, and still revokes', async () => {
+    const { cookie } = await signedInUser('at-upload-bad@example.com');
+    for (const body of [
+      { format: 'glb', file: { ...MODEL_BLOB, mimeType: 'text/html' } },
+      { format: 'glb', file: { ...MODEL_BLOB, size: 11 * 1024 * 1024 } },
+      { format: 'fbx', file: MODEL_BLOB },
+    ]) {
+      const grant = await authorizeUpload(cookie, { handle: HANDLE, upload: true });
+      calls.length = 0;
+      route('POST', `${AS}/oauth/revoke`, () => new Response(null, { status: 200 }));
+      const res = await uploadCall('finish', cookie, grant, body);
+      expect(res.status).toBe(400);
+      expect(calls.some((c) => c.url.includes('createRecord'))).toBe(false);
+      expect(calls.some((c) => c.url === `${AS}/oauth/revoke`)).toBe(true);
+    }
+  });
+
+  it('cancels by revoking the grant', async () => {
+    const { cookie } = await signedInUser('at-upload-cancel@example.com');
+    const grant = await authorizeUpload(cookie, { handle: HANDLE, upload: true });
+    route('POST', `${AS}/oauth/revoke`, () => new Response(null, { status: 200 }));
+    const res = await uploadCall('finish', cookie, grant, { cancel: true });
+    expect(await res.json()).toEqual({ cancelled: true });
+    expect(calls.some((c) => c.url === `${AS}/oauth/revoke`)).toBe(true);
   });
 });
 

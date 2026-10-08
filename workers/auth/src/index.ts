@@ -16,7 +16,7 @@ export type { Env };
 
 /** Endpoints worth a per-IP limit in front of everything else. */
 const LIMITED =
-  /^\/api\/auth\/(sign-in|sign-up|callback|sign-out|request-password-reset|reset-password|send-verification-email)\b|^\/api\/account\/username$|^\/api\/account\/avatar\/(connect|callback|connections|select|disconnect|handoff|resolve)\b/;
+  /^\/api\/auth\/(sign-in|sign-up|callback|sign-out|request-password-reset|reset-password|send-verification-email)\b|^\/api\/account\/username$|^\/api\/account\/avatar\/(connect|callback|connections|select|disconnect|handoff|resolve|upload)\b/;
 
 export default {
   async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {

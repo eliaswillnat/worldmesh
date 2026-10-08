@@ -6,10 +6,16 @@
  * picked; the model stays on the platform. Talks to workers/auth under
  * /api/account/avatar over same-origin fetch.
  *
+ * "Upload from device" saves a .vrm or .glb into the visitor's own account on
+ * the platform that takes uploads (at3d), from where it is listed and picked
+ * like any other avatar (./avatarUpload.ts).
+ *
  * When a character is picked, the hub mints a short-lived handoff ticket and
  * adds it to world links as a URL fragment (#wm-avatar=…), which never reaches
  * any server. The world's runtime exchanges it for a descriptor of the model.
  */
+
+import { clearStashedModel, inspectModel, sendModel, stashedModel, stashModel, type ModelFile, type UploadTarget } from './avatarUpload';
 
 interface WalletConnection {
   id: string;
@@ -28,7 +34,7 @@ interface WalletAvatar {
 
 interface Wallet {
   enabled: boolean;
-  providers: { id: string; label: string }[];
+  providers: { id: string; label: string; uploads?: boolean }[];
   connections: WalletConnection[];
   selected: (WalletAvatar & { connectionId: string; provider: string; avatarId: string }) | null;
 }
@@ -51,27 +57,35 @@ let busy = false;
 let message: { text: string; error: boolean } | null = null;
 let ticket: string | null = null;
 let rerender: () => void = () => {};
+/** Back from authorizing an upload: the waiting file (or the next one chosen) goes straight to the account. */
+let uploadAuthorized = false;
+let uploadResumed = false;
 
 /**
  * Wire up the wallet. Returns the outcome of a provider connection the
  * browser just came back from, so the account dialog can open on it.
  */
-export function initAvatarWallet(onChange: () => void): 'connected' | 'error' | null {
+export function initAvatarWallet(onChange: () => void): 'connected' | 'upload' | 'error' | null {
   rerender = onChange;
   document.addEventListener('click', addTicketToWorldLink, true);
   document.addEventListener('auxclick', addTicketToWorldLink, true);
 
   const params = new URLSearchParams(window.location.search);
   const outcome = params.get('avatar');
-  if (outcome !== 'connected' && outcome !== 'error') return null;
+  if (outcome !== 'connected' && outcome !== 'upload' && outcome !== 'error') return null;
   params.delete('avatar');
   params.delete('reason');
   const query = params.toString();
   history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`);
-  message =
-    outcome === 'connected'
-      ? { text: 'Connected. Pick your character below.', error: false }
-      : { text: 'Connecting did not complete. Please try again.', error: true };
+  if (outcome === 'upload') {
+    uploadAuthorized = true;
+    message = { text: 'Saving your character…', error: false };
+  } else if (outcome === 'connected') {
+    message = { text: 'Connected. Pick your character below.', error: false };
+  } else {
+    message = { text: 'Connecting did not complete. Please try again.', error: true };
+    void clearStashedModel();
+  }
   return outcome;
 }
 
@@ -84,6 +98,10 @@ export function setSignedIn(signedIn: boolean): void {
     return;
   }
   if (hasHint() && !ticket) void mintTicket();
+  if (uploadAuthorized && !uploadResumed) {
+    uploadResumed = true;
+    void resumeUpload();
+  }
 }
 
 /** Account view: the current character and a way into the wallet. */
@@ -126,6 +144,8 @@ export function walletView(onBack: () => void): HTMLElement[] {
   } else if (!wallet.enabled || !wallet.providers.length) {
     nodes.push(note('Characters are not available yet.'));
   } else {
+    const uploads = wallet.providers.find((p) => p.uploads);
+    if (uploads) nodes.push(uploadSection(uploads, wallet.connections.find((c) => c.provider === uploads.id)));
     for (const provider of wallet.providers) {
       const connection = wallet.connections.find((c) => c.provider === provider.id);
       nodes.push(providerSection(provider, connection));
@@ -220,6 +240,72 @@ function providerSection(provider: { id: string; label: string }, connection: Wa
     }
     section.append(grid);
   }
+  return section;
+}
+
+/** "Upload from device": a file picker, plus the handle when no account is connected yet. */
+function uploadSection(provider: { id: string }, connection: WalletConnection | undefined): HTMLElement {
+  const section = document.createElement('section');
+  section.className = 'wallet-provider';
+  const header = document.createElement('div');
+  header.className = 'wallet-provider-header';
+  const title = document.createElement('h3');
+  title.textContent = 'Upload from device';
+  header.append(title);
+  if (connection?.displayName) {
+    const who = document.createElement('span');
+    who.className = 'wallet-provider-account';
+    who.textContent = connection.displayName;
+    header.append(who);
+  }
+  section.append(
+    header,
+    note('A .vrm (up to 15 MB) or .glb (up to 10 MB) character from your computer or phone. It is saved in your own Bluesky account, not on WorldMesh.'),
+  );
+
+  const picker = document.createElement('input');
+  picker.type = 'file';
+  picker.accept = '.vrm,.glb';
+  picker.hidden = true;
+  let handle: string | undefined;
+  picker.addEventListener('change', () => {
+    const file = picker.files?.[0];
+    picker.value = '';
+    if (file) void uploadFile(provider.id, file, handle);
+  });
+
+  // Connected, or just authorized: the account is known.
+  if (connection || uploadAuthorized) {
+    const choose = document.createElement('button');
+    choose.type = 'button';
+    choose.className = 'account-provider';
+    choose.textContent = 'Choose file';
+    choose.disabled = busy;
+    choose.addEventListener('click', () => picker.click());
+    section.append(choose, picker);
+    return section;
+  }
+  const form = document.createElement('form');
+  form.className = 'account-username-row';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.placeholder = 'your Bluesky handle (e.g. alice.bsky.social)';
+  input.autocomplete = 'off';
+  input.spellcheck = false;
+  input.required = true;
+  input.maxLength = 253;
+  input.setAttribute('aria-label', 'Bluesky handle');
+  const submit = document.createElement('button');
+  submit.type = 'submit';
+  submit.textContent = 'Choose file';
+  submit.disabled = busy;
+  form.append(input, submit);
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    handle = input.value;
+    picker.click();
+  });
+  section.append(form, picker);
   return section;
 }
 
@@ -330,6 +416,60 @@ async function select(connectionId: string | null, avatarId: string | null): Pro
       ? { text: `${wallet.selected.name || 'Your avatar'} will join you in compatible worlds.`, error: false }
       : { text: 'Worlds will show the default WorldMesh body.', error: false };
   });
+}
+
+// ── Upload from device ───────────────────────────────────────────────────────
+
+/** A file was picked: check it, then authorize the upload (leaving the page) or, if already authorized, upload. */
+async function uploadFile(provider: string, file: File, handle?: string): Promise<void> {
+  await run(async () => {
+    const model = await inspectModel(file);
+    if (uploadAuthorized) {
+      await saveModel(model);
+      return;
+    }
+    // If this browser cannot keep the file, the visitor picks it again on return.
+    await stashModel(model);
+    const { url } = await api<{ url: string }>(`/connect/${provider}`, handle ? { handle, upload: true } : { upload: true });
+    window.location.assign(url);
+  });
+}
+
+/** Back from authorizing: upload the file that was waiting. */
+async function resumeUpload(): Promise<void> {
+  const model = await stashedModel();
+  if (!model) {
+    message = { text: 'Almost there: choose the file again to save it.', error: false };
+    rerender();
+    return;
+  }
+  await run(() => saveModel(model));
+}
+
+async function saveModel(model: ModelFile): Promise<void> {
+  message = { text: 'Uploading your character… This can take a minute.', error: false };
+  rerender();
+  try {
+    const target = await api<UploadTarget>('/upload/session', {});
+    const file = await sendModel(target, model);
+    const saved = await api<{ connectionId: string; avatar: WalletAvatar }>('/upload/finish', {
+      name: model.name,
+      format: model.format,
+      vrmVersion: model.vrmVersion,
+      file,
+    });
+    // It now shows up in the account's list; pick it the usual way.
+    listings.delete(saved.connectionId);
+    applyWallet(await api<Wallet>('/select', { connectionId: saved.connectionId, avatarId: saved.avatar.id }));
+    message = { text: `${saved.avatar.name || 'Your character'} is saved to your account and will join you in compatible worlds.`, error: false };
+  } catch (error) {
+    // The permission is single-use either way.
+    void api('/upload/finish', { cancel: true }).catch(() => undefined);
+    throw error;
+  } finally {
+    uploadAuthorized = false;
+    void clearStashedModel();
+  }
 }
 
 async function mintTicket(): Promise<void> {

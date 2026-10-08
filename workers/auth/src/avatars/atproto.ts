@@ -7,9 +7,16 @@
  * load them.
  *
  * AT Protocol OAuth (https://atproto.com/specs/oauth: PAR, PKCE, DPoP) is used
- * only to prove the user controls the DID. The tokens are revoked and
- * discarded right after the callback; what is stored is the DID, the handle
- * and the PDS URL.
+ * to prove the user controls the DID. The tokens are revoked and discarded
+ * right after the callback; what is stored is the DID, the handle and the PDS
+ * URL.
+ *
+ * "Upload from device" is the one exception, and asks for more: permission
+ * (https://atproto.com/specs/permission) to create app.at3d.avatar records
+ * and upload GLB/VRM blobs, nothing else. Those tokens are never stored: they
+ * ride in a sealed cookie for a few minutes, the visitor's browser uploads
+ * the file straight to the PDS, WorldMesh creates the record, and the grant
+ * is revoked.
  *
  * Every host here (the handle's domain, did:web hosts, the PDS, the
  * authorization server) is user-controlled, so each request goes through the
@@ -34,6 +41,21 @@ const DID = /^did:(plc:[a-z2-7]{24}|web:[a-zA-Z0-9.-]{1,253})$/;
 const RKEY = /^[a-zA-Z0-9._~:-]{1,512}$/;
 const CID = /^[a-zA-Z0-9]{8,128}$/;
 
+/** The blob MIME types uploads are sent as: GLB, and VRM (which the at3d lexicon types as octet-stream). */
+export const GLB_MIME = 'model/gltf-binary';
+export const VRM_MIME = 'application/octet-stream';
+/** Exactly what "Upload from device" may do in the account. */
+export const UPLOAD_SCOPES = [
+  `repo:${AVATAR_COLLECTION}?action=create`,
+  `blob?accept=${GLB_MIME}&accept=${VRM_MIME}`,
+];
+/** Every scope this client may ask for; authorization servers refuse any request outside it. */
+export const CLIENT_SCOPE = ['atproto', ...UPLOAD_SCOPES].join(' ');
+/** at3d's own limits on the model blob (app.at3d.avatar#gltfAppearance / #vrmAppearance). */
+export const MAX_MODEL_BYTES = { glb: 10 * 1024 * 1024, vrm: 15 * 1024 * 1024 } as const;
+/** How long an upload grant may be used. */
+const UPLOAD_GRANT_MS = 15 * 60_000;
+
 type Json = Record<string, unknown>;
 
 interface AtprotoFlowExtra {
@@ -45,7 +67,21 @@ interface AtprotoFlowExtra {
   revocationEndpoint: string | null;
   dpopKey: JsonWebKey;
   dpopNonce: string | null;
+  upload?: boolean;
   [key: string]: unknown;
+}
+
+/** Write access for one upload. Sealed in a cookie for a few minutes, then revoked. */
+interface AtprotoUploadGrant {
+  did: string;
+  pds: string;
+  accessToken: string;
+  /** What to revoke when done: the refresh token ends the whole session. */
+  revokeToken: string;
+  revocationEndpoint: string | null;
+  dpopKey: JsonWebKey;
+  /** Unix ms. */
+  expiresAt: number;
 }
 
 export const atprotoProvider: AvatarProvider = {
@@ -55,7 +91,7 @@ export const atprotoProvider: AvatarProvider = {
   // Needs no client secret: WorldMesh is a public client that keeps no tokens.
   isConfigured: () => true,
 
-  async connect(ctx, { userId, handle: input }) {
+  async connect(ctx, { userId, handle: input, upload }) {
     const clientId = atprotoClientId(ctx.origin, ctx.redirectUri);
     const ownHost = new URL(ctx.origin).host;
     const identity = await resolveIdentity((input ?? '').trim().replace(/^@/, ''), ownHost);
@@ -73,10 +109,13 @@ export const atprotoProvider: AvatarProvider = {
       code_challenge_method: 'S256',
       state,
       redirect_uri: ctx.redirectUri,
-      scope: 'atproto',
+      scope: upload ? ['atproto', ...UPLOAD_SCOPES].join(' ') : 'atproto',
       login_hint: identity.handle ?? identity.did,
     });
     const requestUri = par.body?.request_uri;
+    if (upload && par.body?.error === 'invalid_scope') {
+      throw new AvatarError('Your account cannot save characters from WorldMesh yet.', 502);
+    }
     if ((par.response.status !== 201 && par.response.status !== 200) || typeof requestUri !== 'string') {
       throw new AvatarError('Your AT Protocol server refused the sign-in request.', 502);
     }
@@ -92,6 +131,7 @@ export const atprotoProvider: AvatarProvider = {
       revocationEndpoint: server.revocationEndpoint,
       dpopKey,
       dpopNonce: par.nonce,
+      upload: !!upload,
     };
     return { url: url.toString(), flow: { provider: 'atproto', userId, state, verifier, expiresAt: Date.now() + 10 * 60_000, extra } };
   },
@@ -122,9 +162,25 @@ export const atprotoProvider: AvatarProvider = {
       throw new AvatarError('Signed in as a different account than the handle you entered.');
     }
 
-    // WorldMesh only needed to know who this is. Give the tokens back.
+    const account = { providerAccountId: extra.did, displayName: extra.handle, serviceEndpoint: extra.pds, credentials: null };
     const revoke = extra.revocationEndpoint;
     const secret = typeof body.refresh_token === 'string' ? body.refresh_token : body.access_token;
+    if (extra.upload && typeof body.access_token === 'string' && typeof secret === 'string') {
+      // Kept just long enough for one upload; see `uploads`.
+      const lifetime = typeof body.expires_in === 'number' && body.expires_in > 0 ? body.expires_in * 1000 : UPLOAD_GRANT_MS;
+      const uploadGrant: AtprotoUploadGrant = {
+        did: extra.did,
+        pds: extra.pds,
+        accessToken: body.access_token,
+        revokeToken: secret,
+        revocationEndpoint: revoke,
+        dpopKey: extra.dpopKey,
+        expiresAt: Date.now() + Math.min(lifetime, UPLOAD_GRANT_MS),
+      };
+      return { ...account, uploadGrant };
+    }
+
+    // WorldMesh only needed to know who this is. Give the tokens back.
     if (revoke && typeof secret === 'string') {
       ctx.waitUntil(
         dpopPost(revoke, extra.dpopKey, token.nonce, ownHost, {
@@ -133,7 +189,7 @@ export const atprotoProvider: AvatarProvider = {
         }).catch(() => undefined),
       );
     }
-    return { providerAccountId: extra.did, displayName: extra.handle, serviceEndpoint: extra.pds, credentials: null };
+    return account;
   },
 
   async disconnect() {
@@ -187,7 +243,104 @@ export const atprotoProvider: AvatarProvider = {
   async refreshAuth() {
     return null;
   },
+
+  uploads: {
+    target(grant) {
+      const g = uploadGrant(grant);
+      if (!g) return null;
+      return { url: new URL('/xrpc/com.atproto.repo.uploadBlob', g.pds).toString(), accessToken: g.accessToken, dpopKey: g.dpopKey };
+    },
+
+    account: (grant) => uploadGrant(grant)?.did ?? null,
+
+    async createAvatar(ctx, connection, grant, model) {
+      const g = uploadGrant(grant);
+      if (!g || g.did !== connection.provider_account_id || g.pds !== connection.service_endpoint) {
+        throw new AvatarError('Your upload permission ran out. Please choose the file again.', 409);
+      }
+      const blob = uploadedBlob(model.file, model.format);
+      const now = new Date().toISOString();
+      const name = truncateUtf8(model.name?.trim() ?? '', 64);
+      // app.at3d.avatar (https://at3d.app/lexicons/app/at3d/avatar.json). Union members carry $type.
+      const record: Json = {
+        $type: AVATAR_COLLECTION,
+        ...(name ? { name } : {}),
+        format: model.format === 'vrm' ? 'vrm' : 'gltf',
+        appearance:
+          model.format === 'vrm'
+            ? { $type: `${AVATAR_COLLECTION}#vrmAppearance`, model: blob, ...(model.vrmVersion ? { vrmVersion: model.vrmVersion } : {}) }
+            : { $type: `${AVATAR_COLLECTION}#gltfAppearance`, model: blob },
+        createdAt: now,
+        updatedAt: now,
+      };
+      const ownHost = new URL(ctx.origin).host;
+      const result = await dpopResourcePost(new URL('/xrpc/com.atproto.repo.createRecord', g.pds).toString(), g, ownHost, {
+        repo: g.did,
+        collection: AVATAR_COLLECTION,
+        record,
+      });
+      if (result.status === 401 || result.status === 403) {
+        throw new AvatarError('Your account did not allow saving this character. Please try again.', 403);
+      }
+      const uri = jsonObject(result)?.uri;
+      if (result.status !== 200 || typeof uri !== 'string') throw new AvatarError('Your account could not save the character.', 502);
+      const avatar = toAvatar({ uri, value: record }, g.pds, g.did);
+      if (!avatar) throw new AvatarError('Your account could not save the character.', 502);
+      return avatar;
+    },
+
+    async end(ctx, grant) {
+      const g = uploadGrant(grant, true);
+      if (!g?.revocationEndpoint) return;
+      const ownHost = new URL(ctx.origin).host;
+      await dpopPost(g.revocationEndpoint, g.dpopKey, null, ownHost, {
+        token: g.revokeToken,
+        client_id: atprotoClientId(ctx.origin, ctx.redirectUri),
+      });
+    },
+  },
 };
+
+/** The grant, or null when it is malformed or (unless revoking) used up. */
+function uploadGrant(value: unknown, forRevoking = false): AtprotoUploadGrant | null {
+  const g = value as AtprotoUploadGrant | null;
+  if (!g || typeof g !== 'object' || typeof g.accessToken !== 'string' || !DID.test(g.did) || typeof g.pds !== 'string') return null;
+  return forRevoking || g.expiresAt > Date.now() ? g : null;
+}
+
+/**
+ * The blob reference uploadBlob gave the browser, rebuilt from its checked
+ * fields. The PDS verifies the CID, size and MIME type against what it stored
+ * when the record is created.
+ */
+function uploadedBlob(value: unknown, format: 'vrm' | 'glb'): Json {
+  const ref = blobRef(value);
+  const size = (value as Json | null)?.size;
+  const allowed = format === 'vrm' ? [VRM_MIME, GLB_MIME] : [GLB_MIME];
+  if (
+    !ref ||
+    (value as Json).$type !== 'blob' ||
+    !allowed.includes(ref.mimeType) ||
+    typeof size !== 'number' ||
+    !Number.isInteger(size) ||
+    size <= 0 ||
+    size > MAX_MODEL_BYTES[format]
+  ) {
+    throw new AvatarError('That file did not upload correctly. Please try again.');
+  }
+  return { $type: 'blob', ref: { $link: ref.cid }, mimeType: ref.mimeType, size };
+}
+
+function truncateUtf8(text: string, maxBytes: number): string {
+  let out = '';
+  let bytes = 0;
+  for (const char of text) {
+    bytes += utf8(char).length;
+    if (bytes > maxBytes) break;
+    out += char;
+  }
+  return out;
+}
 
 // ── OAuth client ─────────────────────────────────────────────────────────────
 
@@ -208,7 +361,7 @@ export function atprotoClientId(origin: string, redirectUri: string): string {
   if (new URL(origin).hostname === 'localhost') {
     throw new AvatarError('AT Protocol sign-in needs a loopback IP: open the hub at http://127.0.0.1:5170 (and set BETTER_AUTH_URL to it).');
   }
-  return `http://localhost?${new URLSearchParams({ redirect_uri: redirectUri, scope: 'atproto' })}`;
+  return `http://localhost?${new URLSearchParams({ redirect_uri: redirectUri, scope: CLIENT_SCOPE })}`;
 }
 
 export function atprotoClientMetadata(origin: string, redirectUri: string): Json {
@@ -220,7 +373,7 @@ export function atprotoClientMetadata(origin: string, redirectUri: string): Json
     grant_types: ['authorization_code', 'refresh_token'],
     response_types: ['code'],
     redirect_uris: [redirectUri],
-    scope: 'atproto',
+    scope: CLIENT_SCOPE,
     token_endpoint_auth_method: 'none',
     dpop_bound_access_tokens: true,
   };
@@ -295,7 +448,36 @@ async function dpopPost(
   }
 }
 
-async function dpopProof(privateJwk: JsonWebKey, method: string, url: string, nonce: string | null): Promise<string> {
+/**
+ * A JSON POST to the PDS with the access token. The PDS keeps its own DPoP
+ * nonce, so the first attempt may come back 401 use_dpop_nonce.
+ */
+async function dpopResourcePost(endpoint: string, grant: AtprotoUploadGrant, ownHost: string, body: Json): Promise<FetchResult> {
+  let nonce: string | null = null;
+  for (let attempt = 0; ; attempt++) {
+    const response = await providerFetch(endpoint, {
+      ownHost,
+      method: 'POST',
+      redirect: 'manual',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        Authorization: `DPoP ${grant.accessToken}`,
+        DPoP: await dpopProof(grant.dpopKey, 'POST', endpoint, nonce, grant.accessToken),
+      },
+      body: JSON.stringify(body),
+    });
+    const fresh = response.headers.get('DPoP-Nonce');
+    const wantsNonce = /use_dpop_nonce/.test(response.headers.get('WWW-Authenticate') ?? '') || jsonObject(response)?.error === 'use_dpop_nonce';
+    if (attempt === 0 && (response.status === 401 || response.status === 400) && wantsNonce && fresh) {
+      nonce = fresh;
+      continue;
+    }
+    return response;
+  }
+}
+
+async function dpopProof(privateJwk: JsonWebKey, method: string, url: string, nonce: string | null, accessToken?: string): Promise<string> {
   const key = await crypto.subtle.importKey('jwk', privateJwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
   const target = new URL(url);
   const header = { typ: 'dpop+jwt', alg: 'ES256', jwk: { kty: 'EC', crv: 'P-256', x: privateJwk.x, y: privateJwk.y } };
@@ -306,6 +488,8 @@ async function dpopProof(privateJwk: JsonWebKey, method: string, url: string, no
     iat: Math.floor(Date.now() / 1000),
   };
   if (nonce) payload.nonce = nonce;
+  // RFC 9449: requests to the resource server bind the proof to the token.
+  if (accessToken) payload.ath = base64url(new Uint8Array(await crypto.subtle.digest('SHA-256', utf8(accessToken))));
   const input = `${base64url(utf8(JSON.stringify(header)))}.${base64url(utf8(JSON.stringify(payload)))}`;
   // WebCrypto's ECDSA signature is already the JWS (r || s) form.
   const signature = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, key, utf8(input));

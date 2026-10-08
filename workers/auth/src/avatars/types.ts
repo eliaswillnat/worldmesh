@@ -65,6 +65,12 @@ export interface NewConnection {
   serviceEndpoint?: string | null;
   /** Provider credentials to keep (sealed before storage), or null to keep none. */
   credentials: unknown | null;
+  /**
+   * Write access for one upload from the visitor's device, when that is what
+   * was authorized. Never stored: it rides in a short-lived sealed cookie and
+   * is revoked once the upload is done.
+   */
+  uploadGrant?: unknown;
 }
 
 /** State that must survive the round trip through the provider's authorization page. */
@@ -103,8 +109,11 @@ export interface AvatarProvider {
   readonly label: string;
   /** Whether the Worker has what this provider needs (client credentials…). */
   isConfigured(env: Env): boolean;
-  /** Starts authorization: where to send the browser, and what the callback must see again. */
-  connect(ctx: ProviderContext, input: { userId: string; handle?: string }): Promise<{ url: string; flow: OAuthFlow }>;
+  /**
+   * Starts authorization: where to send the browser, and what the callback must see again.
+   * `upload` asks for the extra permission `uploads` needs.
+   */
+  connect(ctx: ProviderContext, input: { userId: string; handle?: string; upload?: boolean }): Promise<{ url: string; flow: OAuthFlow }>;
   /** Finishes authorization at the callback. Throws AvatarError when it cannot be verified. */
   completeConnect(ctx: ProviderContext, params: URLSearchParams, flow: OAuthFlow): Promise<NewConnection>;
   /** Best-effort revocation at the provider before the connection is deleted. */
@@ -116,6 +125,41 @@ export interface AvatarProvider {
   resolveAvatar(ctx: ProviderContext, connection: ConnectionRow, avatar: AvatarRow): Promise<AvatarDescriptor>;
   /** Renews stored credentials if they are about to expire, and returns the usable ones. */
   refreshAuth(ctx: ProviderContext, connection: ConnectionRow): Promise<unknown | null>;
+  /** Present when visitors can add a model from their device to their own account here. */
+  readonly uploads?: AvatarUploads;
+}
+
+/** A model file from the visitor's device, already sent to the provider by their browser. */
+export interface UploadedModel {
+  name: string | null;
+  /** What the file is, from its contents (checked in the browser). */
+  format: 'vrm' | 'glb';
+  vrmVersion: '0.x' | '1.0' | null;
+  /** The provider's reference to the uploaded file, as it answered the browser. */
+  file: unknown;
+}
+
+/** Where and how the visitor's browser sends the file. The bytes never pass through WorldMesh. */
+export interface UploadTarget {
+  url: string;
+  /** Sent as `Authorization: DPoP <token>`. */
+  accessToken: string;
+  /** The private key the token is bound to; the browser signs DPoP proofs with it. */
+  dpopKey: JsonWebKey;
+}
+
+/**
+ * Uploads from the visitor's device into their own account at the provider,
+ * under a grant from `completeConnect` that is used once and then revoked.
+ */
+export interface AvatarUploads {
+  target(grant: unknown): UploadTarget | null;
+  /** Turns the uploaded file into an avatar in the account, and returns it as `listAvatars` would. */
+  createAvatar(ctx: ProviderContext, connection: ConnectionRow, grant: unknown, model: UploadedModel): Promise<ProviderAvatar>;
+  /** Which account the grant is for (to match it with the connection). */
+  account(grant: unknown): string | null;
+  /** Best-effort revocation of the grant. */
+  end(ctx: ProviderContext, grant: unknown): Promise<void>;
 }
 
 /** An error whose message is safe to show the user. */

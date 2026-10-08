@@ -1,10 +1,13 @@
 # Avatar Wallet
 
-Visitors can bring a character from an avatar platform into compatible worlds.
+Visitors can bring a character from an avatar platform into compatible worlds,
+or upload one from their device into their own account (see
+[Upload from device](#upload-from-device)).
 **WorldMesh stores the pointer, never the character**: no VRM, GLB, glTF,
 texture or other avatar file is ever uploaded to, proxied through, mirrored by
 or cached on WorldMesh (Workers, D1, KV, R2). Models download in the visitor's
-browser, straight from the platform that hosts them.
+browser, straight from the platform that hosts them, and uploads go from the
+visitor's browser straight to their own account.
 
 Independent of ActivityPub. Neither system reads the other's tables.
 
@@ -27,7 +30,8 @@ world (any host) @worldmesh/runtime ── POST /resolve {ticket} ──► desc
 | Listing | `GET /v3/me/models` (the user's own models, up to 5 pages) | `GET /api/account/character_models` (the user's own models) | `com.atproto.repo.listRecords` (public) |
 | Loading | `GET /v3/models/{uid}/download` → `glb.url`, an S3 presigned URL valid ~5 minutes (`Access-Control-Allow-Origin: *`) | `POST /api/download_licenses` → `GET …/{id}/download` → 302 to an S3 presigned URL | `com.atproto.sync.getBlob` on the PDS (public, `Access-Control-Allow-Origin: *`) |
 | Formats | GLB (the glTF archive is a zip, which worlds cannot load) | VRM (0.x, 1.0) | VRM, GLB, glTF (parametric avatars are skipped) |
-| Stored | Sketchfab uid + name, access/refresh tokens **AES-GCM encrypted** | VRoid user id + name, access/refresh tokens **AES-GCM encrypted** | DID, handle, PDS URL. **No tokens**: revoked right after the DID is verified |
+| Upload from device | no | no | yes: VRM up to 15 MB, GLB up to 10 MB (at3d's limits) |
+| Stored | Sketchfab uid + name, access/refresh tokens **AES-GCM encrypted** | VRoid user id + name, access/refresh tokens **AES-GCM encrypted** | DID, handle, PDS URL. **No tokens**: revoked right after the DID is verified, or right after an upload |
 | Refresh | refresh token, on demand (access tokens last about a month) | refresh token, on demand before each use | none needed |
 
 **Why not Avaturn or MetaPerson?** Both keep avatars under the *integrating
@@ -70,16 +74,87 @@ animations: the runtime plays clips named like `idle` and `walk`/`run`.
 - **at3d** is a draft spec with little adoption so far. Records are public by
   nature of AT Protocol: anyone could already fetch them, and the blob URL
   contains the user's DID.
+- **at3d uploads** need an account server that supports AT Protocol's granular
+  permissions (Bluesky's does). One that does not refuses the authorization
+  request (`invalid_scope`), and the visitor is told their account cannot save
+  characters from WorldMesh yet. Servers may also cap blob sizes below at3d's
+  limits (the reference PDS defaults to 5 MB unless its operator raises it;
+  its installer sets 300 MB); the visitor then sees "larger than your account
+  accepts". Uploaded avatars have no thumbnail yet.
 - **at3d locally** needs the hub on `http://127.0.0.1:5170` (AT Protocol's
   development client only accepts loopback IPs) with `BETTER_AUTH_URL` set to it.
+
+## Upload from device
+
+A visitor picks a `.vrm` or `.glb`; it becomes an `app.at3d.avatar` record in
+their own AT Protocol account (for most people, their Bluesky account), shows
+up in their at3d list, and is selected. From there it is an ordinary at3d
+avatar: listing, selection, handoff and the runtime are unchanged. The hub
+says "Upload from device" and "your Bluesky account", never PDS or blob.
+
+```
+hub (browser)                        workers/auth                         visitor's PDS / auth server
+ pick file → check it (GLB magic,
+   VRM extension, size), keep it in
+   IndexedDB ── POST /connect/atproto {upload:true} ─► PAR with upload scopes ──► consent screen
+ ◄──────────── /?avatar=upload ◄── callback: verify DID, keep tokens in a
+                                   sealed cookie (15 min, Path=/upload) ◄─── code → tokens
+ POST /upload/session ───────────► { url, accessToken, dpopKey }
+ uploadBlob (DPoP) ──────────────────────────────────────────────────────────► blob ref
+ POST /upload/finish {blob ref…} ► createRecord app.at3d.avatar (DPoP) ──────► at:// uri
+                                   revoke, clear cookie ──────────────────────► session ended
+ POST /select (as usual)
+```
+
+**What WorldMesh may do, and for how long.** Identity-only sign-in still asks
+for `atproto` alone. An upload asks, at that moment, for exactly
+`repo:app.at3d.avatar?action=create` and
+`blob?accept=model/gltf-binary&accept=application/octet-stream`
+([permission spec](https://atproto.com/specs/permission)): create avatar
+records and upload model files, nothing else (no edits, no deletes, no posts).
+The grant is used once: the tokens are never written to D1, they live in an
+AES-GCM sealed, HttpOnly cookie bound to the WorldMesh user for at most 15
+minutes, and they are revoked as soon as the record is created, the upload
+fails or the visitor cancels. Each upload shows the account's consent screen.
+
+**The bytes never touch WorldMesh.** The Worker gives the hub the upload-only
+access token and its DPoP key; the browser sends the file to
+`com.atproto.repo.uploadBlob` itself (the PDS answers browsers with CORS and
+exposes `DPoP-Nonce`). A bodiless first request fetches the PDS's DPoP nonce
+so the file is sent once. The Worker then calls `com.atproto.repo.createRecord`
+with the returned blob reference, rebuilt from checked fields:
+
+```json
+{
+  "$type": "app.at3d.avatar",
+  "name": "<file name, ≤ 64 bytes>",
+  "format": "vrm",
+  "appearance": {
+    "$type": "app.at3d.avatar#vrmAppearance",
+    "model": { "$type": "blob", "ref": { "$link": "<cid>" }, "mimeType": "…", "size": 123 },
+    "vrmVersion": "1.0"
+  },
+  "createdAt": "…",
+  "updatedAt": "…"
+}
+```
+
+GLB files use `"format": "gltf"` and `app.at3d.avatar#gltfAppearance`. The
+format comes from the file's contents (a `VRMC_vrm` or `VRM` glTF extension
+means VRM), not its name. VRM is uploaded as `application/octet-stream`, as the
+lexicon says; the PDS may sniff and store it as `model/gltf-binary`, and the
+record keeps whatever MIME type the PDS answered with (the PDS refuses a
+record whose blob reference disagrees with what it stored).
 
 ## Adding a provider
 
 Implement `AvatarProvider` (`workers/auth/src/avatars/types.ts`: `connect`,
 `completeConnect`, `disconnect`, `listAvatars`, `getAvatar`, `resolveAvatar`,
-`refreshAuth`) and list it in `PROVIDERS` (`routes.ts`), plus the
-`provider` check in the migration. Routes, storage, the hub UI and the runtime
-stay unchanged: the runtime only ever sees an `AvatarDescriptor`.
+`refreshAuth`, and optionally `uploads`) and list it in `PROVIDERS`
+(`routes.ts`), plus the `provider` check in the migration. Routes, storage,
+the hub UI and the runtime stay unchanged: the runtime only ever sees an
+`AvatarDescriptor`, and the hub offers "Upload from device" for the provider
+that has `uploads`.
 
 ## Handoff to worlds
 
@@ -105,8 +180,10 @@ else: no session, no account details, no platform tokens, no WorldMesh user id.
 | --- | --- |
 | `GET /wallet` | providers, connections, selected avatar (D1 only) |
 | `GET /connections/:id/avatars` | live listing from the platform |
-| `POST /connect/:provider` `{ handle? }` | → `{ url }` of the platform's authorization page |
-| `GET /callback/:provider` | platform redirect target → `/?avatar=connected\|error` |
+| `POST /connect/:provider` `{ handle?, upload? }` | → `{ url }` of the platform's authorization page; `upload` asks for upload permission (handle optional when already connected) |
+| `GET /callback/:provider` | platform redirect target → `/?avatar=connected\|upload\|error` |
+| `POST /upload/session` | → `{ url, accessToken, dpopKey }` for the browser's upload, from the upload cookie |
+| `POST /upload/finish` `{ name, format, vrmVersion, file }` or `{ cancel: true }` | creates the avatar record, then revokes → `{ connectionId, avatar }` |
 | `POST /select` `{ connectionId, avatarId }` or `{ avatarId: null }` | pick, or continue without character |
 | `POST /disconnect` `{ connectionId }` | revoke (VRoid, Sketchfab) and forget |
 | `POST /handoff` | → `{ ticket, expiresAt }` |
@@ -117,15 +194,16 @@ State-changing calls require a same-origin request and a session. OAuth state,
 the PKCE verifier and (AT Protocol) the DPoP key ride in an encrypted, HttpOnly,
 callback-path cookie, bound to the signed-in user. Every AT Protocol host (handle
 domain, did:web host, PDS, authorization server) passes a public-https-only
-guard, including redirects. Connect, callback, listing, select, handoff and
-resolve are rate-limited per IP.
+guard, including redirects. Connect, callback, listing, select, handoff,
+upload and resolve are rate-limited per IP.
 
 ## Cost
 
 One small D1 row per connection and at most one per user for the selection.
-Listing and resolving cost a couple of subrequests to the platform. The model
-bytes never touch Cloudflare, so avatar bandwidth and storage cost WorldMesh
-nothing.
+Listing and resolving cost a couple of subrequests to the platform; an upload
+costs a few more (authorization, createRecord, revocation). The model bytes
+never touch Cloudflare, uploads included, so avatar bandwidth and storage cost
+WorldMesh nothing.
 
 ## Setup
 

@@ -5,7 +5,7 @@
  * reveals nothing about who it belongs to.
  */
 
-export type Purpose = 'provider-token-v1' | 'oauth-flow-v1' | 'handoff-v1';
+export type Purpose = 'provider-token-v1' | 'oauth-flow-v1' | 'handoff-v1' | 'upload-grant-v1';
 
 // Resolved keys only: a promise begun in one request must not be awaited by another.
 const keys = new Map<string, CryptoKey>();
