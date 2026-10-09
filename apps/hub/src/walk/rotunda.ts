@@ -66,7 +66,9 @@ export const BOARD_BOTTOM = 13.4;
 /** Turns per second of the screens, in radians. */
 const BOARD_SPIN = 0.08;
 /** With more worlds than tiles, one tile moves on to the next world this often, in seconds. */
-const BOARD_SWAP_S = 3;
+const BOARD_SWAP_S = 4;
+/** Seconds a cover takes to dissolve into the next one. */
+const BOARD_FADE_S = 1.6;
 const AMBER = '#ffc23d';
 
 
@@ -277,6 +279,29 @@ export function createDepartureBoard(): {
     return { canvas, texture, material: new MeshBasicMaterial({ map: texture, toneMapped: false }) };
   };
   const outer = screen(BOARD_TILES * TILE_PX, Math.round((TILE_PX * 4) / 3));
+  // What the ring showed before the last change, at half size: the covers dissolve
+  // from it into the new ones instead of cutting.
+  const before = screen(outer.canvas.width / 2, Math.round(outer.canvas.height / 2));
+  const fade = {
+    prevMap: { value: before.texture },
+    uFade: { value: 1 },
+    // The stretch of the texture (0..1 round the ring) that is changing.
+    uSwapFrom: { value: 0 },
+    uSwapTo: { value: 1 },
+  };
+  outer.material.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, fade);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform sampler2D prevMap;\nuniform float uFade;\nuniform float uSwapFrom;\nuniform float uSwapTo;')
+      .replace(
+        '#include <map_fragment>',
+        `vec4 sampledDiffuseColor = texture2D( map, vMapUv );
+        float changing = step( uSwapFrom, vMapUv.x ) * step( vMapUv.x, uSwapTo );
+        float t = smoothstep( 0.0, 1.0, uFade );
+        sampledDiffuseColor = mix( texture2D( prevMap, vMapUv ), sampledDiffuseColor, mix( 1.0, t, changing ) );
+        diffuseColor *= sampledDiffuseColor;`,
+      );
+  };
 
   const drum = (radius: number, height: number, bottom: number, material: MeshBasicMaterial | MeshStandardMaterial, parent: Group) => {
     const geometry = new CylinderGeometry(radius, radius, height, 160, 1, true);
@@ -403,9 +428,28 @@ export function createDepartureBoard(): {
     ctx.restore();
   };
 
+  /**
+   * Start a dissolve over [from, to] of the ring: keep what is showing now, so
+   * the redrawn covers fade in over it. A change during a dissolve carries on from where it is.
+   */
+  const beginFade = (from: number, to: number) => {
+    if (fade.uFade.value < 1) {
+      fade.uSwapFrom.value = Math.min(fade.uSwapFrom.value, from);
+      fade.uSwapTo.value = Math.max(fade.uSwapTo.value, to);
+      return;
+    }
+    const ctx = before.canvas.getContext('2d')!;
+    ctx.drawImage(outer.canvas, 0, 0, before.canvas.width, before.canvas.height);
+    before.texture.needsUpdate = true;
+    fade.uSwapFrom.value = from;
+    fade.uSwapTo.value = to;
+    fade.uFade.value = 0;
+  };
+
   /** Portrait covers edge to edge round the whole ring, each with its gate. */
   const drawOuter = () => {
     const { canvas, texture } = outer;
+    beginFade(0, 1);
     const ctx = canvas.getContext('2d')!;
     ctx.fillStyle = '#05070d';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -464,6 +508,7 @@ export function createDepartureBoard(): {
     },
     update(dt) {
       spinning.rotation.y += dt * BOARD_SPIN;
+      if (fade.uFade.value < 1) fade.uFade.value = Math.min(1, fade.uFade.value + dt / BOARD_FADE_S);
       if (flights.length <= BOARD_TILES) return;
       sinceSwap += dt;
       if (sinceSwap < BOARD_SWAP_S) return;
@@ -471,6 +516,7 @@ export function createDepartureBoard(): {
       // The oldest tile takes the next world, so the list keeps flowing round.
       tiles[swapAt] = upcoming;
       upcoming = (upcoming + 1) % flights.length;
+      beginFade(swapAt / tiles.length, (swapAt + 1) / tiles.length);
       drawTile(outer.canvas.getContext('2d')!, swapAt);
       outer.texture.needsUpdate = true;
       swapAt = (swapAt + 1) % tiles.length;
@@ -478,7 +524,7 @@ export function createDepartureBoard(): {
     dispose() {
       disposed = true;
       for (const geometry of geometries) geometry.dispose();
-      for (const { texture, material } of [outer]) {
+      for (const { texture, material } of [outer, before]) {
         texture.dispose();
         material.dispose();
       }
