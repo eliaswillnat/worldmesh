@@ -1006,7 +1006,7 @@ export function createLabel(
 }
 
 /** World height of one canvas pixel on the gate badge, and the space between it and the name below. */
-const GATE_PX = 0.4 / 104;
+const GATE_PX = 0.34 / 104;
 const GATE_GAP = 0.02;
 /** The top of every name under a gate. */
 const NAME_TOP = DOOR_TOP + 1.88;
@@ -1024,8 +1024,8 @@ function createGateBadge(gate: number, light: boolean): { mesh: Mesh<PlaneGeomet
   const word = 'GATE';
   const number = String(gate).padStart(2, '0');
   const padX = 30;
-  const padY = 26;
-  const lineGap = 14;
+  const padY = 22;
+  const lineGap = 12;
   let theme = light;
   const draw = (isLight: boolean) => {
     theme = isLight;
@@ -1033,12 +1033,19 @@ function createGateBadge(gate: number, light: boolean): { mesh: Mesh<PlaneGeomet
     ctx.font = font;
     const top = ctx.measureText(word);
     const wordWidth = top.actualBoundingBoxLeft + top.actualBoundingBoxRight;
+    // Every gate's number is the same height: sized so "00" spans the word.
+    // Narrower numbers like "11" are stretched a little, and any width left
+    // over goes between the digits, so the edges still meet the word's.
     ctx.font = `700 100px ${family}`;
-    const probe = ctx.measureText(number);
+    const probe = ctx.measureText('00');
     const numberSize = (100 * wordWidth) / (probe.actualBoundingBoxLeft + probe.actualBoundingBoxRight);
     const numberFont = `700 ${numberSize}px ${family}`;
     ctx.font = numberFont;
     const bottom = ctx.measureText(number);
+    const ink = bottom.actualBoundingBoxLeft + bottom.actualBoundingBoxRight;
+    const stretch = Math.min(1.3, wordWidth / ink);
+    const spread = (wordWidth - ink * stretch) / Math.max(1, number.length - 1);
+    const pens = [...number].map((_, i) => ctx.measureText(number.slice(0, i)).width);
 
     const width = Math.ceil(wordWidth) + padX * 2;
     const wordBaseline = padY + top.actualBoundingBoxAscent;
@@ -1059,7 +1066,14 @@ function createGateBadge(gate: number, light: boolean): { mesh: Mesh<PlaneGeomet
     ctx.font = font;
     ctx.fillText(word, padX + top.actualBoundingBoxLeft, wordBaseline);
     ctx.font = numberFont;
-    ctx.fillText(number, padX + bottom.actualBoundingBoxLeft, numberBaseline);
+    const pen = padX + bottom.actualBoundingBoxLeft * stretch;
+    [...number].forEach((digit, i) => {
+      ctx.save();
+      ctx.translate(pen + pens[i] * stretch + spread * i, numberBaseline);
+      ctx.scale(stretch, 1);
+      ctx.fillText(digit, 0, 0);
+      ctx.restore();
+    });
     texture.needsUpdate = true;
     mesh.scale.set(width * GATE_PX, height * GATE_PX, 1);
   };
