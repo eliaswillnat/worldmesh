@@ -65,8 +65,8 @@ const TILE_PX = 512;
 export const BOARD_BOTTOM = 13.4;
 /** Turns per second of the screens, in radians. */
 const BOARD_SPIN = 0.08;
-/** With more worlds than tiles, the ring moves on to the next set this often. */
-const BOARD_PAGE_S = 12;
+/** With more worlds than tiles, one tile moves on to the next world this often, in seconds. */
+const BOARD_SWAP_S = 3;
 const AMBER = '#ffc23d';
 
 
@@ -329,9 +329,16 @@ export function createDepartureBoard(): {
   let flights: Flight[] = [];
   const covers = new Map<string, CanvasImageSource>();
   let disposed = false;
-  /** First world shown, when there are more than fit. */
-  let first = 0;
-  let sincePage = 0;
+  /**
+   * The world on each tile. Fewer worlds than BOARD_TILES repeat a whole number
+   * of times round the ring, so it turns without a seam; more are fed in one
+   * tile at a time, continuing the list.
+   */
+  let tiles: number[] = [];
+  /** The next world to feed in, and the tile it replaces. */
+  let upcoming = 0;
+  let swapAt = 0;
+  let sinceSwap = 0;
 
   const colorOf = (flight: Flight, index: number) => flight.color ?? TIMELINE[index % TIMELINE.length];
   const font = (weight: number, size: number) => `${weight} ${size}px Urbanist, ui-sans-serif, system-ui, sans-serif`;
@@ -342,64 +349,86 @@ export function createDepartureBoard(): {
     return `${cut}…`;
   };
 
+  /** One cover and its gate, on tile `t` of the ring. */
+  const drawTile = (ctx: CanvasRenderingContext2D, t: number) => {
+    const H = outer.canvas.height;
+    const W = outer.canvas.width / tiles.length;
+    const x = t * W;
+    const index = tiles[t];
+    const flight = flights[index];
+    const color = colorOf(flight, index);
+    const image = flight.cover ? covers.get(flight.cover) : undefined;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, 0, W, H);
+    ctx.clip();
+    ctx.fillStyle = '#05070d';
+    ctx.fillRect(x, 0, W, H);
+    ctx.beginPath();
+    ctx.rect(x + 3, 0, W - 6, H);
+    ctx.clip();
+    if (image) {
+      // Covers are 3:4 like the tiles; anything else is cropped, never stretched.
+      const { width, height } = image as { width: number; height: number };
+      const scale = Math.max(W / width, H / height);
+      ctx.drawImage(image, x + (W - width * scale) / 2, (H - height * scale) / 2, width * scale, height * scale);
+    } else {
+      const fill = ctx.createLinearGradient(x, 0, x + W, H);
+      fill.addColorStop(0, color);
+      fill.addColorStop(1, '#0b0f1c');
+      ctx.fillStyle = fill;
+      ctx.fillRect(x, 0, W, H);
+      ctx.font = font(700, 44);
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(ellipsize(ctx, flight.name, W - 60), x + W / 2, H / 2);
+    }
+    // The gate, as a small glowing badge at the foot of the cover.
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 18;
+    ctx.fillStyle = 'rgba(5, 7, 13, 0.82)';
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.roundRect(x + W / 2 - 84, H - 92, 168, 62, 31);
+    ctx.fill();
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = font(700, 34);
+    ctx.fillText(`GATE ${flight.gate}`, x + W / 2, H - 60);
+    ctx.restore();
+  };
+
   /** Portrait covers edge to edge round the whole ring, each with its gate. */
   const drawOuter = () => {
     const { canvas, texture } = outer;
     const ctx = canvas.getContext('2d')!;
-    const H = canvas.height;
     ctx.fillStyle = '#05070d';
-    ctx.fillRect(0, 0, canvas.width, H);
-    if (!flights.length) {
-      texture.needsUpdate = true;
-      return;
-    }
-    for (let t = 0; t < BOARD_TILES; t++) {
-      // Fewer worlds than tiles go round the list again; more are paged through.
-      const index = (first + t) % flights.length;
-      const flight = flights[index];
-      const x = t * TILE_PX;
-      const color = colorOf(flight, index);
-      const image = flight.cover ? covers.get(flight.cover) : undefined;
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(x + 3, 0, TILE_PX - 6, H);
-      ctx.clip();
-      if (image) {
-        // Covers are 3:4 like the tiles; anything else is cropped, never stretched.
-        const { width, height } = image as { width: number; height: number };
-        const scale = Math.max(TILE_PX / width, H / height);
-        ctx.drawImage(image, x + (TILE_PX - width * scale) / 2, (H - height * scale) / 2, width * scale, height * scale);
-      } else {
-        const fill = ctx.createLinearGradient(x, 0, x + TILE_PX, H);
-        fill.addColorStop(0, color);
-        fill.addColorStop(1, '#0b0f1c');
-        ctx.fillStyle = fill;
-        ctx.fillRect(x, 0, TILE_PX, H);
-        ctx.font = font(700, 44);
-        ctx.fillStyle = '#ffffff';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(ellipsize(ctx, flight.name, TILE_PX - 60), x + TILE_PX / 2, H / 2);
-      }
-      // The gate, as a small glowing badge at the foot of the cover.
-      ctx.shadowColor = color;
-      ctx.shadowBlur = 18;
-      ctx.fillStyle = 'rgba(5, 7, 13, 0.82)';
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 5;
-      ctx.beginPath();
-      ctx.roundRect(x + TILE_PX / 2 - 84, H - 92, 168, 62, 31);
-      ctx.fill();
-      ctx.stroke();
-      ctx.shadowBlur = 0;
-      ctx.fillStyle = '#ffffff';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.font = font(700, 34);
-      ctx.fillText(`GATE ${flight.gate}`, x + TILE_PX / 2, H - 60);
-      ctx.restore();
-    }
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    for (let t = 0; t < tiles.length; t++) drawTile(ctx, t);
     texture.needsUpdate = true;
+  };
+
+  /** Lay the worlds round the ring afresh. */
+  const layTiles = () => {
+    const n = flights.length;
+    if (!n) {
+      tiles = [];
+    } else if (n > BOARD_TILES) {
+      tiles = Array.from({ length: BOARD_TILES }, (_, t) => t);
+    } else {
+      // A whole number of rounds of the list, as near BOARD_TILES as it comes,
+      // so the last tile runs straight into the first. Tiles widen or narrow a little.
+      const rounds = Math.max(1, Math.round(BOARD_TILES / n));
+      tiles = Array.from({ length: n * rounds }, (_, t) => t % n);
+    }
+    upcoming = n > BOARD_TILES ? BOARD_TILES : 0;
+    swapAt = 0;
+    sinceSwap = 0;
   };
 
   const loadCovers = () => {
@@ -423,6 +452,7 @@ export function createDepartureBoard(): {
         next.every((f, i) => f.name === flights[i].name && f.gate === flights[i].gate && f.cover === flights[i].cover);
       if (same) return;
       flights = next;
+      layTiles();
       drawOuter();
       loadCovers();
     },
@@ -435,11 +465,15 @@ export function createDepartureBoard(): {
     update(dt) {
       spinning.rotation.y += dt * BOARD_SPIN;
       if (flights.length <= BOARD_TILES) return;
-      sincePage += dt;
-      if (sincePage < BOARD_PAGE_S) return;
-      sincePage = 0;
-      first = (first + BOARD_TILES) % flights.length;
-      drawOuter();
+      sinceSwap += dt;
+      if (sinceSwap < BOARD_SWAP_S) return;
+      sinceSwap = 0;
+      // The oldest tile takes the next world, so the list keeps flowing round.
+      tiles[swapAt] = upcoming;
+      upcoming = (upcoming + 1) % flights.length;
+      drawTile(outer.canvas.getContext('2d')!, swapAt);
+      outer.texture.needsUpdate = true;
+      swapAt = (swapAt + 1) % tiles.length;
     },
     dispose() {
       disposed = true;
