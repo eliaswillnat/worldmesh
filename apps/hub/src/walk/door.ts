@@ -678,7 +678,7 @@ export class Door {
       // the space below it. Only an unusually tall stack pushes them higher.
       const nameTop = Math.max(NAME_TOP, chipTop + LABEL_GAP + this.label.scale.y);
       this.label.position.y = nameTop - this.label.scale.y / 2;
-      this.gate.mesh.position.y = Math.max(GATE_Y, nameTop + GATE_GAP + this.gate.mesh.scale.y / 2);
+      this.gate.mesh.position.y = nameTop + GATE_GAP + this.gate.mesh.scale.y / 2;
     } else if (this.chips) {
       this.label.position.y = chipTop + LABEL_GAP + this.label.scale.y / 2;
     }
@@ -1005,44 +1005,63 @@ export function createLabel(
   return { mesh, draw };
 }
 
-/** The gate badge's height, and the space between it and the name below. */
-const GATE_HEIGHT = 0.4;
+/** World height of one canvas pixel on the gate badge, and the space between it and the name below. */
+const GATE_PX = 0.4 / 104;
 const GATE_GAP = 0.02;
-/** Where every gate number's centre sits, and the top of every name under it. */
-const GATE_Y = DOOR_TOP + 2.1;
-const NAME_TOP = GATE_Y - GATE_HEIGHT / 2 - GATE_GAP;
+/** The top of every name under a gate. */
+const NAME_TOP = DOOR_TOP + 1.88;
 
 /**
- * "GATE 12" in amber. On the light wall it sits on a dark plate so the
+ * "GATE" over a big two-digit "03" in amber, the number sized so its edges
+ * line up with the word's. On the light wall it sits on a dark plate so the
  * yellow stays readable; on the dark wall the letters stand alone.
  */
 function createGateBadge(gate: number, light: boolean): { mesh: Mesh<PlaneGeometry, MeshBasicMaterial>; draw: (light: boolean) => void } {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d')!;
-  const font = '700 64px Urbanist, ui-sans-serif, system-ui, sans-serif';
-  const height = 104;
+  const family = 'Urbanist, ui-sans-serif, system-ui, sans-serif';
+  const font = `700 64px ${family}`;
+  const word = 'GATE';
+  const number = String(gate).padStart(2, '0');
+  const padX = 30;
+  const padY = 26;
+  const lineGap = 14;
   let theme = light;
   const draw = (isLight: boolean) => {
     theme = isLight;
+    // Measure the ink, not the advance, so the glyph edges meet exactly.
     ctx.font = font;
-    const text = `GATE ${gate}`;
-    const width = Math.ceil(ctx.measureText(text).width) + 76;
+    const top = ctx.measureText(word);
+    const wordWidth = top.actualBoundingBoxLeft + top.actualBoundingBoxRight;
+    ctx.font = `700 100px ${family}`;
+    const probe = ctx.measureText(number);
+    const numberSize = (100 * wordWidth) / (probe.actualBoundingBoxLeft + probe.actualBoundingBoxRight);
+    const numberFont = `700 ${numberSize}px ${family}`;
+    ctx.font = numberFont;
+    const bottom = ctx.measureText(number);
+
+    const width = Math.ceil(wordWidth) + padX * 2;
+    const wordBaseline = padY + top.actualBoundingBoxAscent;
+    const numberBaseline = wordBaseline + top.actualBoundingBoxDescent + lineGap + bottom.actualBoundingBoxAscent;
+    const height = Math.ceil(numberBaseline + bottom.actualBoundingBoxDescent + padY);
     canvas.width = width;
     canvas.height = height;
     ctx.clearRect(0, 0, width, height);
-    ctx.font = font;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
     if (isLight) {
       ctx.fillStyle = '#141418';
       ctx.beginPath();
-      ctx.roundRect(6, 8, width - 12, height - 16, (height - 16) / 2);
+      ctx.roundRect(6, 6, width - 12, height - 12, 28);
       ctx.fill();
     }
     ctx.fillStyle = '#ffc23d';
-    ctx.fillText(text, width / 2, height / 2 + 3);
+    ctx.font = font;
+    ctx.fillText(word, padX + top.actualBoundingBoxLeft, wordBaseline);
+    ctx.font = numberFont;
+    ctx.fillText(number, padX + bottom.actualBoundingBoxLeft, numberBaseline);
     texture.needsUpdate = true;
-    mesh.scale.set((GATE_HEIGHT * width) / height, GATE_HEIGHT, 1);
+    mesh.scale.set(width * GATE_PX, height * GATE_PX, 1);
   };
   const texture = new CanvasTexture(canvas);
   texture.colorSpace = SRGBColorSpace;
