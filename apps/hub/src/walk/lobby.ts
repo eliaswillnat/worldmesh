@@ -1967,10 +1967,12 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     }
 
     // Each exit is lined right through the wall, from just proud of the hall's
-    // face to the middle of the gate's frame outside, so the way out is one
-    // clean passage. The lining is solid, like a door frame.
+    // face to where the gate's frame outside begins (its back is 5 cm inside
+    // the outer face), so the way out is one clean passage. Running on into
+    // that frame would put two surfaces in the same place, and they flicker.
+    // The lining is solid, like a door frame.
     const liningFront = 0.25;
-    const liningDepth = liningFront + WALL_THICKNESS + 0.2;
+    const liningDepth = liningFront + WALL_THICKNESS - 0.05;
     for (const angle of gateAngles()) {
       const mouth = new Group();
       mouth.position.set(Math.sin(angle) * radius, 0, Math.cos(angle) * radius);
@@ -2142,7 +2144,9 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     ];
     for (const angle of gateAngles()) {
       const [x, z] = atGate(frameR, angle);
-      const [glowX, glowZ] = atGate(frameR + 0.2, angle);
+      // The rim of light sits on the frame's front face (0.25 m out), not
+      // inside it, where it would share the jamb's surface and flicker.
+      const [glowX, glowZ] = atGate(frameR + 0.25 + 0.025, angle);
       solid.push(place(doorFrameGeometry(GATE_WIDTH, GATE_HEIGHT, 0.6, 0.5), x, 0, z, angle));
       glow.push(place(doorFrameGeometry(GATE_WIDTH, GATE_HEIGHT, 0.05, 0.05), glowX, 0, glowZ, angle));
     }
