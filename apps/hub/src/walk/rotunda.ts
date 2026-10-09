@@ -26,7 +26,7 @@ import { loadCoverTexture } from './door';
  * The hall as a hub rotunda, like the atrium of a station, airport or mall:
  * a glass dome with an oculus the spawn beam rises through, galleries of
  * doors ringing the drum below the screens, a departures board
- * hanging over the middle, and concourse signs at the exits. Only looks: none of it is solid.
+ * hanging over the middle, and concourse signs in the exits. Only looks: none of it is solid.
  */
 
 /** The dome rises this fraction of the hall's radius above the drum. */
@@ -562,7 +562,7 @@ function painted(width: number, height: number, canvasW: number, canvasH: number
   };
 }
 
-/** Wayfinding over a sealed exit: the concourse letter and what is (not yet) there. */
+/** Wayfinding in an exit: the concourse letter and where it leads. */
 export function createConcourseSign(letter: string): Painted {
   return painted(5, 1.25, 1024, 256, (ctx) => {
     // Signs stay dark with amber letters in either theme, like the board.
@@ -585,6 +585,6 @@ export function createConcourseSign(letter: string): Painted {
     ctx.fillText(`Concourse ${letter}`, 268, 104);
     ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
     ctx.font = '600 44px Urbanist, ui-sans-serif, system-ui, sans-serif';
-    ctx.fillText('Opening soon', 270, 186);
+    ctx.fillText('Exit to the plaza', 270, 186);
   });
 }
