@@ -430,6 +430,21 @@ const floorShader = {
       return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
     }
 
+    // One tap of the reflection, weighted, with the weight in w. A texel that
+    // is NaN or infinite (a material on a figure can write one, seen from
+    // below at some angles) counts as nothing: left in, it turns the whole
+    // floor pixel black, and the blur stamps it out as a cluster of specks.
+    // Its exponent bits are tested, as isnan can be compiled away. Filtering
+    // next to such a texel can give wild finite values, so a negative tap or
+    // one over 64 is dropped too: nothing in this untonemapped scene is lit
+    // anywhere near that.
+    vec4 reflectionTap(vec4 uv, float weight) {
+      vec3 c = texture2DProj(tDiffuse, uv).rgb;
+      bool broken = any(equal(floatBitsToUint(c) & 0x7f800000u, uvec3(0x7f800000u)))
+        || any(lessThan(c, vec3(0.0))) || any(greaterThan(c, vec3(64.0)));
+      return broken ? vec4(0.0) : vec4(c * weight, weight);
+    }
+
     void main() {
       #include <logdepthbuf_fragment>
 
@@ -442,11 +457,14 @@ const floorShader = {
       // texture2DProj divides by w, so offsets scaled by w are in texture space.
       uv.xy += wobble * (0.004 * uRough) * uv.w;
       vec2 spread = vec2(0.004 * uRough) * uv.w;
-      vec3 reflection = texture2DProj(tDiffuse, uv).rgb * 0.4
-        + texture2DProj(tDiffuse, uv + vec4(spread.x, spread.y * 0.5, 0.0, 0.0)).rgb * 0.15
-        + texture2DProj(tDiffuse, uv + vec4(-spread.x * 0.5, spread.y, 0.0, 0.0)).rgb * 0.15
-        + texture2DProj(tDiffuse, uv + vec4(-spread.x, -spread.y * 0.5, 0.0, 0.0)).rgb * 0.15
-        + texture2DProj(tDiffuse, uv + vec4(spread.x * 0.5, -spread.y, 0.0, 0.0)).rgb * 0.15;
+      vec4 taps = reflectionTap(uv, 0.4)
+        + reflectionTap(uv + vec4(spread.x, spread.y * 0.5, 0.0, 0.0), 0.15)
+        + reflectionTap(uv + vec4(-spread.x * 0.5, spread.y, 0.0, 0.0), 0.15)
+        + reflectionTap(uv + vec4(-spread.x, -spread.y * 0.5, 0.0, 0.0), 0.15)
+        + reflectionTap(uv + vec4(spread.x * 0.5, -spread.y, 0.0, 0.0), 0.15);
+      // Share out what broken taps would have given among the rest; if all
+      // of them are broken, reflect the floor's own colour.
+      vec3 reflection = taps.w > 0.0 ? taps.rgb / taps.w : uBackground * uLight;
       // Patchy sheen, plus a fine grain that fades out before it gets smaller than a pixel.
       float patches = valueNoise(ground * 0.45) * 0.6 + valueNoise(ground * 2.1) * 0.4;
       vec2 grainCoord = ground * 26.0;
