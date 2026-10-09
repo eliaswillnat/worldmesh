@@ -175,10 +175,8 @@ function worldRoomOrigin(url: string): string | null {
 }
 const FLOOR_LAYER = 1;
 const FLOOR_SIZE = 600;
-/** The citadel: never narrower than this, and grows so doors keep this much wall between them. */
-const WALL_MIN_RADIUS = 11;
-/** The hall is this many times as wide as its doors need; the extra wall gets more doors. */
-const HALL_SCALE = 2;
+/** Radius of the hall, inside the citadel's wall. */
+const HALL_RADIUS = 59;
 /** How far the walkable plaza reaches around the lobby. */
 const PLAZA_RADIUS = 120;
 const DOOR_SPACING = 4.2;
@@ -241,11 +239,11 @@ function roundedWallHead(
   return flipInside(geometry);
 }
 /** Ways out to the city, evenly around the drum. Sealed for now. Angle 0 faces +Z, behind you on arrival. */
-const GATE_COUNT = 4;
+const GATE_COUNT = 8;
+/** Doors on each stretch of wall between two exits: inside for multiplayer worlds, outside for solo ones. */
+const DOORS_PER_BAY = 1;
 const GATE_WIDTH = 4.4;
 const GATE_HEIGHT = 6.2;
-/** Wall kept clear on each side of a gate before the first door. */
-const GATE_MARGIN = DOOR_SPACING;
 
 /** Gate angles around the hall, starting at +Z. */
 function gateAngles(): number[] {
@@ -274,18 +272,33 @@ function doorAngles(total: number, radius: number): number[] {
   }
   return angles.map((angle) => (angle + Math.PI * 2) % (Math.PI * 2)).sort((a, b) => a - b);
 }
-/**
- * Slot indexes for `count` worlds on a ring of `total` doors: side by side,
- * so the worlds people added sit together. Worlds keep a stable order around the wall.
- */
-function distribute(count: number, total: number): number[] {
-  return Array.from({ length: Math.min(count, total) }, (_, i) => i);
+/** Doors outside: on the outer wall, in the middle of each stretch between two exits. */
+function outsideAngles(): number[] {
+  const bay = (Math.PI * 2) / GATE_COUNT;
+  return Array.from({ length: GATE_COUNT * DOORS_PER_BAY }, (_, i) => {
+    const gate = Math.floor(i / DOORS_PER_BAY);
+    return gate * bay + (((i % DOORS_PER_BAY) + 1) / (DOORS_PER_BAY + 1)) * bay;
+  });
 }
 
-
-/** The hall always has at least this many doors, and always a few empty ones. */
-const MIN_DOORS = 32;
-const SPARE_DOORS = 6;
+/**
+ * Which worlds get a door, and where. Multiplayer worlds go inside (the demos
+ * first, then the newest); solo ones go outside (newest first), along with
+ * any multiplayer worlds that did not fit inside. Ties break on the URL, so
+ * everyone with the same list gets the same doors. Worlds left over keep
+ * their place in the list and on the departures board, but get no door.
+ */
+function assignDoors(worlds: LobbyWorld[], inside: number, outside: number): { inside: string[]; outside: string[] } {
+  const listed = (world: LobbyWorld) => Date.parse(world.addedAt ?? world.approvedAt ?? '') || 0;
+  const order = (a: LobbyWorld, b: LobbyWorld) =>
+    Number(b.source === 'demo') - Number(a.source === 'demo') || listed(b) - listed(a) || (a.url < b.url ? -1 : a.url > b.url ? 1 : 0);
+  const multiplayer = (world: LobbyWorld) => world.tags?.includes('multiplayer') ?? false;
+  const together = worlds.filter(multiplayer).sort(order);
+  const solo = worlds.filter((world) => !multiplayer(world)).sort(order);
+  const within = together.slice(0, inside);
+  const without = [...solo, ...together.slice(inside)].slice(0, outside);
+  return { inside: within.map((world) => world.url), outside: without.map((world) => world.url) };
+}
 /** The portal hum is heard from this far from an open door, in metres. */
 const HUM_RANGE = 9;
 /** Stand this close in front of an empty door to be offered it. */
@@ -754,6 +767,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const emptyDoors: Door[] = [];
   // Empty doors round the galleries. Rebuilt with the hall.
   const galleryDoors: Door[] = [];
+  /** Angles of the worlds' doors on the outer wall. Rebuilt with the hall. */
+  let outsideDoors: number[] = [];
   // Outside, set into the tower beside the gate: a glowing blue door to a
   // random listed world.
   const randomDoor = new Door(null, light, true);
@@ -1789,25 +1804,22 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     // Gallery claims are put back by hangGalleryDoors.
     const claims = loadClaims().filter((claim) => !claim.level && !worlds.some((entry) => entry.url === claim.url));
     const claimUrls = new Set(claims.map((claim) => claim.url));
-    const urls = [...known.keys()].filter((url) => !claimUrls.has(url)).sort();
-    // A multiple of the gate count, so every bay — and both sides of every exit — match.
-    const needed = Math.max(MIN_DOORS, urls.length + SPARE_DOORS);
-    const gateArc = GATE_COUNT * (GATE_WIDTH + GATE_MARGIN * 2);
-    const radius = HALL_SCALE * Math.max(WALL_MIN_RADIUS, (needed * DOOR_SPACING + gateArc) / (Math.PI * 2));
-    // As many doors as fit the wider wall at the usual spacing.
-    const fits = Math.max(needed, Math.floor((Math.PI * 2 * radius - gateArc) / DOOR_SPACING));
-    const total = fits - (fits % GATE_COUNT);
-    // Doors share the wall between the gates.
+    const listed = [...known.entries()].filter(([url]) => !claimUrls.has(url)).map(([, world]) => world as LobbyWorld);
+    // The same number of doors on every stretch, so both sides of every exit match.
+    const total = GATE_COUNT * DOORS_PER_BAY;
+    const radius = HALL_RADIUS;
     const angles = doorAngles(total, radius);
+    const outside = outsideAngles();
+    const assigned = assignDoors(listed, total, outside.length);
+    const urls = assigned.inside;
     // Worlds sit next to each other; the doors after them stay empty.
-    const slots = distribute(urls.length, total);
+    const slots = urls.map((_, i) => i);
     const at = (door: Door, slot: number) => {
       // Set into the wall, facing the middle of the room, under its gate number.
       door.place(Math.sin(angles[slot]) * radius, Math.cos(angles[slot]) * radius, 0, 0);
       door.setGate(slot + 1);
     };
-
-    urls.forEach((url, i) => {
+    const doorFor = (url: string) => {
       let door = doors.get(url);
       if (!door) {
         door = new Door(known.get(url)!, light);
@@ -1815,8 +1827,27 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         scene.add(door.group);
         doors.set(url, door);
       }
-      at(door, slots[i]);
+      return door;
+    };
+
+    urls.forEach((url, i) => at(doorFor(url), slots[i]));
+    // Outside: against the outer wall, facing the city, numbered after the hall's.
+    const outer = radius + WALL_THICKNESS;
+    outsideDoors = assigned.outside.map((url, i) => {
+      const door = doorFor(url);
+      const r = outer + RANDOM_DOOR_OUT;
+      const angle = outside[i];
+      door.place(Math.sin(angle) * r, Math.cos(angle) * r, Math.sin(angle) * r * 2, Math.cos(angle) * r * 2);
+      door.setGate(total + i + 1);
+      return angle;
     });
+    // Worlds that no longer get a door take theirs down.
+    const placed = new Set([...urls, ...assigned.outside]);
+    for (const [url, door] of doors) {
+      if (placed.has(url) || claimUrls.has(url) || door.group.userData.level) continue;
+      door.dispose();
+      doors.delete(url);
+    }
 
     for (const door of emptyDoors) door.dispose();
     emptyDoors.length = 0;
@@ -1848,6 +1879,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     // Gates are numbered round the hall from the first door after exit A.
     flights = [];
     urls.forEach((url, i) => flights.push({ ...pick(known.get(url)!), gate: slots[i] + 1 }));
+    assigned.outside.forEach((url, i) => flights.push({ ...pick(known.get(url)!), gate: total + i + 1 }));
     for (const claim of claims) {
       const slot = angles.findIndex((angle) => angleDelta(claim.angle, angle) < 0.08);
       if (slot >= 0 && !taken.has(slot)) flights.push({ name: claim.name, cover: claim.cover, gate: slot + 1 });
@@ -2020,7 +2052,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     const ribCount = Math.round((Math.PI * 2 * outer) / 3.2);
     for (let i = 0; i < ribCount; i++) {
       const angle = (i / ribCount) * Math.PI * 2;
-      const byGate = gateAngles().some((gate) => {
+      const byGate = [...gateAngles(), ...outsideDoors].some((gate) => {
         let delta = Math.abs(angle - gate);
         if (delta > Math.PI) delta = Math.PI * 2 - delta;
         return delta < bare;
@@ -2103,8 +2135,9 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     // A tall screen over every gate, facing the plaza. Explore and Discover
     // alternate, each at its own picture's shape, in a deep white bezel.
     const portrait = [cityMaterials.banners.explore, cityMaterials.banners.discover];
-    const bannerH = 14;
     const bannerBottom = GATE_HEIGHT + 2.4;
+    // As tall as fits under the cornice.
+    const bannerH = Math.min(14, CITADEL_HEIGHT - bannerBottom - 1.6);
     const banners: Mesh[] = [];
     gateAngles().forEach((angle, index) => {
       const art = portrait[index % portrait.length];
@@ -2122,15 +2155,17 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
     hangInteriorBanners(radius);
 
-    // The random door's backing and porch, on the outer wall beside the gate.
-    const doorAngle = RANDOM_DOOR_ARC / outer;
-    const around = (r: number) => [Math.sin(doorAngle) * r, Math.cos(doorAngle) * r] as const;
-    const [backX, backZ] = around(outer - 0.05);
-    solid.push(place(new BoxGeometry(5.6, DOOR_TOP + 2.2, 0.5), backX, (DOOR_TOP + 2.2) / 2, backZ, doorAngle));
-    const [porchX, porchZ] = around(outer + 0.55);
-    solid.push(place(new BoxGeometry(5.6, 0.16, 0.9), porchX, DOOR_TOP + 0.75, porchZ, doorAngle));
-    const [lineX, lineZ] = around(outer + 1.0);
-    glow.push(place(new BoxGeometry(5.6, 0.04, 0.04), lineX, DOOR_TOP + 0.67, lineZ, doorAngle));
+    // Backing and porch for each door on the outer wall: the random door beside
+    // the gate, and the worlds' doors between the exits.
+    for (const doorAngle of [RANDOM_DOOR_ARC / outer, ...outsideDoors]) {
+      const around = (r: number) => [Math.sin(doorAngle) * r, Math.cos(doorAngle) * r] as const;
+      const [backX, backZ] = around(outer - 0.05);
+      solid.push(place(new BoxGeometry(5.6, DOOR_TOP + 2.2, 0.5), backX, (DOOR_TOP + 2.2) / 2, backZ, doorAngle));
+      const [porchX, porchZ] = around(outer + 0.55);
+      solid.push(place(new BoxGeometry(5.6, 0.16, 0.9), porchX, DOOR_TOP + 0.75, porchZ, doorAngle));
+      const [lineX, lineZ] = around(outer + 1.0);
+      glow.push(place(new BoxGeometry(5.6, 0.04, 0.04), lineX, DOOR_TOP + 0.67, lineZ, doorAngle));
+    }
 
     const add = (geometries: BufferGeometry[], material: MeshStandardMaterial | typeof cityMaterials.glow) => {
       const mesh = new Mesh(mergeGeometries(geometries), material);
