@@ -177,6 +177,8 @@ const FLOOR_LAYER = 1;
 const FLOOR_SIZE = 600;
 /** The citadel: never narrower than this, and grows so doors keep this much wall between them. */
 const WALL_MIN_RADIUS = 11;
+/** The hall is this many times as wide as its doors need; the extra wall gets more doors. */
+const HALL_SCALE = 2;
 /** How far the walkable plaza reaches around the lobby. */
 const PLAZA_RADIUS = 120;
 const DOOR_SPACING = 4.2;
@@ -1790,9 +1792,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     const urls = [...known.keys()].filter((url) => !claimUrls.has(url)).sort();
     // A multiple of the gate count, so every bay — and both sides of every exit — match.
     const needed = Math.max(MIN_DOORS, urls.length + SPARE_DOORS);
-    const total = needed + ((GATE_COUNT - (needed % GATE_COUNT)) % GATE_COUNT);
     const gateArc = GATE_COUNT * (GATE_WIDTH + GATE_MARGIN * 2);
-    const radius = Math.max(WALL_MIN_RADIUS, (total * DOOR_SPACING + gateArc) / (Math.PI * 2));
+    const radius = HALL_SCALE * Math.max(WALL_MIN_RADIUS, (needed * DOOR_SPACING + gateArc) / (Math.PI * 2));
+    // As many doors as fit the wider wall at the usual spacing.
+    const fits = Math.max(needed, Math.floor((Math.PI * 2 * radius - gateArc) / DOOR_SPACING));
+    const total = fits - (fits % GATE_COUNT);
     // Doors share the wall between the gates.
     const angles = doorAngles(total, radius);
     // Worlds sit next to each other; the doors after them stay empty.
@@ -2036,8 +2040,9 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     solid.push(...dome.solid);
     glow.push(...dome.glow);
 
-    // Galleries ringing the drum, one over the other.
-    const liftPlan = planLifts(radius);
+    // Galleries ringing the drum, one over the other, and the lifts up to them (if any).
+    const hasGalleries = GALLERY_LEVELS.length > 0;
+    const liftPlan = hasGalleries ? planLifts(radius) : { centres: [], gaps: [] };
     const galleries = buildGalleries(radius, liftPlan.gaps);
     solid.push(...galleries.solid);
     glow.push(...galleries.glow);
@@ -2047,7 +2052,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     galleries.glass.push(...shafts.glass);
     for (const mesh of upper) mesh.geometry.dispose();
     upper.length = 0;
-    upper.push(mergeInto([...galleries.colliders.map((g) => (g.index ? g.toNonIndexed() : g)), ...shafts.colliders], colliderMaterial));
+    const upperColliders = [...galleries.colliders.map((g) => (g.index ? g.toNonIndexed() : g)), ...shafts.colliders];
+    if (upperColliders.length) upper.push(mergeInto(upperColliders, colliderMaterial));
     lifts.setLifts(liftPlan);
     const glazing = new Mesh(mergeGeometries([dome.glass, ...galleries.glass].map((g) => (g.index ? g.toNonIndexed() : g))), glassMaterial);
     for (const geometry of [dome.glass, ...galleries.glass]) geometry.dispose();
@@ -2055,11 +2061,13 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     glazing.renderOrder = 3;
     scene.add(glazing);
     trim.push(glazing);
-    const decks = new Mesh(mergeGeometries(galleries.decks), deckGlassMaterial);
-    for (const geometry of galleries.decks) geometry.dispose();
-    decks.renderOrder = 2;
-    scene.add(decks);
-    trim.push(decks);
+    if (galleries.decks.length) {
+      const decks = new Mesh(mergeGeometries(galleries.decks), deckGlassMaterial);
+      for (const geometry of galleries.decks) geometry.dispose();
+      decks.renderOrder = 2;
+      scene.add(decks);
+      trim.push(decks);
+    }
     hangGalleryDoors(radius, hallDoors);
 
     // The departures board hangs from the oculus ring on four cables.
