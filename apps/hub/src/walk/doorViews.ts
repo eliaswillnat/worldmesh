@@ -66,7 +66,7 @@ export class DoorViewManager {
     const inRange: Array<{ door: Door; distance: number }> = [];
     const all: Door[] = [];
     for (const door of doors) {
-      if (!door.world || door.random || door.empty) continue;
+      if (!door.world || door.world.doorView === false || door.random || door.empty) continue;
       all.push(door);
       if (Math.abs(y - door.group.position.y) > 1) continue;
       const front = door.inFront(0);
