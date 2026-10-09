@@ -58,7 +58,7 @@ export const MEDIA_BOTTOM = (GALLERY_LEVELS[GALLERY_LEVELS.length - 1] ?? 0) + T
 export const DRUM_HEIGHT = MEDIA_BOTTOM + MEDIA_MAX_HEIGHT + 0.4;
 
 /** The departures halo: an outer ring of covers and a smaller one of listings below it. */
-const BOARD_HEIGHT = 5.2;
+const BOARD_HEIGHT = 10.4;
 /** Portrait (3:4) covers round the outer ring, and the radius that fits them exactly. */
 const BOARD_TILES = 16;
 const BOARD_RADIUS = (BOARD_TILES * BOARD_HEIGHT * 0.75) / (Math.PI * 2);
