@@ -23,6 +23,8 @@ interface WorldEntry {
   /** Short muted loop(s) shown on the world's door in walk mode. */
   preview?: string | string[];
   featured?: boolean;
+  /** False keeps the cover on the world's walk-mode door up close, instead of its door view. */
+  doorView?: boolean;
   source?: 'admin' | 'submitted' | 'demo' | 'discovered';
 }
 
@@ -99,6 +101,7 @@ const DEMO_WORLDS: WorldEntry[] = [
     portfolio: 'https://x.com/eliaswillnat',
     categories: ['space'],
     tags: ['multiplayer', 'vr'],
+    doorView: false,
     source: 'demo',
   },
   {

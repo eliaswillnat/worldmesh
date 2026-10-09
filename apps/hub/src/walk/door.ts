@@ -35,6 +35,8 @@ export interface DoorWorld {
   creator?: string;
   /** Listing tags; the ones in DOOR_FEATURES show as chips under the name. */
   tags?: string[];
+  /** False keeps the cover up close instead of the world's door view. */
+  doorView?: boolean;
 }
 
 /** Tags worth calling out above a door, in the order they are shown. */

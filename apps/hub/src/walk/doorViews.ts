@@ -269,7 +269,9 @@ export class DoorViewManager {
 
   /** The style a door shows its world in: always 'best' outside compare mode. */
   style(door: Door): DoorStyle {
-    if (!this.compare || !door.world) return 'best';
+    if (!door.world) return 'best';
+    // A world can keep its cover up close (doorView: false); the preview's comparison overrides it.
+    if (!this.compare) return door.world.doorView === false ? 'cover' : 'best';
     try {
       // preview-mars.worldmesh.net, mars.worldmesh.net, worldmesh-mars-preview.pages.dev, …
       const host = new URL(door.world.url).hostname;
