@@ -130,7 +130,7 @@ an https tunnel.
 | `ap_inbox_seen` | federation | received activity ids (dedup/replay), pruned after 14 days |
 | `ap_interaction` | federation | likes, boosts, replies (references only) |
 | `avatar_connection` | Avatar Wallet | a connected VRoid Hub / AT Protocol / Sketchfab account (VRoid and Sketchfab tokens AES-GCM encrypted; none for AT Protocol) |
-| `avatar` | Avatar Wallet | the one avatar a user picked: provider id, name, thumbnail URL. Never the model |
+| `avatar` | Avatar Wallet | avatars a user saved to My characters (at most one `selected`): provider id, name, thumbnail URL. Never the model |
 
 The public directory still comes from KV (`/api/worlds`). The `world` table is
 empty until worlds are linked to accounts; nothing is copied automatically.

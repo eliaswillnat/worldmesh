@@ -18,6 +18,24 @@ world (any host) @worldmesh/runtime ── POST /resolve {ticket} ──► desc
                  └────────────────────── GET modelUrl ─────────────────────────────►  VRoid S3 / PDS blob / Sketchfab S3
 ```
 
+## My characters
+
+Visitors can save any number of avatars (up to 100) from any of their connected
+platforms to **My characters**, then switch between them or remove them. Each
+saved avatar is one row in `avatar` (a pointer, never the model); at most one is
+`selected`, and that one is what worlds receive.
+
+| Endpoint | Body | Effect |
+| --- | --- | --- |
+| `POST /collect` | `{ connectionId, avatarId }` | Saves it (checked with the provider). What is worn does not change. |
+| `POST /select` | `{ connectionId, avatarId }` | Saves it if needed and wears it. |
+| `POST /select` | `{ avatarId: null }` | "Continue without character". The collection stays. |
+| `POST /remove` | `{ connectionId, avatarId }` | Removes it. If it was worn, worlds get the default body. |
+
+`GET /wallet` returns `collection` alongside `selected`. Disconnecting a
+platform, or reconnecting it as a different account, removes that platform's
+saved avatars.
+
 ## Providers
 
 | | Sketchfab | VRoid Hub | at3d (AT Protocol) |

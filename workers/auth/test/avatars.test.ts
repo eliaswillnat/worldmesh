@@ -205,13 +205,14 @@ describe('avatar wallet', () => {
         { id: 'atproto', label: 'at3d' },
       ],
       connections: [],
+      collection: [],
       selected: null,
     });
   });
 
   it('refuses cross-site state changes', async () => {
     const { cookie } = await signedInUser('csrf-avatar@example.com');
-    for (const path of ['connect/vroid', 'select', 'disconnect', 'handoff']) {
+    for (const path of ['connect/vroid', 'select', 'collect', 'remove', 'disconnect', 'handoff']) {
       const res = await post(`/api/account/avatar/${path}`, cookie, {}, 'https://evil.example.org');
       expect(res.status).toBe(403);
     }
@@ -306,6 +307,57 @@ describe('VRoid Hub', () => {
     expect((await post('/api/account/avatar/select', cookie, { connectionId, avatarId: 'model-9' })).status).toBe(404);
   });
 
+  it('keeps several characters, switches between them and removes any of them', async () => {
+    const { user, cookie } = await signedInUser('vroid-collection@example.com');
+    const connectionId = await connectVroid(cookie);
+    route('GET', `${VROID}/api/character_models/model-2`, () =>
+      reply({ data: { character_model: vroidModel('model-2', 'vroid-user-1', 'Ren') } }),
+    );
+    type W = { selected: { avatarId: string } | null; collection: { avatarId: string; name: string }[] };
+    const read = async (res: Response) => {
+      expect(res.status).toBe(200);
+      return (await res.json()) as W;
+    };
+
+    // Saving does not change what is worn.
+    let wallet = await read(await post('/api/account/avatar/collect', cookie, { connectionId, avatarId: 'model-2' }));
+    expect(wallet.selected).toBeNull();
+    expect(wallet.collection.map((a) => a.avatarId)).toEqual(['model-2']);
+
+    wallet = await read(await selectVroidModel(cookie, connectionId));
+    expect(wallet.selected?.avatarId).toBe('model-1');
+    expect(wallet.collection.map((a) => a.avatarId)).toEqual(['model-2', 'model-1']);
+
+    // Switching keeps both; saving or wearing again does not duplicate.
+    wallet = await read(await post('/api/account/avatar/select', cookie, { connectionId, avatarId: 'model-2' }));
+    expect(wallet.selected?.avatarId).toBe('model-2');
+    wallet = await read(await post('/api/account/avatar/collect', cookie, { connectionId, avatarId: 'model-2' }));
+    expect(wallet.selected?.avatarId).toBe('model-2');
+    expect(wallet.collection).toHaveLength(2);
+    const selectedRows = await env.DB.prepare('select count(*) as n from avatar where user_id = ? and selected = 1').bind(user.id).first<{ n: number }>();
+    expect(selectedRows!.n).toBe(1);
+
+    // Removing one that is not worn leaves the selection alone.
+    wallet = await read(await post('/api/account/avatar/remove', cookie, { connectionId, avatarId: 'model-1' }));
+    expect(wallet.selected?.avatarId).toBe('model-2');
+    expect(wallet.collection.map((a) => a.avatarId)).toEqual(['model-2']);
+
+    // Removing the worn one falls back to no character.
+    const ticket = await ticketFor(cookie);
+    wallet = await read(await post('/api/account/avatar/remove', cookie, { connectionId, avatarId: 'model-2' }));
+    expect(wallet.selected).toBeNull();
+    expect(wallet.collection).toEqual([]);
+    expect(await (await resolveFromWorld(ticket)).json()).toEqual({ avatar: null });
+
+    // Other users' collections are out of reach.
+    await selectVroidModel(cookie, connectionId);
+    const other = await signedInUser('vroid-collection-other@example.com');
+    await read(await post('/api/account/avatar/remove', other.cookie, { connectionId, avatarId: 'model-1' }));
+    const kept = await env.DB.prepare('select count(*) as n from avatar where user_id = ?').bind(user.id).first<{ n: number }>();
+    expect(kept!.n).toBe(1);
+    expect((await post('/api/account/avatar/collect', other.cookie, { connectionId, avatarId: 'model-1' })).status).toBe(404);
+    }, 20_000);
+
   it('resolves for a world on another origin: provider URL, no credentials, no cookies', async () => {
     const { cookie } = await signedInUser('vroid-resolve@example.com');
     const connectionId = await connectVroid(cookie);
@@ -392,7 +444,10 @@ describe('VRoid Hub', () => {
     const ticket = await ticketFor(cookie);
 
     const cleared = await post('/api/account/avatar/select', cookie, { avatarId: null });
-    expect(((await cleared.json()) as { selected: unknown }).selected).toBeNull();
+    const clearedWallet = (await cleared.json()) as { selected: unknown; collection: unknown[] };
+    expect(clearedWallet.selected).toBeNull();
+    // The character stays in the collection, ready to wear again.
+    expect(clearedWallet.collection).toHaveLength(1);
     expect(await (await resolveFromWorld(ticket)).json()).toEqual({ avatar: null });
 
     await selectVroidModel(cookie, connectionId);

@@ -1,9 +1,10 @@
 /**
  * Avatar Wallet: "Choose your character" inside the account dialog.
  *
- * The visitor connects avatar platforms (Sketchfab, VRoid Hub, at3d), picks one avatar,
- * or continues without a character. WorldMesh stores only which avatar was
- * picked; the model stays on the platform. Talks to workers/auth under
+ * The visitor connects avatar platforms (Sketchfab, VRoid Hub, at3d), saves
+ * any number of avatars to "My characters", wears one of them, or continues
+ * without a character. WorldMesh stores only pointers to the saved avatars;
+ * the models stay on their platforms. Talks to workers/auth under
  * /api/account/avatar over same-origin fetch.
  *
  * When a character is picked, the hub mints a short-lived handoff ticket and
@@ -26,11 +27,21 @@ interface WalletAvatar {
   format: string;
 }
 
+interface CollectedAvatar {
+  connectionId: string;
+  provider: string;
+  avatarId: string;
+  name: string | null;
+  thumbnail: string | null;
+  format: string;
+}
+
 interface Wallet {
   enabled: boolean;
   providers: { id: string; label: string }[];
   connections: WalletConnection[];
-  selected: (WalletAvatar & { connectionId: string; provider: string; avatarId: string }) | null;
+  collection: CollectedAvatar[];
+  selected: CollectedAvatar | null;
 }
 
 /** Not a credential: only a hint that minting a handoff ticket is worthwhile. */
@@ -111,14 +122,14 @@ export function characterSummary(onChoose: () => void): HTMLElement {
   return section;
 }
 
-/** Wallet view: connected platforms, their avatars, and "Continue without character". */
+/** Wallet view: the saved collection, connected platforms with their avatars, and "Continue without character". */
 export function walletView(onBack: () => void): HTMLElement[] {
   if (!wallet && !loadingWallet) void loadWallet();
   const nodes: HTMLElement[] = [heading('Choose your character')];
   const intro = document.createElement('p');
   intro.className = 'account-hint';
   intro.textContent =
-    'Your character stays on the platform it comes from. WorldMesh only remembers which one you picked, and worlds only receive what they need to show it.';
+    'Your characters stay on the platforms they come from. WorldMesh only remembers which ones you saved, and worlds only receive what they need to show the one you wear.';
   nodes.push(intro);
 
   if (!wallet) {
@@ -126,6 +137,7 @@ export function walletView(onBack: () => void): HTMLElement[] {
   } else if (!wallet.enabled || !wallet.providers.length) {
     nodes.push(note('Characters are not available yet.'));
   } else {
+    nodes.push(collectionSection(wallet));
     for (const provider of wallet.providers) {
       const connection = wallet.connections.find((c) => c.provider === provider.id);
       nodes.push(providerSection(provider, connection));
@@ -204,23 +216,79 @@ function providerSection(provider: { id: string; label: string }, connection: Wa
     const grid = document.createElement('div');
     grid.className = 'wallet-grid';
     for (const avatar of listing) {
-      const tile = document.createElement('button');
-      tile.type = 'button';
-      tile.className = 'wallet-tile';
-      const selected = wallet?.selected?.connectionId === connection.id && wallet.selected.avatarId === avatar.id;
-      tile.dataset.selected = String(selected);
-      tile.setAttribute('aria-pressed', String(selected));
-      tile.disabled = busy;
-      const name = document.createElement('span');
-      name.textContent = avatar.name || 'Unnamed';
-      tile.append(thumb(avatar.thumbnail, 'wallet-tile-thumb'), name);
-      tile.title = `${avatar.name || 'Unnamed'} (${avatar.format.toUpperCase()})`;
-      tile.addEventListener('click', () => void select(connection.id, avatar.id));
-      grid.append(tile);
+      const entry = { connectionId: connection.id, provider: connection.provider, avatarId: avatar.id, ...avatar };
+      const saved = !!wallet?.collection.some((a) => sameAvatar(a, entry));
+      grid.append(
+        avatarItem(entry, saved ? { label: 'Saved', disabled: true } : { label: 'Save', onClick: () => void collect(entry) }),
+      );
     }
     section.append(grid);
   }
   return section;
+}
+
+/** "My characters": every saved avatar, to wear or remove. */
+function collectionSection(current: Wallet): HTMLElement {
+  const section = document.createElement('section');
+  section.className = 'wallet-provider';
+  const header = document.createElement('div');
+  header.className = 'wallet-provider-header';
+  const title = document.createElement('h3');
+  title.textContent = 'My characters';
+  const count = document.createElement('span');
+  count.className = 'wallet-provider-account';
+  count.textContent = String(current.collection.length);
+  header.append(title, count);
+  section.append(header);
+  if (!current.collection.length) {
+    section.append(note('Save characters from your platforms below to switch between them here.'));
+    return section;
+  }
+  const grid = document.createElement('div');
+  grid.className = 'wallet-grid';
+  for (const avatar of current.collection) {
+    const reachable = current.connections.some((c) => c.id === avatar.connectionId && c.status === 'active');
+    grid.append(avatarItem(avatar, { label: 'Remove', onClick: () => void remove(avatar) }, reachable));
+  }
+  section.append(grid);
+  return section;
+}
+
+/** A tile that wears the avatar, with one small action underneath. */
+function avatarItem(
+  avatar: CollectedAvatar,
+  action: { label: string; onClick?: () => void; disabled?: boolean },
+  wearable = true,
+): HTMLElement {
+  const item = document.createElement('div');
+  item.className = 'wallet-item';
+  const tile = document.createElement('button');
+  tile.type = 'button';
+  tile.className = 'wallet-tile';
+  const selected = !!wallet?.selected && sameAvatar(wallet.selected, avatar);
+  tile.dataset.selected = String(selected);
+  tile.setAttribute('aria-pressed', String(selected));
+  tile.disabled = busy || !wearable;
+  const name = document.createElement('span');
+  name.textContent = avatar.name || 'Unnamed';
+  tile.append(thumb(avatar.thumbnail, 'wallet-tile-thumb'), name);
+  tile.title = wearable
+    ? `${avatar.name || 'Unnamed'} (${avatar.format.toUpperCase()})`
+    : 'Connect this platform again to wear this character.';
+  tile.addEventListener('click', () => void select(avatar.connectionId, avatar.avatarId));
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'wallet-link wallet-item-action';
+  button.textContent = action.label;
+  button.disabled = busy || !!action.disabled;
+  button.setAttribute('aria-label', `${action.label} ${avatar.name || 'unnamed character'}`);
+  if (action.onClick) button.addEventListener('click', action.onClick);
+  item.append(tile, button);
+  return item;
+}
+
+function sameAvatar(a: { connectionId: string; avatarId: string }, b: { connectionId: string; avatarId: string }): boolean {
+  return a.connectionId === b.connectionId && a.avatarId === b.avatarId;
 }
 
 function connectControls(provider: { id: string; label: string }, verb = 'Connect'): HTMLElement {
@@ -283,6 +351,8 @@ async function loadWallet(): Promise<void> {
 }
 
 function applyWallet(next: Wallet): void {
+  // An auth Worker deployed before collections answers without one.
+  next.collection ??= next.selected ? [next.selected] : [];
   wallet = next;
   setHint(!!next.selected);
   if (next.selected) {
@@ -329,6 +399,21 @@ async function select(connectionId: string | null, avatarId: string | null): Pro
     message = wallet?.selected
       ? { text: `${wallet.selected.name || 'Your avatar'} will join you in compatible worlds.`, error: false }
       : { text: 'Worlds will show the default WorldMesh body.', error: false };
+  });
+}
+
+async function collect(avatar: CollectedAvatar): Promise<void> {
+  await run(async () => {
+    applyWallet(await api<Wallet>('/collect', { connectionId: avatar.connectionId, avatarId: avatar.avatarId }));
+    message = { text: `${avatar.name || 'Character'} saved to My characters.`, error: false };
+  });
+}
+
+async function remove(avatar: CollectedAvatar): Promise<void> {
+  if (!confirm(`Remove ${avatar.name || 'this character'} from My characters? It stays on its platform.`)) return;
+  await run(async () => {
+    applyWallet(await api<Wallet>('/remove', { connectionId: avatar.connectionId, avatarId: avatar.avatarId }));
+    message = { text: `${avatar.name || 'Character'} removed.`, error: false };
   });
 }
 

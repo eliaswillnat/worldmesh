@@ -3,12 +3,14 @@
  * Worker on the hub's origin, so no extra Worker route is needed).
  *
  * Hub-only, same-origin and session-bound:
- *   GET  /wallet                     connected providers and the selected avatar (D1 only)
+ *   GET  /wallet                     connected providers, the collection and the selected avatar (D1 only)
  *   GET  /connections/:id/avatars    live listing from the provider
  *   POST /connect/:provider          { handle? } → { url } to the provider's authorization page
  *   GET  /callback/:provider         provider redirect target
  *   POST /disconnect                 { connectionId }
- *   POST /select                     { connectionId, avatarId } or { avatarId: null }
+ *   POST /collect                    { connectionId, avatarId } adds to the collection
+ *   POST /select                     { connectionId, avatarId } adds and selects, or { avatarId: null }
+ *   POST /remove                     { connectionId, avatarId } takes it out of the collection
  *   POST /handoff                    → { ticket, expiresAt } for worlds (see handoff.ts)
  *
  * For worlds on any origin, cookie-less:
@@ -29,6 +31,9 @@ import { AvatarError, type AvatarProvider, type AvatarProviderId, type Connectio
 import { vroidProvider } from './vroid';
 
 export const AVATAR_BASE_PATH = '/api/account/avatar';
+
+/** Saved avatars per user. Only pointers, but a bound keeps the wallet light. */
+export const MAX_COLLECTION = 100;
 
 /** Display order in the wallet. Add a provider here and nowhere else. */
 export const PROVIDERS: Record<AvatarProviderId, AvatarProvider> = {
@@ -71,7 +76,7 @@ export async function handleAvatarRequest(
     return json(atprotoClientMetadata(origin, redirectUri(origin, 'atproto')));
   }
   if (!avatarWalletEnabled(env)) {
-    if (path === '/wallet' && method === 'GET') return json({ enabled: false, providers: [], connections: [], selected: null });
+    if (path === '/wallet' && method === 'GET') return json({ enabled: false, providers: [], connections: [], collection: [], selected: null });
     throw new HttpError(404, 'The Avatar Wallet is not set up.');
   }
 
@@ -116,20 +121,34 @@ export async function handleAvatarRequest(
       return json(await wallet(env, userId));
     }
 
-    if (path === '/select' && method === 'POST') {
+    if ((path === '/select' || path === '/collect') && method === 'POST') {
       const body = (await readJson(request, 4096)) as { connectionId?: unknown; avatarId?: unknown } | null;
-      if (body?.avatarId === null) {
+      if (path === '/select' && body?.avatarId === null) {
         await store.clearSelection(env.DB, userId);
         return json(await wallet(env, userId));
       }
       const connection = (using = await store.connection(env.DB, userId, body?.connectionId));
       if (!connection) throw new HttpError(404, 'Not connected.');
       if (typeof body?.avatarId !== 'string' || body.avatarId.length > 1024) throw new HttpError(400, 'Choose an avatar.');
+      if (
+        !(await store.isCollected(env.DB, connection.id, body.avatarId)) &&
+        (await store.collectionSize(env.DB, userId)) >= MAX_COLLECTION
+      ) {
+        throw new HttpError(409, `Your collection is full (${MAX_COLLECTION} characters). Remove one first.`);
+      }
       const provider = providerFor(env, connection.provider);
       // Details come from the provider, never from the request.
       const avatar = await provider.getAvatar(context(env, exec, origin, provider.id), connection, body.avatarId);
       if (!avatar) throw new HttpError(404, 'That avatar is not available from this account.');
-      await store.selectAvatar(env.DB, userId, connection, avatar);
+      await store.saveAvatar(env.DB, userId, connection, avatar, path === '/select');
+      return json(await wallet(env, userId));
+    }
+
+    if (path === '/remove' && method === 'POST') {
+      const body = (await readJson(request, 4096)) as { connectionId?: unknown; avatarId?: unknown } | null;
+      if (typeof body?.connectionId !== 'string' || typeof body.avatarId !== 'string') throw new HttpError(400, 'Choose an avatar.');
+      // No provider call: an avatar can be removed even after it disappeared upstream.
+      await store.removeAvatar(env.DB, userId, body.connectionId, body.avatarId);
       return json(await wallet(env, userId));
     }
 
@@ -148,7 +167,16 @@ export async function handleAvatarRequest(
 }
 
 async function wallet(env: Env, userId: string) {
-  const [connections, selected] = await Promise.all([store.connectionsOf(env.DB, userId), store.selectedAvatar(env.DB, userId)]);
+  const [connections, collection] = await Promise.all([store.connectionsOf(env.DB, userId), store.collectionOf(env.DB, userId)]);
+  const entries = collection.map((a) => ({
+    connectionId: a.connection_id,
+    provider: a.provider,
+    avatarId: a.external_avatar_id,
+    name: a.display_name,
+    thumbnail: a.thumbnail_url,
+    format: a.format,
+  }));
+  const selected = collection.findIndex((a) => a.selected === 1);
   return {
     enabled: true,
     providers: configuredProviders(env).map((p) => ({ id: p.id, label: p.label })),
@@ -159,16 +187,8 @@ async function wallet(env: Env, userId: string) {
       displayName: c.display_name,
       status: c.status,
     })),
-    selected: selected
-      ? {
-          connectionId: selected.connection_id,
-          provider: selected.provider,
-          avatarId: selected.external_avatar_id,
-          name: selected.display_name,
-          thumbnail: selected.thumbnail_url,
-          format: selected.format,
-        }
-      : null,
+    collection: entries,
+    selected: selected === -1 ? null : entries[selected],
   };
 }
 

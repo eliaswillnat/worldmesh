@@ -1,6 +1,6 @@
 /**
  * D1 access for the Avatar Wallet. Only references live here: which provider
- * accounts a user connected, and which avatar they picked.
+ * accounts a user connected, the avatars they collected, and which one is selected.
  */
 import { seal } from './crypto';
 import type { AvatarProviderId, AvatarRow, ConnectionRow, NewConnection, ProviderAvatar } from './types';
@@ -60,7 +60,7 @@ export async function saveConnection(
       )
       .bind(id, userId, provider, account.providerAccountId, account.displayName, account.serviceEndpoint ?? null, tokenEnc, now),
   ];
-  // Reconnected as a different account: the old account's pick no longer applies.
+  // Reconnected as a different account: the old account's avatars no longer apply.
   if (existing && existing.provider_account_id !== account.providerAccountId) {
     statements.unshift(db.prepare('delete from avatar where connection_id = ?1').bind(id));
   }
@@ -95,20 +95,51 @@ export function deleteConnection(db: D1Database, userId: string, id: string) {
   return db.prepare('delete from avatar_connection where id = ?1 and user_id = ?2').bind(id, userId).run();
 }
 
+/** The user's saved avatars, oldest first. */
+export function collectionOf(db: D1Database, userId: string) {
+  return db
+    .prepare(
+      `select a.*, c.status as connection_status from avatar a
+       join avatar_connection c on c.id = a.connection_id
+       where a.user_id = ?1 order by a.created_at`,
+    )
+    .bind(userId)
+    .all<AvatarRow & { connection_status: ConnectionRow['status'] }>()
+    .then((r) => r.results);
+}
+
+export async function collectionSize(db: D1Database, userId: string): Promise<number> {
+  const row = await db.prepare('select count(*) as n from avatar where user_id = ?1').bind(userId).first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
+export function isCollected(db: D1Database, connectionId: string, avatarId: string) {
+  return db
+    .prepare('select 1 as found from avatar where connection_id = ?1 and external_avatar_id = ?2')
+    .bind(connectionId, avatarId)
+    .first<{ found: number }>()
+    .then((row) => !!row);
+}
+
 /**
- * Makes `avatar` the user's one selected avatar. Earlier picks are dropped
- * rather than kept: listings come live from the provider, so nothing else
- * needs remembering.
+ * Adds `avatar` to the user's collection, or refreshes its details if it is
+ * already there. With `select`, it also becomes the one selected avatar.
  */
-export async function selectAvatar(db: D1Database, userId: string, connection: ConnectionRow, avatar: ProviderAvatar) {
+export async function saveAvatar(db: D1Database, userId: string, connection: ConnectionRow, avatar: ProviderAvatar, select: boolean) {
   const now = Date.now();
-  await db.batch([
-    db.prepare('delete from avatar where user_id = ?1').bind(userId),
+  const statements = [
     db
       .prepare(
         `insert into avatar
            (id, user_id, connection_id, provider, external_avatar_id, display_name, thumbnail_url, format, selected, metadata_json, created_at, updated_at)
-         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, ?9, ?10, ?10)`,
+         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)
+         on conflict (connection_id, external_avatar_id) do update set
+           display_name = excluded.display_name,
+           thumbnail_url = excluded.thumbnail_url,
+           format = excluded.format,
+           selected = max(avatar.selected, excluded.selected),
+           metadata_json = excluded.metadata_json,
+           updated_at = excluded.updated_at`,
       )
       .bind(
         crypto.randomUUID(),
@@ -119,12 +150,24 @@ export async function selectAvatar(db: D1Database, userId: string, connection: C
         avatar.name,
         avatar.thumbnail,
         avatar.format,
+        select ? 1 : 0,
         avatar.metadata ? JSON.stringify(avatar.metadata) : null,
         now,
       ),
-  ]);
+  ];
+  if (select) statements.unshift(db.prepare('update avatar set selected = 0 where user_id = ?1 and selected = 1').bind(userId));
+  await db.batch(statements);
 }
 
+/** Takes one avatar out of the collection. If it was selected, nothing is selected afterwards. */
+export function removeAvatar(db: D1Database, userId: string, connectionId: string, avatarId: string) {
+  return db
+    .prepare('delete from avatar where user_id = ?1 and connection_id = ?2 and external_avatar_id = ?3')
+    .bind(userId, connectionId, avatarId)
+    .run();
+}
+
+/** "Continue without character": the collection stays. */
 export function clearSelection(db: D1Database, userId: string) {
-  return db.prepare('delete from avatar where user_id = ?1').bind(userId).run();
+  return db.prepare('update avatar set selected = 0 where user_id = ?1 and selected = 1').bind(userId).run();
 }

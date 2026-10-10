@@ -380,7 +380,7 @@ export const federationPage: Page = async (_request, env, admin) => {
     'Avatar Wallet',
     wallet,
     (v) =>
-      `${breakdown(v.connections.map((row) => ({ label: `${row.provider}${row.status === 'reconnect' ? ' (needs reconnect)' : ''}`, n: row.n })))}<p class="muted">${num(v.total)} avatars picked · ${num(v.selected)} in use</p>`,
+      `${breakdown(v.connections.map((row) => ({ label: `${row.provider}${row.status === 'reconnect' ? ' (needs reconnect)' : ''}`, n: row.n })))}<p class="muted">${num(v.total)} avatars collected · ${num(v.selected)} in use</p>`,
   )}
   ${guarded('Delivery errors', fed, (v) =>
     table(
