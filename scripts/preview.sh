@@ -5,7 +5,7 @@
 # (or is a preview-*.worldmesh.net hostname), and destructive steps check that.
 #
 #   scripts/preview.sh deploy        create anything missing, build, deploy
-#   scripts/preview.sh remove        take the preview offline, wipe its data
+#   scripts/preview.sh remove        take the preview offline, wipe its data (accounts stay)
 #   scripts/preview.sh teardown      delete every preview resource
 #   scripts/preview.sh verify-admin  mark the admin's preview account verified
 #   scripts/preview.sh status        print the commit the preview is serving
@@ -395,6 +395,24 @@ cmd_deploy() {
   summary "### Preview deployed: \`$sha\`"
 }
 
+# Accounts survive a remove, so Elias can sign straight back in: Better Auth's
+# user and account (password) rows and the profile. Sessions, verification
+# tokens and everything else go. Tables are listed live, so ones added by later
+# migrations are wiped too unless named here.
+KEEP_TABLES=(user account profile)
+wipe_d1_keeping_accounts() {
+  local tables sql="PRAGMA defer_foreign_keys = on;" table
+  tables=$(wrangler d1 execute "$D1_NAME" "$D1_TARGET" -y --json --command \
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' AND name <> 'd1_migrations'" |
+    jq -r '.[0].results[].name')
+  for table in $tables; do
+    printf '%s\n' "${KEEP_TABLES[@]}" | grep -qxF "$table" && continue
+    echo "  $table"
+    sql+=" DELETE FROM \"$table\";"
+  done
+  wrangler d1 execute "$D1_NAME" "$D1_TARGET" -y --command "$sql" >/dev/null
+}
+
 cmd_remove() {
   log "Replacing the preview sites with a placeholder"
   local placeholder; placeholder=$(mktemp -d)
@@ -411,10 +429,10 @@ HTML
       --branch main --commit-message "removed" --commit-dirty=true
   done
 
-  log "Wiping preview data"
+  log "Wiping preview data (accounts stay)"
   if [[ -n $(d1_id) ]]; then
     assert_preview "$D1_NAME"
-    wrangler d1 delete "$D1_NAME" -y && wrangler d1 create "$D1_NAME" >/dev/null
+    wipe_d1_keeping_accounts
   fi
   for title in "$KV_WORLDS" "$KV_VIEWS"; do
     local id; id=$(kv_id "$title"); [[ -n $id ]] || continue
@@ -423,7 +441,7 @@ HTML
     ensure_kv "$title"
   done
   if r2_exists; then set_r2_expiry 1; fi
-  summary "### Preview removed. Data wiped; screenshots expire within a day. Infrastructure kept."
+  summary "### Preview removed. Data wiped except accounts; screenshots expire within a day. Infrastructure kept."
 }
 
 cmd_teardown() {

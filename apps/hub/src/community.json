@@ -156,5 +156,17 @@
     "addedAt": "2026-10-08T12:00:00Z",
     "categories": ["games"],
     "tags": ["multiplayer"]
+  },
+  {
+    "id": "lastfall-b9w2rt",
+    "name": "LASTFALL",
+    "url": "https://wavedash.com/games/lastfall",
+    "description": "Drop into a desert battle royale, scavenge weapons and fight to be the last one standing.",
+    "cover": "/covers/lastfall.webp",
+    "creator": "haruka_apps",
+    "portfolio": "https://x.com/haruka_apps",
+    "addedAt": "2026-10-11T12:00:00Z",
+    "categories": ["games"],
+    "tags": ["multiplayer"]
   }
 ]

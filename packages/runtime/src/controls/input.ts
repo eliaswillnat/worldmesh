@@ -42,6 +42,8 @@ export class Input {
   private onEscape?: () => boolean | void;
   private touch?: TouchControls;
   private disposed = false;
+  /** Letting go of the cursor to leave the page, not to pause. */
+  private releasing = false;
   private xrSession: XRSession | null = null;
   private xrMoveX = 0;
   private xrMoveZ = 0;
@@ -142,6 +144,25 @@ export class Input {
       this.touch?.reset();
       this.touch?.setVisible(false);
       this.onPointerLockChange?.(false);
+    }
+  }
+
+  /**
+   * Free the cursor without bringing up the pause screen, for leaving the page.
+   * With moveBeforeLock the visitor stays walking, so coming back with the
+   * browser's back button finds them in the world instead of on the menu.
+   */
+  release(): void {
+    if (!this.moveBeforeLock) {
+      this.exitPointerLock();
+      return;
+    }
+    this.pressed.clear();
+    this.justPressed.clear();
+    this.touch?.reset();
+    if (document.pointerLockElement === this.element) {
+      this.releasing = true;
+      document.exitPointerLock();
     }
   }
 
@@ -369,6 +390,12 @@ export class Input {
 
   private handlePointerLockChange = (): void => {
     const isLocked = document.pointerLockElement === this.element;
+    if (!isLocked && this.releasing) {
+      // Quiet: the overlay keeps its walking state.
+      this.releasing = false;
+      this.locked = false;
+      return;
+    }
     if (isLocked) {
       this.setLocked(true);
     } else if (!isTouchDevice()) {

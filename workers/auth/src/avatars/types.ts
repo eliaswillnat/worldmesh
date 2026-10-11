@@ -52,6 +52,8 @@ export interface AvatarRow {
   provider: AvatarProviderId;
   external_avatar_id: string;
   display_name: string | null;
+  /** Set by the user in "My characters"; wins over display_name. */
+  custom_name: string | null;
   thumbnail_url: string | null;
   format: AvatarFormat;
   selected: number;
@@ -65,6 +67,29 @@ export interface NewConnection {
   serviceEndpoint?: string | null;
   /** Provider credentials to keep (sealed before storage), or null to keep none. */
   credentials: unknown | null;
+  /** Set when the user authorized an upload: handed to their browser, never stored. */
+  uploadGrant?: UploadGrant;
+}
+
+/**
+ * Short-lived permission for the user's browser to upload one avatar straight
+ * to their own account. The model never passes through WorldMesh.
+ */
+export interface UploadGrant {
+  provider: AvatarProviderId;
+  /** Where the browser sends the model (the user's PDS). */
+  service: string;
+  /** The account the upload goes to (the DID). */
+  account: string;
+  accessToken: string;
+  /** Kept server-side only (in the sealed grant cookie), so it can be revoked too. */
+  refreshToken?: string | null;
+  /** DPoP-bound tokens: the browser signs each request with this key. */
+  dpopKey?: JsonWebKey;
+  expiresAt: number;
+  /** Where the grant is given back once the upload is done. */
+  revocationEndpoint?: string | null;
+  issuer?: string;
 }
 
 /** State that must survive the round trip through the provider's authorization page. */
@@ -104,7 +129,9 @@ export interface AvatarProvider {
   /** Whether the Worker has what this provider needs (client credentials…). */
   isConfigured(env: Env): boolean;
   /** Starts authorization: where to send the browser, and what the callback must see again. */
-  connect(ctx: ProviderContext, input: { userId: string; handle?: string }): Promise<{ url: string; flow: OAuthFlow }>;
+  connect(ctx: ProviderContext, input: { userId: string; handle?: string; upload?: boolean }): Promise<{ url: string; flow: OAuthFlow }>;
+  /** Gives an upload grant back once the browser is done with it. Best effort. */
+  revokeUpload?(ctx: ProviderContext, grant: UploadGrant): Promise<void>;
   /** Finishes authorization at the callback. Throws AvatarError when it cannot be verified. */
   completeConnect(ctx: ProviderContext, params: URLSearchParams, flow: OAuthFlow): Promise<NewConnection>;
   /** Best-effort revocation at the provider before the connection is deleted. */

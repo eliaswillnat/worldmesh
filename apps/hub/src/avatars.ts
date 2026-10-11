@@ -1,15 +1,25 @@
 /**
  * Avatar Wallet: "Choose your character" inside the account dialog.
  *
- * The visitor connects avatar platforms (Sketchfab, VRoid Hub, at3d), picks one avatar,
- * or continues without a character. WorldMesh stores only which avatar was
- * picked; the model stays on the platform. Talks to workers/auth under
+ * The visitor connects avatar platforms (Sketchfab, VRoid Hub, at3d), saves
+ * any number of avatars to "My characters", wears one of them, or continues
+ * without a character. WorldMesh stores only pointers to the saved avatars;
+ * the models stay on their platforms. Talks to workers/auth under
  * /api/account/avatar over same-origin fetch.
+ *
+ * Characters can also be uploaded to at3d or Sketchfab: the browser sends the
+ * model straight to the user's own account there (./at3dUpload, ./sketchfabUpload).
  *
  * When a character is picked, the hub mints a short-lived handoff ticket and
  * adds it to world links as a URL fragment (#wm-avatar=…), which never reaches
  * any server. The world's runtime exchanges it for a descriptor of the model.
  */
+
+import { inspectModel, MAX_MODEL_BYTES, uploadToAt3d, type UploadGrant } from './at3dUpload';
+import { uploadToSketchfab } from './sketchfabUpload';
+
+/** Platforms the wallet can upload to. */
+const UPLOADABLE = new Set(['atproto', 'sketchfab']);
 
 interface WalletConnection {
   id: string;
@@ -26,11 +36,21 @@ interface WalletAvatar {
   format: string;
 }
 
+interface CollectedAvatar {
+  connectionId: string;
+  provider: string;
+  avatarId: string;
+  name: string | null;
+  thumbnail: string | null;
+  format: string;
+}
+
 interface Wallet {
   enabled: boolean;
   providers: { id: string; label: string }[];
   connections: WalletConnection[];
-  selected: (WalletAvatar & { connectionId: string; provider: string; avatarId: string }) | null;
+  collection: CollectedAvatar[];
+  selected: CollectedAvatar | null;
 }
 
 /** Not a credential: only a hint that minting a handoff ticket is worthwhile. */
@@ -50,28 +70,41 @@ const listings = new Map<string, WalletAvatar[] | 'loading' | { error: string }>
 let busy = false;
 let message: { text: string; error: boolean } | null = null;
 let ticket: string | null = null;
+/** Back from approving an upload: the provider whose upload form is showing. */
+let uploadReady: string | null = null;
+let uploadFile: File | null = null;
+let uploadName = '';
+let uploading = false;
 let rerender: () => void = () => {};
 
 /**
  * Wire up the wallet. Returns the outcome of a provider connection the
  * browser just came back from, so the account dialog can open on it.
  */
-export function initAvatarWallet(onChange: () => void): 'connected' | 'error' | null {
+export function initAvatarWallet(onChange: () => void): 'connected' | 'upload' | 'error' | null {
   rerender = onChange;
   document.addEventListener('click', addTicketToWorldLink, true);
   document.addEventListener('auxclick', addTicketToWorldLink, true);
 
   const params = new URLSearchParams(window.location.search);
   const outcome = params.get('avatar');
-  if (outcome !== 'connected' && outcome !== 'error') return null;
+  if (outcome !== 'connected' && outcome !== 'upload' && outcome !== 'error') return null;
+  const provider = params.get('provider');
+  const reason = params.get('reason');
   params.delete('avatar');
   params.delete('reason');
+  params.delete('provider');
   const query = params.toString();
   history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`);
+  uploadReady = outcome === 'upload' && provider && UPLOADABLE.has(provider) ? provider : null;
   message =
     outcome === 'connected'
       ? { text: 'Connected. Pick your character below.', error: false }
-      : { text: 'Connecting did not complete. Please try again.', error: true };
+      : outcome === 'upload'
+        ? { text: 'Approved. Choose the model to upload.', error: false }
+        : reason === 'other-account'
+          ? { text: 'That approval was for a different account than the one connected here.', error: true }
+          : { text: 'Connecting did not complete. Please try again.', error: true };
   return outcome;
 }
 
@@ -111,14 +144,14 @@ export function characterSummary(onChoose: () => void): HTMLElement {
   return section;
 }
 
-/** Wallet view: connected platforms, their avatars, and "Continue without character". */
+/** Wallet view: the saved collection, connected platforms with their avatars, and "Continue without character". */
 export function walletView(onBack: () => void): HTMLElement[] {
   if (!wallet && !loadingWallet) void loadWallet();
   const nodes: HTMLElement[] = [heading('Choose your character')];
   const intro = document.createElement('p');
   intro.className = 'account-hint';
   intro.textContent =
-    'Your character stays on the platform it comes from. WorldMesh only remembers which one you picked, and worlds only receive what they need to show it.';
+    'Your characters stay on the platforms they come from. WorldMesh only remembers which ones you saved, and worlds only receive what they need to show the one you wear.';
   nodes.push(intro);
 
   if (!wallet) {
@@ -126,6 +159,7 @@ export function walletView(onBack: () => void): HTMLElement[] {
   } else if (!wallet.enabled || !wallet.providers.length) {
     nodes.push(note('Characters are not available yet.'));
   } else {
+    nodes.push(collectionSection(wallet));
     for (const provider of wallet.providers) {
       const connection = wallet.connections.find((c) => c.provider === provider.id);
       nodes.push(providerSection(provider, connection));
@@ -192,6 +226,8 @@ function providerSection(provider: { id: string; label: string }, connection: Wa
     return section;
   }
 
+  if (UPLOADABLE.has(provider.id)) section.append(uploadControls(connection));
+
   const listing = listings.get(connection.id);
   if (!listing) void loadAvatars(connection);
   if (!listing || listing === 'loading') {
@@ -204,23 +240,162 @@ function providerSection(provider: { id: string; label: string }, connection: Wa
     const grid = document.createElement('div');
     grid.className = 'wallet-grid';
     for (const avatar of listing) {
-      const tile = document.createElement('button');
-      tile.type = 'button';
-      tile.className = 'wallet-tile';
-      const selected = wallet?.selected?.connectionId === connection.id && wallet.selected.avatarId === avatar.id;
-      tile.dataset.selected = String(selected);
-      tile.setAttribute('aria-pressed', String(selected));
-      tile.disabled = busy;
-      const name = document.createElement('span');
-      name.textContent = avatar.name || 'Unnamed';
-      tile.append(thumb(avatar.thumbnail, 'wallet-tile-thumb'), name);
-      tile.title = `${avatar.name || 'Unnamed'} (${avatar.format.toUpperCase()})`;
-      tile.addEventListener('click', () => void select(connection.id, avatar.id));
-      grid.append(tile);
+      const entry = { connectionId: connection.id, provider: connection.provider, avatarId: avatar.id, ...avatar };
+      const saved = !!wallet?.collection.some((a) => sameAvatar(a, entry));
+      grid.append(
+        avatarItem(entry, [saved ? { label: 'Saved', disabled: true } : { label: 'Save', onClick: () => void collect(entry) }]),
+      );
     }
     section.append(grid);
   }
   return section;
+}
+
+/** "My characters": every saved avatar, to wear or remove. */
+function collectionSection(current: Wallet): HTMLElement {
+  const section = document.createElement('section');
+  section.className = 'wallet-provider';
+  const header = document.createElement('div');
+  header.className = 'wallet-provider-header';
+  const title = document.createElement('h3');
+  title.textContent = 'My characters';
+  const count = document.createElement('span');
+  count.className = 'wallet-provider-account';
+  count.textContent = String(current.collection.length);
+  header.append(title, count);
+  section.append(header);
+  if (!current.collection.length) {
+    section.append(note('Save characters from your platforms below to switch between them here.'));
+    return section;
+  }
+  const grid = document.createElement('div');
+  grid.className = 'wallet-grid';
+  for (const avatar of current.collection) {
+    const reachable = current.connections.some((c) => c.id === avatar.connectionId && c.status === 'active');
+    grid.append(
+      avatarItem(
+        avatar,
+        [
+          { label: 'Rename', onClick: () => void rename(avatar) },
+          { label: 'Remove', onClick: () => void remove(avatar) },
+        ],
+        reachable,
+      ),
+    );
+  }
+  section.append(grid);
+  return section;
+}
+
+/** A tile that wears the avatar, with small actions underneath. */
+function avatarItem(
+  avatar: CollectedAvatar,
+  actions: { label: string; onClick?: () => void; disabled?: boolean }[],
+  wearable = true,
+): HTMLElement {
+  const item = document.createElement('div');
+  item.className = 'wallet-item';
+  const tile = document.createElement('button');
+  tile.type = 'button';
+  tile.className = 'wallet-tile';
+  const selected = !!wallet?.selected && sameAvatar(wallet.selected, avatar);
+  tile.dataset.selected = String(selected);
+  tile.setAttribute('aria-pressed', String(selected));
+  tile.disabled = busy || !wearable;
+  const name = document.createElement('span');
+  name.textContent = avatar.name || 'Unnamed';
+  tile.append(thumb(avatar.thumbnail, 'wallet-tile-thumb'), name);
+  tile.title = wearable
+    ? `${avatar.name || 'Unnamed'} (${avatar.format.toUpperCase()})`
+    : 'Connect this platform again to wear this character.';
+  tile.addEventListener('click', () => void select(avatar.connectionId, avatar.avatarId));
+  const row = document.createElement('div');
+  row.className = 'wallet-item-actions';
+  for (const action of actions) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'wallet-link wallet-item-action';
+    button.textContent = action.label;
+    button.disabled = busy || !!action.disabled;
+    button.setAttribute('aria-label', `${action.label} ${avatar.name || 'unnamed character'}`);
+    if (action.onClick) button.addEventListener('click', action.onClick);
+    row.append(button);
+  }
+  item.append(tile, row);
+  return item;
+}
+
+function sameAvatar(a: { connectionId: string; avatarId: string }, b: { connectionId: string; avatarId: string }): boolean {
+  return a.connectionId === b.connectionId && a.avatarId === b.avatarId;
+}
+
+/** "Upload a character", or, once approved, the form that sends the model to the user's PDS. */
+function uploadControls(connection: WalletConnection): HTMLElement {
+  if (uploadReady !== connection.provider) {
+    const start = document.createElement('button');
+    start.type = 'button';
+    start.className = 'account-provider';
+    start.textContent = `Upload a character to ${connection.label}`;
+    start.disabled = busy || !!uploadReady;
+    start.addEventListener('click', () => void startUpload(connection));
+    return start;
+  }
+  const form = document.createElement('form');
+  form.className = 'wallet-upload';
+  const file = document.createElement('input');
+  file.type = 'file';
+  file.accept = '.vrm,.glb,model/gltf-binary';
+  file.setAttribute('aria-label', 'Model file (VRM or GLB)');
+  file.disabled = busy;
+  file.addEventListener('change', () => {
+    uploadFile = file.files?.[0] ?? null;
+    if (uploadFile && !uploadName) uploadName = uploadFile.name.replace(/\.(vrm|glb)$/i, '').slice(0, 64);
+    rerender();
+  });
+  // The input is redrawn on every render and would forget the file: show our own button and label.
+  file.hidden = true;
+  const pick = document.createElement('button');
+  pick.type = 'button';
+  pick.className = 'account-provider';
+  pick.textContent = uploadFile ? 'Choose another file' : 'Choose model file';
+  pick.disabled = busy;
+  pick.addEventListener('click', () => file.click());
+  const chosen = note(
+    uploadFile
+      ? `${uploadFile.name} (${(uploadFile.size / 1024 / 1024).toFixed(1)} MB)`
+      : connection.provider === 'sketchfab'
+        ? 'VRM or GLB, up to 40 MB. Uploaded as a draft that only you can see.'
+        : 'VRM or GLB, up to 40 MB.',
+  );
+  const name = document.createElement('input');
+  name.type = 'text';
+  name.placeholder = 'Character name';
+  name.maxLength = 64;
+  name.value = uploadName;
+  name.setAttribute('aria-label', 'Character name');
+  name.disabled = busy;
+  name.addEventListener('input', () => {
+    uploadName = name.value;
+  });
+  const row = document.createElement('div');
+  row.className = 'account-username-row';
+  const submit = document.createElement('button');
+  submit.type = 'submit';
+  submit.textContent = uploading ? 'Uploading…' : 'Upload';
+  submit.disabled = busy || !uploadFile;
+  row.append(name, submit);
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'wallet-link';
+  cancel.textContent = 'Cancel upload';
+  cancel.disabled = busy;
+  cancel.addEventListener('click', () => void cancelUpload());
+  form.append(file, pick, chosen, row, cancel);
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    void upload(connection);
+  });
+  return form;
 }
 
 function connectControls(provider: { id: string; label: string }, verb = 'Connect'): HTMLElement {
@@ -283,6 +458,8 @@ async function loadWallet(): Promise<void> {
 }
 
 function applyWallet(next: Wallet): void {
+  // An auth Worker deployed before collections answers without one.
+  next.collection ??= next.selected ? [next.selected] : [];
   wallet = next;
   setHint(!!next.selected);
   if (next.selected) {
@@ -330,6 +507,82 @@ async function select(connectionId: string | null, avatarId: string | null): Pro
       ? { text: `${wallet.selected.name || 'Your avatar'} will join you in compatible worlds.`, error: false }
       : { text: 'Worlds will show the default WorldMesh body.', error: false };
     announceCharacter();
+  });
+}
+
+async function collect(avatar: CollectedAvatar): Promise<void> {
+  await run(async () => {
+    applyWallet(await api<Wallet>('/collect', { connectionId: avatar.connectionId, avatarId: avatar.avatarId }));
+    message = { text: `${avatar.name || 'Character'} saved to My characters.`, error: false };
+  });
+}
+
+async function rename(avatar: CollectedAvatar): Promise<void> {
+  const input = prompt('Name this character (leave empty to use its name on the platform):', avatar.name ?? '');
+  if (input === null) return;
+  const name = input.trim().slice(0, 64);
+  await run(async () => {
+    applyWallet(await api<Wallet>('/rename', { connectionId: avatar.connectionId, avatarId: avatar.avatarId, name: name || null }));
+    message = { text: name ? `Renamed to ${name}.` : 'Name reset to the one on its platform.', error: false };
+  });
+}
+
+async function remove(avatar: CollectedAvatar): Promise<void> {
+  if (!confirm(`Remove ${avatar.name || 'this character'} from My characters? It stays on its platform.`)) return;
+  await run(async () => {
+    applyWallet(await api<Wallet>('/remove', { connectionId: avatar.connectionId, avatarId: avatar.avatarId }));
+    message = { text: `${avatar.name || 'Character'} removed.`, error: false };
+  });
+}
+
+async function startUpload(connection: WalletConnection): Promise<void> {
+  await run(async () => {
+    const { url } = await api<{ url: string }>(`/connect/${connection.provider}`, { upload: true });
+    window.location.assign(url);
+  });
+}
+
+async function upload(connection: WalletConnection): Promise<void> {
+  const file = uploadFile;
+  if (!file) return;
+  uploading = true;
+  await run(async () => {
+    if (file.size > MAX_MODEL_BYTES) throw new Error('That model is larger than 40 MB, which worlds cannot load.');
+    const info = await inspectModel(file);
+    const name = uploadName.trim() || 'My character';
+    const grant = await api<UploadGrant>('/upload/grant', {});
+    if (grant.provider !== connection.provider) throw new Error('Start the upload again.');
+    let id: string;
+    try {
+      id = grant.provider === 'sketchfab' ? await uploadToSketchfab(grant, file, name) : await uploadToAt3d(grant, file, name, info);
+    } catch (error) {
+      if (error instanceof TypeError) throw new Error(`${connection.label} could not be reached from this browser.`);
+      throw error;
+    }
+    // The model is on the user's account now; give the permission back.
+    await api('/upload/done', {}).catch(() => undefined);
+    uploadReady = null;
+    uploadFile = null;
+    uploadName = '';
+    listings.delete(connection.id);
+    if (grant.provider === 'sketchfab') {
+      // Sketchfab converts the model first; it shows up in the list once ready.
+      message = { text: `${name} is uploaded to Sketchfab. It appears below in a few minutes, once Sketchfab has processed it.`, error: false };
+      return;
+    }
+    applyWallet(await api<Wallet>('/collect', { connectionId: connection.id, avatarId: id }));
+    message = { text: `${name} is uploaded to ${connection.label} and saved to My characters.`, error: false };
+  });
+  uploading = false;
+  rerender();
+}
+
+async function cancelUpload(): Promise<void> {
+  await run(async () => {
+    applyWallet(await api<Wallet>('/upload/done', {}));
+    uploadReady = null;
+    uploadFile = null;
+    uploadName = '';
   });
 }
 

@@ -3,7 +3,7 @@ import { getPlatformProxy } from 'wrangler';
 import { createTestDatabase, type TestDatabase } from '../../../db/test/d1';
 import worker, { type Env } from '../src/index';
 import { createAuth } from '../src/auth';
-import { atprotoClientId } from '../src/avatars/atproto';
+import { atprotoClientId, UPLOAD_SCOPE } from '../src/avatars/atproto';
 import { fromBase64url, pkceChallenge, seal } from '../src/avatars/crypto';
 
 const ORIGIN = 'https://worldmesh.net';
@@ -12,6 +12,7 @@ const SECRET = 'test-secret-test-secret-test-secret-123';
 const AVATAR_SECRET = 'avatar-secret-avatar-secret-avatar-secret';
 const SESSION_COOKIE = '__Secure-worldmesh.session_token';
 const FLOW_COOKIE = '__Secure-worldmesh.avatar_flow';
+const UPLOAD_COOKIE = '__Secure-worldmesh.avatar_upload';
 const VROID = 'https://hub.vroid.com';
 const S3_URL = 'https://vroid-hub.s3.ap-northeast-1.amazonaws.com/model.vrm?X-Amz-Signature=abc';
 const SKETCHFAB = 'https://sketchfab.com';
@@ -205,13 +206,14 @@ describe('avatar wallet', () => {
         { id: 'atproto', label: 'at3d' },
       ],
       connections: [],
+      collection: [],
       selected: null,
     });
   });
 
   it('refuses cross-site state changes', async () => {
     const { cookie } = await signedInUser('csrf-avatar@example.com');
-    for (const path of ['connect/vroid', 'select', 'disconnect', 'handoff']) {
+    for (const path of ['connect/vroid', 'select', 'collect', 'remove', 'rename', 'disconnect', 'handoff', 'upload/grant', 'upload/done']) {
       const res = await post(`/api/account/avatar/${path}`, cookie, {}, 'https://evil.example.org');
       expect(res.status).toBe(403);
     }
@@ -306,6 +308,85 @@ describe('VRoid Hub', () => {
     expect((await post('/api/account/avatar/select', cookie, { connectionId, avatarId: 'model-9' })).status).toBe(404);
   });
 
+  it('keeps several characters, switches between them and removes any of them', async () => {
+    const { user, cookie } = await signedInUser('vroid-collection@example.com');
+    const connectionId = await connectVroid(cookie);
+    route('GET', `${VROID}/api/character_models/model-2`, () =>
+      reply({ data: { character_model: vroidModel('model-2', 'vroid-user-1', 'Ren') } }),
+    );
+    type W = { selected: { avatarId: string } | null; collection: { avatarId: string; name: string }[] };
+    const read = async (res: Response) => {
+      expect(res.status).toBe(200);
+      return (await res.json()) as W;
+    };
+
+    // Saving does not change what is worn.
+    let wallet = await read(await post('/api/account/avatar/collect', cookie, { connectionId, avatarId: 'model-2' }));
+    expect(wallet.selected).toBeNull();
+    expect(wallet.collection.map((a) => a.avatarId)).toEqual(['model-2']);
+
+    wallet = await read(await selectVroidModel(cookie, connectionId));
+    expect(wallet.selected?.avatarId).toBe('model-1');
+    expect(wallet.collection.map((a) => a.avatarId)).toEqual(['model-2', 'model-1']);
+
+    // Switching keeps both; saving or wearing again does not duplicate.
+    wallet = await read(await post('/api/account/avatar/select', cookie, { connectionId, avatarId: 'model-2' }));
+    expect(wallet.selected?.avatarId).toBe('model-2');
+    wallet = await read(await post('/api/account/avatar/collect', cookie, { connectionId, avatarId: 'model-2' }));
+    expect(wallet.selected?.avatarId).toBe('model-2');
+    expect(wallet.collection).toHaveLength(2);
+    const selectedRows = await env.DB.prepare('select count(*) as n from avatar where user_id = ? and selected = 1').bind(user.id).first<{ n: number }>();
+    expect(selectedRows!.n).toBe(1);
+
+    // Removing one that is not worn leaves the selection alone.
+    wallet = await read(await post('/api/account/avatar/remove', cookie, { connectionId, avatarId: 'model-1' }));
+    expect(wallet.selected?.avatarId).toBe('model-2');
+    expect(wallet.collection.map((a) => a.avatarId)).toEqual(['model-2']);
+
+    // Removing the worn one falls back to no character.
+    const ticket = await ticketFor(cookie);
+    wallet = await read(await post('/api/account/avatar/remove', cookie, { connectionId, avatarId: 'model-2' }));
+    expect(wallet.selected).toBeNull();
+    expect(wallet.collection).toEqual([]);
+    expect(await (await resolveFromWorld(ticket)).json()).toEqual({ avatar: null });
+
+    // Other users' collections are out of reach.
+    await selectVroidModel(cookie, connectionId);
+    const other = await signedInUser('vroid-collection-other@example.com');
+    await read(await post('/api/account/avatar/remove', other.cookie, { connectionId, avatarId: 'model-1' }));
+    const kept = await env.DB.prepare('select count(*) as n from avatar where user_id = ?').bind(user.id).first<{ n: number }>();
+    expect(kept!.n).toBe(1);
+    expect((await post('/api/account/avatar/collect', other.cookie, { connectionId, avatarId: 'model-1' })).status).toBe(404);
+    }, 20_000);
+
+  it('renames a saved character for its owner only, across re-saves and in worlds', async () => {
+    const { cookie } = await signedInUser('vroid-rename@example.com');
+    const connectionId = await connectVroid(cookie);
+    await selectVroidModel(cookie, connectionId);
+    const rename = (name: unknown, who = cookie) => post('/api/account/avatar/rename', who, { connectionId, avatarId: 'model-1', name });
+    type W = { selected: { name: string } | null; collection: { name: string }[] };
+
+    let res = await rename('  Blue   Knight ');
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as W).collection[0].name).toBe('Blue Knight');
+
+    // Wearing it again refreshes the platform details but keeps the chosen name.
+    const wallet = (await (await selectVroidModel(cookie, connectionId)).json()) as W;
+    expect(wallet.selected?.name).toBe('Blue Knight');
+    stubDownload();
+    const resolved = (await (await resolveFromWorld(await ticketFor(cookie))).json()) as { avatar: { name: string } };
+    expect(resolved.avatar.name).toBe('Blue Knight');
+
+    expect((await rename('x'.repeat(65))).status).toBe(400);
+    expect((await rename(42)).status).toBe(400);
+    const other = await signedInUser('vroid-rename-other@example.com');
+    expect((await rename('Stolen', other.cookie)).status).toBe(404);
+
+    // Empty goes back to the platform's name.
+    res = await rename('');
+    expect(((await res.json()) as W).collection[0].name).toBe('Aoi');
+  });
+
   it('resolves for a world on another origin: provider URL, no credentials, no cookies', async () => {
     const { cookie } = await signedInUser('vroid-resolve@example.com');
     const connectionId = await connectVroid(cookie);
@@ -392,7 +473,10 @@ describe('VRoid Hub', () => {
     const ticket = await ticketFor(cookie);
 
     const cleared = await post('/api/account/avatar/select', cookie, { avatarId: null });
-    expect(((await cleared.json()) as { selected: unknown }).selected).toBeNull();
+    const clearedWallet = (await cleared.json()) as { selected: unknown; collection: unknown[] };
+    expect(clearedWallet.selected).toBeNull();
+    // The character stays in the collection, ready to wear again.
+    expect(clearedWallet.collection).toHaveLength(1);
     expect(await (await resolveFromWorld(ticket)).json()).toEqual({ avatar: null });
 
     await selectVroidModel(cookie, connectionId);
@@ -559,12 +643,12 @@ describe('at3d / AT Protocol', () => {
       grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],
       redirect_uris: [`${ORIGIN}/api/account/avatar/callback/atproto`],
-      scope: 'atproto',
+      scope: 'atproto repo:app.at3d.avatar?action=create blob:model/gltf-binary',
       token_endpoint_auth_method: 'none',
       dpop_bound_access_tokens: true,
     });
     expect(atprotoClientId('http://127.0.0.1:5170', 'http://127.0.0.1:5170/api/account/avatar/callback/atproto')).toBe(
-      'http://localhost?redirect_uri=http%3A%2F%2F127.0.0.1%3A5170%2Fapi%2Faccount%2Favatar%2Fcallback%2Fatproto&scope=atproto',
+      `http://localhost?redirect_uri=http%3A%2F%2F127.0.0.1%3A5170%2Fapi%2Faccount%2Favatar%2Fcallback%2Fatproto&scope=${encodeURIComponent(UPLOAD_SCOPE).replace(/%20/g, '+')}`,
     );
     expect(() => atprotoClientId('http://localhost:5170', 'x')).toThrow(/127\.0\.0\.1/);
   });
@@ -612,6 +696,63 @@ describe('at3d / AT Protocol', () => {
 
     const bad = await post('/api/account/avatar/connect/atproto', cookie, { handle: 'not a handle' });
     expect(bad.status).toBe(400);
+  });
+
+  it('asks the connected account for upload permission and hands it to the browser, never storing it', async () => {
+    const { user, cookie } = await signedInUser('at-upload@example.com');
+    // Upload needs a connected at3d account first.
+    expect((await post('/api/account/avatar/connect/atproto', cookie, { upload: true })).status).toBe(404);
+    const first = await startAtproto(cookie);
+    await finishAtproto(cookie, first.flow, await flowState(first.flow), GOOD_TOKEN);
+
+    route('POST', `${AS}/oauth/par`, async (request) => {
+      const form = Object.fromEntries(new URLSearchParams(await request.text()));
+      // Only what an upload needs, for the account already connected.
+      expect(form).toMatchObject({ scope: UPLOAD_SCOPE, login_hint: HANDLE });
+      return reply({ request_uri: 'urn:ietf:params:oauth:request_uri:req-2' }, 201, { 'DPoP-Nonce': 'nonce-2' });
+    });
+    const start = await post('/api/account/avatar/connect/atproto', cookie, { upload: true, handle: 'someone.else.net' });
+    expect(start.status).toBe(200);
+    const flow = cookieValue(start, FLOW_COOKIE);
+
+    const revokesBefore = calls.filter((c) => c.url === `${AS}/oauth/revoke`).length;
+    const callback = await finishAtproto(cookie, flow, await flowState(flow), { ...GOOD_TOKEN, scope: UPLOAD_SCOPE });
+    expect(callback.headers.get('Location')).toBe(`${ORIGIN}/?avatar=upload&provider=atproto`);
+    // Not revoked yet: the browser still needs it.
+    expect(calls.filter((c) => c.url === `${AS}/oauth/revoke`).length).toBe(revokesBefore);
+    const sealed = cookieValue(callback, UPLOAD_COOKIE);
+    expect(decodeURIComponent(sealed)).not.toContain('at-access');
+    const row = await env.DB.prepare('select token_enc from avatar_connection where user_id = ?').bind(user.id).first<{ token_enc: null }>();
+    expect(row!.token_enc).toBeNull();
+
+    const withGrant = `${cookie}; ${UPLOAD_COOKIE}=${sealed}`;
+    const grant = (await (await post('/api/account/avatar/upload/grant', withGrant, {})).json()) as Record<string, unknown>;
+    expect(grant).toMatchObject({ provider: 'atproto', service: PDS, account: DID, accessToken: 'at-access' });
+    expect((grant.dpopKey as JsonWebKey).d).toBeTruthy();
+    expect(grant).not.toHaveProperty('refreshToken');
+    expect(JSON.stringify(grant)).not.toContain('at-refresh');
+
+    // Bound to the user who authorized it.
+    const other = await signedInUser('at-upload-other@example.com');
+    expect((await post('/api/account/avatar/upload/grant', `${other.cookie}; ${UPLOAD_COOKIE}=${sealed}`, {})).status).toBe(410);
+
+    const done = await post('/api/account/avatar/upload/done', withGrant, {});
+    expect(done.status).toBe(200);
+    expect(cookieValue(done, UPLOAD_COOKIE)).toBe('');
+    await vi.waitFor(() => expect(calls.filter((c) => c.url === `${AS}/oauth/revoke`).length).toBe(revokesBefore + 2));
+    const revoked = await Promise.all(calls.filter((c) => c.url === `${AS}/oauth/revoke`).slice(-2).map(async (c) => new URLSearchParams(await c.text()).get('token')));
+    expect(revoked).toEqual(['at-refresh', 'at-access']);
+  });
+
+  it('refuses an upload grant without permission to create avatars', async () => {
+    const { cookie } = await signedInUser('at-upload-scope@example.com');
+    const first = await startAtproto(cookie);
+    await finishAtproto(cookie, first.flow, await flowState(first.flow), GOOD_TOKEN);
+    route('POST', `${AS}/oauth/par`, () => reply({ request_uri: 'urn:ietf:params:oauth:request_uri:req-3' }, 201, { 'DPoP-Nonce': 'nonce-2' }));
+    const flow = cookieValue(await post('/api/account/avatar/connect/atproto', cookie, { upload: true }), FLOW_COOKIE);
+    const callback = await finishAtproto(cookie, flow, await flowState(flow), GOOD_TOKEN);
+    expect(callback.headers.get('Location')).toBe(`${ORIGIN}/?avatar=error`);
+    expect(callback.headers.getSetCookie().some((c) => c.startsWith(`${UPLOAD_COOKIE}=`))).toBe(false);
   });
 
   it('lists renderable app.at3d.avatar records and resolves to the PDS blob', async () => {
@@ -806,6 +947,51 @@ describe('Sketchfab', () => {
     ]);
     // The foreign `next` link on page two was not followed.
     expect(calls.map((c) => new URL(c.url).hostname)).not.toContain('evil.example.org');
+  });
+
+  it('authorizes uploads separately, for the connected account only, and revokes them after', async () => {
+    const { user, cookie } = await signedInUser('sf-upload@example.com');
+    await connectSketchfab(cookie);
+    const storedBefore = await env.DB.prepare('select token_enc from avatar_connection where user_id = ?').bind(user.id).first<{ token_enc: string }>();
+
+    const upload = async (who: { uid: string }) => {
+      const start = await post('/api/account/avatar/connect/sketchfab', cookie, { upload: true });
+      expect(start.status).toBe(200);
+      const state = new URL(((await start.json()) as { url: string }).url).searchParams.get('state');
+      route('POST', `${SKETCHFAB}/oauth2/token/`, () =>
+        reply({ access_token: 'sf-upload-access', refresh_token: 'sf-upload-refresh', token_type: 'Bearer', expires_in: 2592000 }),
+      );
+      route('GET', `${SKETCHFAB_API}/v3/me`, () => reply({ uid: who.uid, username: 'mesh-maker' }));
+      route('POST', `${SKETCHFAB}/oauth2/revoke_token/`, () => reply({}));
+      return call(`/api/account/avatar/callback/sketchfab?code=sf-code-2&state=${state}`, {
+        headers: { Cookie: `${cookie}; ${FLOW_COOKIE}=${cookieValue(start, FLOW_COOKIE)}` },
+      });
+    };
+
+    // Approved as a different Sketchfab account: refused, and that grant is given back.
+    const wrong = await upload({ uid: 'ffffffffffffffffffffffffffffffff' });
+    expect(wrong.headers.get('Location')).toBe(`${ORIGIN}/?avatar=error&reason=other-account`);
+    expect(wrong.headers.getSetCookie().some((c) => c.startsWith(`${UPLOAD_COOKIE}=`))).toBe(false);
+    await vi.waitFor(() => expect(calls.some((c) => c.url === `${SKETCHFAB}/oauth2/revoke_token/`)).toBe(true));
+
+    const callback = await upload({ uid: SKETCHFAB_USER });
+    expect(callback.headers.get('Location')).toBe(`${ORIGIN}/?avatar=upload&provider=sketchfab`);
+    // The connection's own tokens are untouched.
+    const storedAfter = await env.DB.prepare('select token_enc from avatar_connection where user_id = ?').bind(user.id).first<{ token_enc: string }>();
+    expect(storedAfter!.token_enc).toBe(storedBefore!.token_enc);
+
+    const withGrant = `${cookie}; ${UPLOAD_COOKIE}=${cookieValue(callback, UPLOAD_COOKIE)}`;
+    const grant = (await (await post('/api/account/avatar/upload/grant', withGrant, {})).json()) as Record<string, unknown>;
+    expect(grant).toMatchObject({ provider: 'sketchfab', service: SKETCHFAB_API, account: SKETCHFAB_USER, accessToken: 'sf-upload-access' });
+    expect(JSON.stringify(grant)).not.toContain('sf-upload-refresh');
+
+    const before = calls.length;
+    expect((await post('/api/account/avatar/upload/done', withGrant, {})).status).toBe(200);
+    await vi.waitFor(() => expect(calls.slice(before).filter((c) => c.url === `${SKETCHFAB}/oauth2/revoke_token/`)).toHaveLength(2));
+    const revoked = await Promise.all(
+      calls.slice(before).filter((c) => c.url === `${SKETCHFAB}/oauth2/revoke_token/`).map(async (c) => new URLSearchParams(await c.text()).get('token')),
+    );
+    expect(revoked).toEqual(['sf-upload-access', 'sf-upload-refresh']);
   });
 
   it("selects only the user's own models", async () => {

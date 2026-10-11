@@ -49,7 +49,7 @@ import { DoorViewManager } from './doorViews';
 import { WalkThrough } from './walkThrough';
 import { doorFrameGeometry, frameOuterCorner, openingCorner } from './doorShape';
 import { describeBillboard } from './layout';
-import { playPortalSplash, playSendSound, playWarpSound, setPortalHum, stopPortalHum } from './sounds';
+import { playSendSound, playWarpSound, setPortalHum, stopPortalHum } from './sounds';
 import { chatRejection } from '../../../../workers/presence/src/chatFilter';
 import { fetchOccupancy } from './occupancy';
 import { Arrival } from './arrival';
@@ -1232,7 +1232,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     }
     if (!door) return;
     door.warp();
-    playPortalSplash(loudnessAt(x, z));
     if (out) return;
     let figure: Object3D | null = null;
     nearest = WARP_MATCH;
@@ -1289,7 +1288,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   }
 
   /**
-   * The open portals' watery warp hum: louder the closer the nearest one is,
+   * The open portals' warp hum: louder the closer the nearest one is,
    * and heard from its side.
    */
   function updatePortalHum(door: Door | null, distance: number): void {
@@ -1318,11 +1317,10 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     warping = true;
     leavingAt = time;
     playWarpSound(false);
-    if (door) playPortalSplash(1);
     warpDoor = door;
     returnTo = spot;
     options.onEnterWorld?.(target, returnTo);
-    document.exitPointerLock?.();
+    world.releasePointer();
     flash.classList.add('active');
     const url = travelUrl(target.url);
     warpTimer = window.setTimeout(() => {
@@ -1655,7 +1653,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     // Out through the same warp as going in: rings on the door for everyone,
     // and the lens easing back from wide.
     door?.warp();
-    playPortalSplash(1);
     const mouth = door?.inFront(0) ?? { x, z };
     pendingWarp = { x: mouth.x, y: spot.position[1], z: mouth.z, o: 1, at: time };
     // Blurred straight away (no fade in), then clearing as the lens settles.
