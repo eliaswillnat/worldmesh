@@ -244,11 +244,13 @@ function roundedWallHead(
 const GATE_COUNT = 8;
 /** Doors on each stretch of wall between two exits: inside for multiplayer worlds, outside for solo ones. */
 const DOORS_PER_BAY = 1;
-/** The clear opening of each exit, in metres: about twice a door's width, and as tall as fits under the screen band. */
-const GATE_WIDTH = 8;
-const GATE_HEIGHT = 7.6;
+/** The clear opening of each exit, in metres: the same as a door's. */
+const GATE_WIDTH = DOOR_WIDTH;
+const GATE_HEIGHT = DOOR_HEIGHT;
+/** The frame round each exit's mouth on the outside. */
+const GATE_MOUTH_FRAME = 0.6;
 /** The lining through the wall, round the opening, as seen from the hall. */
-const GATE_FRAME = 0.3;
+const GATE_FRAME = FRAME;
 /** Half the exit's width in the hall, lining included. */
 const GATE_HALF_SPAN = GATE_WIDTH / 2 + GATE_FRAME;
 
@@ -279,12 +281,20 @@ function doorAngles(total: number, radius: number): number[] {
   }
   return angles.map((angle) => (angle + Math.PI * 2) % (Math.PI * 2)).sort((a, b) => a - b);
 }
-/** Doors outside: on the outer wall, in the middle of each stretch between two exits. */
-function outsideAngles(): number[] {
-  const bay = (Math.PI * 2) / GATE_COUNT;
+/**
+ * Doors outside: on the outer wall, evenly along the free wall between two
+ * exits. In the first stretch the random door takes the start of the wall,
+ * so the doors there share what is left after its porch.
+ */
+function outsideAngles(outer: number): number[] {
+  const bay = (Math.PI * 2 * outer) / GATE_COUNT;
+  const mouth = GATE_WIDTH / 2 + GATE_MOUTH_FRAME;
   return Array.from({ length: GATE_COUNT * DOORS_PER_BAY }, (_, i) => {
     const gate = Math.floor(i / DOORS_PER_BAY);
-    return gate * bay + (((i % DOORS_PER_BAY) + 1) / (DOORS_PER_BAY + 1)) * bay;
+    const start = gate === 0 ? RANDOM_DOOR_ARC + PORCH_WIDTH / 2 : mouth;
+    const end = bay - mouth;
+    const along = start + (((i % DOORS_PER_BAY) + 1) / (DOORS_PER_BAY + 1)) * (end - start);
+    return (gate * bay + along) / outer;
   });
 }
 
@@ -374,7 +384,9 @@ const FOCUS_INTERVAL = 0.1;
 /** Billboard bookings are refreshed this often while walking. */
 const BILLBOARD_REFRESH_MS = 60_000;
 /** The random door stands on the citadel's outer wall, this far along it from the gate. */
-const RANDOM_DOOR_ARC = 8.2;
+const RANDOM_DOOR_ARC = 14;
+/** Width of the backing and porch behind each door on the outer wall. */
+const PORCH_WIDTH = DOOR_HALF_SPAN * 2 + 0.8;
 /** How far the random door stands out from the outer wall. */
 const RANDOM_DOOR_OUT = 0.3;
 
@@ -1834,7 +1846,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     const total = GATE_COUNT * DOORS_PER_BAY;
     const radius = HALL_RADIUS;
     const angles = doorAngles(total, radius);
-    const outside = outsideAngles();
+    const outside = outsideAngles(radius + WALL_THICKNESS);
     const assigned = assignDoors(listed, total, outside.length);
     const urls = assigned.inside;
     // Worlds sit next to each other; the doors after them stay empty.
@@ -2001,21 +2013,15 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       scene.add(mouth);
       gateMouths.push(mouth);
       wall.push(lining);
-      // Wayfinding, as in a terminal: hung in the mouth of the exit on two rods.
+      // Wayfinding, as in a terminal: on the wall above the exit, clear of its lining.
       const concourse = createConcourseSign(String.fromCharCode(65 + gateMouths.length - 1));
       concourse.draw(light);
       concourse.mesh.userData.ownMaterial = true;
-      const signY = GATE_HEIGHT - 0.35 - 0.625;
-      concourse.mesh.position.set(0, signY, 0.1);
+      const signY = GATE_HEIGHT + GATE_FRAME + 0.25 + 0.625;
+      concourse.mesh.position.set(0, signY, 0.04);
       mouth.add(concourse.mesh);
       trim.push(concourse.mesh);
       gateLabelDraw.push(concourse.draw);
-      for (const x of [-1.8, 1.8]) {
-        const rod = new Mesh(new BoxGeometry(0.05, 0.4, 0.05), gateFrameMaterial);
-        rod.position.set(x, GATE_HEIGHT - 0.2 + 0.02, 0.1);
-        mouth.add(rod);
-        trim.push(rod);
-      }
     }
 
     floorUniforms.uHall.value = radius;
@@ -2082,16 +2088,20 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       return geometry.index ? geometry.toNonIndexed() : geometry;
     };
 
-    // Vertical ribs all round the outside, leaving each gate and the banner bare.
-    const bare = 5 / outer;
+    // Vertical ribs all round the outside, leaving each gate, door and banner bare.
+    const gateBare = (GATE_WIDTH / 2 + GATE_MOUTH_FRAME + 0.4) / outer;
+    const doorBare = (PORCH_WIDTH / 2 + 0.5) / outer;
     const ribCount = Math.round((Math.PI * 2 * outer) / 3.2);
     for (let i = 0; i < ribCount; i++) {
       const angle = (i / ribCount) * Math.PI * 2;
-      const byGate = [...gateAngles(), ...outsideDoors].some((gate) => {
-        let delta = Math.abs(angle - gate);
+      const near = (at: number, bare: number) => {
+        let delta = Math.abs(angle - at);
         if (delta > Math.PI) delta = Math.PI * 2 - delta;
         return delta < bare;
-      });
+      };
+      const byGate =
+        gateAngles().some((gate) => near(gate, gateBare)) ||
+        [RANDOM_DOOR_ARC / outer, ...outsideDoors].some((door) => near(door, doorBare));
       if (byGate) continue;
       const r = outer + 0.2;
       solid.push(place(new BoxGeometry(0.5, CITADEL_HEIGHT, 0.4), Math.sin(angle) * r, CITADEL_HEIGHT / 2, Math.cos(angle) * r, angle));
@@ -2145,11 +2155,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       glow.push(rod(corner, anchor, 0.02));
     }
 
-    // Light bands: outside above the gate and under the crown, inside above
+    // Light bands: outside above the doors and under the crown, inside above
     // the doors (one unbroken line under the banners) and near the top.
     const band = (r: number, y: number, start = 0, length = Math.PI * 2) =>
       glow.push(place(new CylinderGeometry(r, r, 0.07, 128, 1, true, start, length), 0, y, 0));
-    band(outer + 0.03, GATE_HEIGHT + 1.2);
+    band(outer + 0.03, DOOR_TOP + 2.8);
     band(outer + 0.52, CITADEL_HEIGHT - 1.3);
     band(radius - 0.03, DOOR_TOP + 2.8);
     band(radius - 0.03, CITADEL_HEIGHT - 1);
@@ -2165,14 +2175,15 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       // The rim of light sits on the frame's front face (0.25 m out), not
       // inside it, where it would share the jamb's surface and flicker.
       const [glowX, glowZ] = atGate(frameR + 0.25 + 0.025, angle);
-      solid.push(place(doorFrameGeometry(GATE_WIDTH, GATE_HEIGHT, 0.6, 0.5), x, 0, z, angle));
+      solid.push(place(doorFrameGeometry(GATE_WIDTH, GATE_HEIGHT, GATE_MOUTH_FRAME, 0.5), x, 0, z, angle));
       glow.push(place(doorFrameGeometry(GATE_WIDTH, GATE_HEIGHT, 0.05, 0.05), glowX, 0, glowZ, angle));
     }
 
     // A tall screen over every gate, facing the plaza. Explore and Discover
     // alternate, each at its own picture's shape, in a deep white bezel.
     const portrait = [cityMaterials.banners.explore, cityMaterials.banners.discover];
-    const bannerBottom = GATE_HEIGHT + 2.4;
+    // Clear of the outside doors' names, and the light band over them.
+    const bannerBottom = DOOR_TOP + 3.6;
     // As tall as fits under the cornice.
     const bannerH = Math.min(14, CITADEL_HEIGHT - bannerBottom - 1.6);
     const banners: Mesh[] = [];
@@ -2197,11 +2208,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     for (const doorAngle of [RANDOM_DOOR_ARC / outer, ...outsideDoors]) {
       const around = (r: number) => [Math.sin(doorAngle) * r, Math.cos(doorAngle) * r] as const;
       const [backX, backZ] = around(outer - 0.05);
-      solid.push(place(new BoxGeometry(5.6, DOOR_TOP + 2.2, 0.5), backX, (DOOR_TOP + 2.2) / 2, backZ, doorAngle));
+      solid.push(place(new BoxGeometry(PORCH_WIDTH, DOOR_TOP + 2.2, 0.5), backX, (DOOR_TOP + 2.2) / 2, backZ, doorAngle));
       const [porchX, porchZ] = around(outer + 0.55);
-      solid.push(place(new BoxGeometry(5.6, 0.16, 0.9), porchX, DOOR_TOP + 0.75, porchZ, doorAngle));
+      solid.push(place(new BoxGeometry(PORCH_WIDTH, 0.16, 0.9), porchX, DOOR_TOP + 0.75, porchZ, doorAngle));
       const [lineX, lineZ] = around(outer + 1.0);
-      glow.push(place(new BoxGeometry(5.6, 0.04, 0.04), lineX, DOOR_TOP + 0.67, lineZ, doorAngle));
+      glow.push(place(new BoxGeometry(PORCH_WIDTH, 0.04, 0.04), lineX, DOOR_TOP + 0.67, lineZ, doorAngle));
     }
 
     const add = (geometries: BufferGeometry[], material: MeshStandardMaterial | typeof cityMaterials.glow) => {

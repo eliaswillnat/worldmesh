@@ -20,7 +20,7 @@ import {
   Vector3,
 } from 'three';
 import { flipInside } from './city';
-import { loadCoverTexture } from './door';
+import { DOOR_TOP, loadCoverTexture } from './door';
 
 /**
  * The hall as a hub rotunda, like the atrium of a station, airport or mall:
@@ -50,8 +50,8 @@ export const GALLERY_LEVELS: number[] = [];
 const GALLERY_DEPTHS = [6, 4];
 const SLAB = 0.45;
 const RAIL = 1.1;
-/** Headroom on the top gallery (or the hall floor), under the screen band. */
-const TOP_HEADROOM = 7.6;
+/** Headroom on the top gallery (or the hall floor), under the screen band: the doors, with their names and gate numbers. */
+const TOP_HEADROOM = DOOR_TOP + 1.8;
 /** Where the screen band starts: just over the top gallery's doors, or the hall's. */
 export const MEDIA_BOTTOM = (GALLERY_LEVELS[GALLERY_LEVELS.length - 1] ?? 0) + TOP_HEADROOM + 1.2;
 /** Height of the drum, where the dome springs from: just over the screen band. */

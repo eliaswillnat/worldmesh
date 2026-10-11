@@ -59,11 +59,11 @@ export function doorFeatures(tags: readonly string[] | undefined): string[] {
     .slice(0, MAX_FEATURES);
 }
 
-/** Size of the doorway opening, in metres: 3:4 portrait, like the covers. */
-export const DOOR_WIDTH = 4.2;
-export const DOOR_HEIGHT = 5.6;
+/** Size of the doorway opening, in metres: 3:2 landscape, as tall as the lobby's exits. */
+export const DOOR_HEIGHT = 7.6;
+export const DOOR_WIDTH = DOOR_HEIGHT * 1.5;
 /** Frame thickness and depth. */
-export const FRAME = 0.16;
+export const FRAME = 0.45;
 const DEPTH = 0.32;
 /** How long the surface ripples after someone goes through, in seconds. */
 const WARP_SECONDS = 1.3;
