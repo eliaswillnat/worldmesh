@@ -15,12 +15,9 @@ bucket_name = "worldmesh-screenshots"
 # e.g. https://screenshots.worldmesh.net
 R2_PUBLIC_URL = "https://pub-b622cf770b414a1c9869157e73dab3c1.r2.dev"
 
-# Origins whose pages may call this worker from a browser: one screenshot of a
-# submitted world, rate-limited. Everything else (door views, cover uploads)
-# needs SCREENSHOT_SECRET.
+# Origins whose pages may read door-view statuses from a browser. Everything
+# else (door views, cover uploads) needs SCREENSHOT_SECRET.
 ALLOWED_ORIGINS = "https://worldmesh.net,https://www.worldmesh.net"
-# Browser-requested screenshots allowed per hour, across everyone.
-BROWSER_SCREENSHOTS_PER_HOUR = "20"
 
 # Required. Server callers (hub admin functions, workers/admin) send it as
 # Authorization: Bearer <secret>. Set the same value in all three places:
@@ -57,7 +54,6 @@ bucket_name = "worldmesh-screenshots-preview"
 [env.preview.vars]
 R2_PUBLIC_URL = ""
 ALLOWED_ORIGINS = "https://preview.worldmesh.net"
-BROWSER_SCREENSHOTS_PER_HOUR = "20"
 
 [[env.preview.queues.producers]]
 binding = "DOOR_VIEWS"

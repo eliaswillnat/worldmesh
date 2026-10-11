@@ -6,7 +6,8 @@ interface Env {
 /**
  * Same-origin passthrough for world cover images, so walk mode can draw them
  * inside WebGL (which needs CORS the R2 public bucket does not send).
- * Only images from known cover hosts are relayed.
+ * Only images from known cover hosts are relayed, plus the glTF portal scenes
+ * kept beside door views.
  */
 const ALLOWED_HOSTS = ['pub-b622cf770b414a1c9869157e73dab3c1.r2.dev'];
 
@@ -31,7 +32,8 @@ export async function onRequestGet(context: { request: Request; env: Env }): Pro
     cf: { cacheEverything: true, cacheTtl: 86400 },
   } as RequestInit);
   const type = upstream.headers.get('Content-Type') ?? '';
-  if (!upstream.ok || !type.startsWith('image/')) {
+  const portalScene = type === 'model/gltf-binary' && url.pathname.startsWith('/door-views/');
+  if (!upstream.ok || !(type.startsWith('image/') || portalScene)) {
     return new Response('Cover unavailable', { status: 404 });
   }
 

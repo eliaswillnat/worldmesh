@@ -1,7 +1,7 @@
-import { Euler, Group, Vector3 } from 'three';
+import { Euler, Group, PerspectiveCamera, Vector3 } from 'three';
 import { resolveAbilities } from '../abilities/abilities.js';
 import { parseAvatarDescriptor, type AvatarDescriptor } from '../avatar/descriptor.js';
-import { resolveWorldMeshAvatar, takeAvatarTicket } from '../avatar/handoff.js';
+import { resolveWorldMeshAvatar, setAvatarTicket, takeAvatarTicket } from '../avatar/handoff.js';
 import { rememberView, takeViewHandoff } from '../camera/viewHandoff.js';
 import { loadAvatarModel } from '../avatar/loader.js';
 import { Footsteps } from '../audio/footsteps.js';
@@ -9,7 +9,7 @@ import { CameraRig } from '../camera/cameraRig.js';
 import { Input } from '../controls/input.js';
 import { CollisionWorld } from '../movement/collision.js';
 import { MovementController } from '../movement/controller.js';
-import { expressionForDigit, isAvatarExpression } from '../player/avatar.js';
+import { expressionForDigit, isAvatarExpression, setAvatarColor } from '../player/avatar.js';
 import { Player } from '../player/player.js';
 import { PortalManager, buildTravelUrl, type ResolvedPortal } from '../portals/portals.js';
 import type {
@@ -25,6 +25,7 @@ import { isTouchDevice } from '../controls/touch.js';
 import { immersiveVrSupported, requestImmersiveVr } from '../xr/session.js';
 import { Emitter } from './events.js';
 import { captureDoorView, type DoorViewOptions } from '../capture/doorView.js';
+import { exportPortal, type PortalSceneOptions } from '../capture/portalScene.js';
 import { DEFAULT_PRESENCE_SERVER, Presence } from '../net/presence.js';
 import { roomFullLabel } from '../net/roomFull.js';
 
@@ -33,11 +34,30 @@ const MAX_STEP = 1 / 60;
 /** Never simulate more than this per frame, so a backgrounded tab does not catch up violently. */
 const MAX_FRAME = 0.1;
 const DEFAULT_HUB = 'https://worldmesh.net/';
+/** An embedded world waiting to be walked into draws this rarely: enough to stay warm, little enough to leave the hub its frames. */
+const DORMANT_FRAME_MS = 250;
+/** Seconds to ease the field of view back to the world's own after taking over the hub's camera. */
+const FOV_RETURN = 1.5;
 /**
  * Set by WorldMesh's capture service when it opens a world to take its door
  * view. The world then stays offline, so other visitors stay out of the shot.
  */
 export const CAPTURE_PARAM = 'worldmesh-capture';
+/**
+ * Set by a host that shows the world live in one of its doors (Doorway,
+ * docs/specs/doorway.md §4). The world waits offline until the host posts
+ * `{ type: 'doorway:enter' }` (the visitor walked through the door), then
+ * goes online without reloading. While embedded, it asks the host to take
+ * the visitor anywhere else (`{ type: 'doorway:navigate', url }`), as the
+ * page around it is the host's.
+ */
+export const EMBED_PARAM = 'doorway-embed';
+/** The pre-Doorway names, still understood: `worldmesh-embed` and `worldmesh:*` messages. */
+const LEGACY_EMBED_PARAM = 'worldmesh-embed';
+const isDoorwayMessage = (data: unknown, name: string): boolean => {
+  const type = (data as { type?: unknown } | null)?.type;
+  return type === `doorway:${name}` || type === `worldmesh:${name}`;
+};
 
 /**
  * Turn an ordinary Three.js scene into a WorldMesh world.
@@ -152,6 +172,10 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
 
     setViewMode,
     getViewMode: () => cameraRig.mode,
+    getCameraDistance: () => cameraRig.distance,
+    setCameraDistance: (distance) => {
+      if (Number.isFinite(distance)) cameraRig.distance = Math.max(0.4, distance);
+    },
 
     addPortal: (portal) => {
       portals.add(portal);
@@ -172,6 +196,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     isVR: () => renderer.xr.isPresenting,
 
     captureDoorView: doCaptureDoorView,
+    exportPortal: doExportPortal,
   };
 
   applyViewVisibility();
@@ -182,24 +207,179 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   if (options.autoStart !== false) start();
 
   const capturing = isCaptureRequest();
+  const embedded = !capturing && isEmbedRequest();
+  let network: WorldMeshOptions['network'];
+  /** Embedded and not walked into yet. */
+  let dormant = embedded;
+  /** Easing the field of view back to the world's own, after a walk-in took over the hub's. */
+  let fovReturn: { from: number; to: number; t: number } | null = null;
   if (capturing) exposeCapture();
-  const network = capturing ? undefined : options.network ?? createMultiplayer();
-  if (network instanceof Presence) {
-    network.setOnFull((full) => {
-      overlay.setRoomFull(full ? roomFullLabel(network.url) : null, {
-        onRetry: full ? () => network.rejoin() : undefined,
-      });
-      if (full) input.exitPointerLock();
-      events.emit('room:full', { full });
-    });
-  }
-  network?.attach(handle);
-  if (network?.bodies) controller.bodies = () => network.bodies!();
+  if (embedded) awaitEntry();
+  else if (!capturing) goOnline();
 
   startAvatar();
   if (vrEnabled) void offerVr();
 
   return handle;
+
+  function goOnline(): void {
+    network = options.network ?? createMultiplayer();
+    if (network instanceof Presence) {
+      const presence = network;
+      presence.setOnFull((full) => {
+        overlay.setRoomFull(full ? roomFullLabel(presence.url) : null, {
+          onRetry: full ? () => presence.rejoin() : undefined,
+        });
+        if (full) input.exitPointerLock();
+        events.emit('room:full', { full });
+      });
+    }
+    network?.attach(handle);
+    const bodies = network?.bodies?.bind(network);
+    if (bodies) controller.bodies = () => bodies();
+  }
+
+  /**
+   * Shown live in a hub's door: stay offline, drawing only now and then,
+   * until the visitor walks through it. The hub's travel URL (its `from`, for
+   * the way back) replaces this page's own address, as if they had arrived
+   * through it. A `pose` (in this world's coordinates) puts the player and
+   * camera exactly where the hub had them, so the hand-over can't be seen;
+   * the hub hears `doorway:entered` once a frame from there is drawn.
+   */
+  function awaitEntry(): void {
+    const onMessage = (event: MessageEvent) => {
+      if (event.source !== window.parent || !isDoorwayMessage(event.data, 'enter')) return;
+      window.removeEventListener('message', onMessage);
+      const url = typeof event.data.url === 'string' ? event.data.url : null;
+      try {
+        if (url && new URL(url).origin === window.location.origin) window.history.replaceState(null, '', url);
+      } catch {
+        // Keep the embed address.
+      }
+      if (disposed) return;
+      takePose(event.data.pose);
+      dormant = false;
+      // Walked in: playing at once, no "click to play" in between (the cursor still needs a click to look around).
+      input.requestPointerLock(isTouchDevice());
+      window.addEventListener('message', onCarry);
+      goOnline();
+      // Two frames on, the first one from the new pose has been drawn.
+      requestAnimationFrame(() => requestAnimationFrame(() => window.parent.postMessage({ type: 'doorway:entered' }, '*')));
+    };
+    // The hub's joystick, still held as the visitor walked in, keeps them walking until it is let go.
+    const onCarry = (event: MessageEvent) => {
+      if (event.source !== window.parent || !isDoorwayMessage(event.data, 'carry')) return;
+      input.carry(Number(event.data.x) || 0, Number(event.data.z) || 0);
+      if (!event.data.x && !event.data.z) window.removeEventListener('message', onCarry);
+    };
+    window.addEventListener('message', onMessage);
+    awaitCharacter();
+    // Nothing secret: only tells the hub this world can be walked into.
+    window.parent.postMessage({ type: 'doorway:ready' }, '*');
+  }
+
+  /**
+   * Embedded: the host hands over the visitor's character while the world
+   * still waits, so it is on screen from the first frame they walk in
+   * (Doorway §6): `{ type: 'doorway:character', format, name, data }`, the
+   * model file itself (nothing is fetched twice), or `data: null` for the
+   * default body. Taken from any host, only if the world shows visitors'
+   * characters at all. From this world's own hub (`avatar.hubUrl`), the
+   * WorldMesh extras under `worldmesh` are used too: the Avatar Wallet
+   * descriptor (for credits) and the handoff ticket for portals onwards. The
+   * pre-Doorway `worldmesh:avatar` from the hub is still understood. Answers
+   * `doorway:character-ready` (or `worldmesh:avatar-ready`).
+   */
+  function awaitCharacter(): void {
+    const config = options.avatar;
+    if (config?.source !== 'worldmesh') return;
+    let hubOrigin: string;
+    try {
+      hubOrigin = new URL(config.hubUrl ?? DEFAULT_HUB).origin;
+    } catch {
+      return;
+    }
+    let latest = 0;
+    window.addEventListener('message', async (event: MessageEvent) => {
+      if (event.source !== window.parent) return;
+      const message = event.data as Record<string, unknown> | null;
+      const fromHub = event.origin === hubOrigin;
+      const neutral = message?.type === 'doorway:character';
+      if (!neutral && !(fromHub && message?.type === 'worldmesh:avatar')) return;
+      const turn = ++latest;
+
+      const extras = (neutral ? message.worldmesh : message) as { descriptor?: unknown; ticket?: unknown } | undefined;
+      if (fromHub && typeof extras?.ticket === 'string') setAvatarTicket(extras.ticket);
+      const data = message.data instanceof ArrayBuffer ? message.data : undefined;
+      let descriptor = fromHub ? parseAvatarDescriptor(extras?.descriptor) : null;
+      if (!descriptor && neutral && data && (message.format === 'vrm' || message.format === 'glb')) {
+        descriptor = {
+          provider: 'doorway',
+          avatarId: '',
+          name: typeof message.name === 'string' ? message.name.slice(0, 64) : null,
+          thumbnail: null,
+          format: message.format,
+          // Never fetched: the file came with the message.
+          modelUrl: '',
+          expiresAt: null,
+          sourceUrl: null,
+        };
+      }
+      let loaded = false;
+      if (descriptor) {
+        loaded = await loadAvatar(descriptor, data);
+      } else if (neutral ? message.data === null : extras?.descriptor === null) {
+        // Back to the default body (private mode, or no character any more).
+        clearAvatar();
+      }
+      if (turn !== latest || disposed) return;
+      const answer = neutral ? 'doorway:character-ready' : 'worldmesh:avatar-ready';
+      window.parent.postMessage({ type: answer, loaded }, event.origin);
+    });
+  }
+
+  /** Where a hub had the visitor as they walked in, in this world's coordinates. Ignores anything malformed. */
+  function takePose(pose: unknown): void {
+    const p = pose as Partial<{
+      position: Vec3Tuple;
+      velocity: Vec3Tuple;
+      camera: Vec3Tuple;
+      mode: ViewMode;
+      yaw: number;
+      pitch: number;
+      facing: number;
+      fov: number;
+      color: string;
+    }> | null;
+    const vec = (v: unknown): v is Vec3Tuple => Array.isArray(v) && v.length === 3 && v.every((n) => Number.isFinite(n));
+    const num = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
+    if (!p || !vec(p.position)) return;
+    controller.reset(new Vector3(...p.position));
+    if (vec(p.velocity)) controller.velocity.set(...p.velocity);
+    if (num(p.yaw)) cameraRig.yaw = p.yaw;
+    if (num(p.pitch)) cameraRig.pitch = p.pitch;
+    if (num(p.facing)) player.facing = p.facing;
+    if (p.mode === 'first' || p.mode === 'third') setViewMode(p.mode);
+    if (cameraRig.mode === 'third' && vec(p.camera)) {
+      // Same boom as the hub's camera had, measured from this world's eyes; it eases back out from there.
+      const eyes = new Vector3(...p.position).add(new Vector3(0, player.eyeHeight * (controller.height / height), 0));
+      cameraRig.snapBoom(eyes.distanceTo(new Vector3(...p.camera)));
+    }
+    // The figure keeps the colour it had in the hub (the default body only).
+    if (typeof p.color === 'string' && /^#[0-9a-f]{6}$/i.test(p.color) && player.root && !avatarDescriptor) setAvatarColor(player.root, p.color);
+    if (num(p.fov) && camera instanceof PerspectiveCamera && Math.abs(camera.fov - p.fov) > 0.01) {
+      fovReturn = { from: p.fov, to: camera.fov, t: 0 };
+      camera.fov = p.fov;
+      camera.updateProjectionMatrix();
+    }
+  }
+
+  /** Leave for another page; an embedded world asks its hub to go there instead. */
+  function leaveFor(url: string): void {
+    if (embedded) window.parent.postMessage({ type: 'doorway:navigate', url }, '*');
+    else window.location.href = url;
+  }
 
   /** Brings in the visitor's own avatar, if the world asked for one. The default body stays until it is ready. */
   function startAvatar(): void {
@@ -220,7 +400,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     );
   }
 
-  async function loadAvatar(descriptor: AvatarDescriptor): Promise<boolean> {
+  async function loadAvatar(descriptor: AvatarDescriptor, data?: ArrayBuffer): Promise<boolean> {
     if (disposed || !player.root) return false;
     avatarLoad?.abort();
     const load = (avatarLoad = new AbortController());
@@ -229,6 +409,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
         height,
         maxBytes: options.avatar?.maxBytes,
         signal: load.signal,
+        data,
       });
       if (disposed || load.signal.aborted) {
         loaded.dispose();
@@ -270,10 +451,18 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
 
   function frame(now: number): void {
     if (!running) return;
+    if (dormant && now - lastTime < DORMANT_FRAME_MS) return;
     const dt = Math.min((now - lastTime) / 1000, MAX_FRAME);
     lastTime = now;
     update(dt);
     options.onUpdate?.(dt, handle);
+    if (fovReturn && camera instanceof PerspectiveCamera) {
+      fovReturn.t = Math.min(1, fovReturn.t + dt / FOV_RETURN);
+      const k = fovReturn.t * fovReturn.t * (3 - 2 * fovReturn.t);
+      camera.fov = fovReturn.from + (fovReturn.to - fovReturn.from) * k;
+      camera.updateProjectionMatrix();
+      if (fovReturn.t >= 1) fovReturn = null;
+    }
     renderer.render(scene, camera);
   }
 
@@ -430,7 +619,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     });
     if (cancelled) return;
     input.release();
-    window.location.href = url;
+    leaveFor(url);
   }
 
   function setViewMode(mode: ViewMode): void {
@@ -485,29 +674,52 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
 
   function travelTo(url: string): void {
     input.release();
-    window.location.href = buildTravelUrl(url);
+    leaveFor(buildTravelUrl(url));
   }
 
-  /** Snapshot the view from where the player stands, the way they face, for hub doors. */
-  async function doCaptureDoorView(captureOptions?: DoorViewOptions) {
+  /** Where captures for hub doors are taken from: the player's eyes, the way they face. */
+  function captureTarget() {
+    return {
+      scene,
+      renderer,
+      camera: camera as { near: number; far: number },
+      eye: controller.position.clone().setY(controller.position.y + player.eyeHeight * (controller.height / height)),
+      yaw: cameraRig.yaw,
+      hide: [player.root],
+    };
+  }
+
+  /** Captures resize the canvas and draw on their own, so the world's loop pauses meanwhile. */
+  async function whilePaused<T>(what: string, run: () => Promise<T>): Promise<T> {
     if (disposed) throw new Error('This world has been disposed.');
-    if (renderer.xr.isPresenting) throw new Error('Cannot capture a door view during VR.');
+    if (renderer.xr.isPresenting) throw new Error(`Cannot ${what} during VR.`);
     const wasRunning = running;
     stop();
     try {
-      return await captureDoorView(
-        {
-          scene,
-          renderer,
-          camera: camera as { near: number; far: number },
-          eye: controller.position.clone().setY(controller.position.y + player.eyeHeight * (controller.height / height)),
-          yaw: cameraRig.yaw,
-          hide: [player.root],
-        },
-        captureOptions,
-      );
+      return await run();
     } finally {
       if (wasRunning) start();
+    }
+  }
+
+  /** Snapshot the view from where the player stands, the way they face, for hub doors. */
+  function doCaptureDoorView(captureOptions?: DoorViewOptions) {
+    return whilePaused('capture a door view', () => captureDoorView(captureTarget(), captureOptions));
+  }
+
+  /** The scene around where the player stands, for hub doors to draw live. */
+  function doExportPortal(portalOptions?: PortalSceneOptions) {
+    return whilePaused('export a portal scene', () =>
+      exportPortal({ ...captureTarget(), feet: controller.position.clone() }, portalOptions),
+    );
+  }
+
+  function isEmbedRequest(): boolean {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return window.parent !== window && (params.has(EMBED_PARAM) || params.has(LEGACY_EMBED_PARAM));
+    } catch {
+      return false;
     }
   }
 
@@ -521,7 +733,12 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
 
   /** The capture service drives the page from outside, so give it one global to call. */
   function exposeCapture(): void {
-    (window as unknown as { __worldmeshCaptureDoorView?: typeof doCaptureDoorView }).__worldmeshCaptureDoorView = doCaptureDoorView;
+    const hooks = window as unknown as {
+      __worldmeshCaptureDoorView?: typeof doCaptureDoorView;
+      __worldmeshExportPortal?: typeof doExportPortal;
+    };
+    hooks.__worldmeshCaptureDoorView = doCaptureDoorView;
+    hooks.__worldmeshExportPortal = doExportPortal;
   }
 
   function handleResize(): void {

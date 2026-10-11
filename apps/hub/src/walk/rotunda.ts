@@ -20,17 +20,15 @@ import {
   Vector3,
 } from 'three';
 import { flipInside } from './city';
-import { loadCoverTexture } from './door';
+import { DOOR_TOP, loadCoverTexture } from './door';
 
 /**
  * The hall as a hub rotunda, like the atrium of a station, airport or mall:
  * a glass dome with an oculus the spawn beam rises through, galleries of
  * doors ringing the drum below the screens, a departures board
- * hanging over the middle, and concourse signs at the exits. Only looks: none of it is solid.
+ * hanging over the middle, and concourse signs in the exits. Only looks: none of it is solid.
  */
 
-/** Height of the drum, where the dome springs from. */
-export const DRUM_HEIGHT = 36;
 /** The dome rises this fraction of the hall's radius above the drum. */
 const DOME_RISE = 0.36;
 /** Open eye at the crown, wide enough for the spawn beam's halo. */
@@ -45,19 +43,22 @@ export const MEDIA_MAX_HEIGHT = 7.4;
 /**
  * Gallery floors (balcony tops), bottom to top. Each storey is as tall as the
  * hall's, so the gallery doors are full size, with room for their names.
+ * None for now: the hall is one wide storey (two used to stand at 10.4 and 19.4).
  */
-export const GALLERY_LEVELS = [10.4, 19.4];
+export const GALLERY_LEVELS: number[] = [];
 /** How far each gallery reaches into the hall: the first is roomy, for the escalators' landings. */
 const GALLERY_DEPTHS = [6, 4];
 const SLAB = 0.45;
 const RAIL = 1.1;
-/** Headroom on the top gallery, under the screen band. */
-const TOP_HEADROOM = 7.6;
-/** Where the screen band starts: just over the top gallery's doors. */
-export const MEDIA_BOTTOM = GALLERY_LEVELS[GALLERY_LEVELS.length - 1] + TOP_HEADROOM + 1.2;
+/** Headroom on the top gallery (or the hall floor), under the screen band: the doors, with their names and gate numbers. */
+const TOP_HEADROOM = DOOR_TOP + 1.8;
+/** Where the screen band starts: just over the top gallery's doors, or the hall's. */
+export const MEDIA_BOTTOM = (GALLERY_LEVELS[GALLERY_LEVELS.length - 1] ?? 0) + TOP_HEADROOM + 1.2;
+/** Height of the drum, where the dome springs from: just over the screen band. */
+export const DRUM_HEIGHT = MEDIA_BOTTOM + MEDIA_MAX_HEIGHT + 0.4;
 
 /** The departures halo: an outer ring of covers and a smaller one of listings below it. */
-const BOARD_HEIGHT = 5.2;
+const BOARD_HEIGHT = 10.4;
 /** Portrait (3:4) covers round the outer ring, and the radius that fits them exactly. */
 const BOARD_TILES = 16;
 const BOARD_RADIUS = (BOARD_TILES * BOARD_HEIGHT * 0.75) / (Math.PI * 2);
@@ -561,7 +562,7 @@ function painted(width: number, height: number, canvasW: number, canvasH: number
   };
 }
 
-/** Wayfinding over a sealed exit: the concourse letter and what is (not yet) there. */
+/** Wayfinding in an exit: the concourse letter and where it leads. */
 export function createConcourseSign(letter: string): Painted {
   return painted(5, 1.25, 1024, 256, (ctx) => {
     // Signs stay dark with amber letters in either theme, like the board.
@@ -584,6 +585,6 @@ export function createConcourseSign(letter: string): Painted {
     ctx.fillText(`Concourse ${letter}`, 268, 104);
     ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
     ctx.font = '600 44px Urbanist, ui-sans-serif, system-ui, sans-serif';
-    ctx.fillText('Opening soon', 270, 186);
+    ctx.fillText('Exit to the plaza', 270, 186);
   });
 }

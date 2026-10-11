@@ -1,6 +1,7 @@
 import type { AvatarDescriptor } from './avatar/descriptor.js';
 import type { AvatarExpression } from './player/avatar.js';
 import type { DoorView, DoorViewOptions } from './capture/doorView.js';
+import type { PortalSceneOptions, PortalScene } from './capture/portalScene.js';
 import type { Camera, Object3D, PerspectiveCamera, Scene, WebGLRenderer } from 'three';
 
 export type Vec3Tuple = [number, number, number];
@@ -299,6 +300,10 @@ export interface WorldMeshHandle {
 
   setViewMode(mode: ViewMode): void;
   getViewMode(): ViewMode;
+  /** How far back the third-person camera sits, in metres. */
+  getCameraDistance(): number;
+  /** Move the third-person camera in or out (0.4 m at the closest); it follows at once when closer. */
+  setCameraDistance(distance: number): void;
 
   addPortal(portal: PortalOptions): void;
   /** Navigate to another WorldMesh world, carrying a `from` back-reference. */
@@ -309,8 +314,12 @@ export interface WorldMeshHandle {
   on<K extends keyof WorldMeshEvents>(event: K, fn: (payload: WorldMeshEvents[K]) => void): () => void;
   off<K extends keyof WorldMeshEvents>(event: K, fn: (payload: WorldMeshEvents[K]) => void): void;
 
-  /** Show an external avatar. Resolves to false (default body kept) if it cannot be loaded. */
-  loadAvatar(descriptor: AvatarDescriptor): Promise<boolean>;
+  /**
+   * Show an external avatar. Resolves to false (default body kept) if it
+   * cannot be loaded. Pass `data` (downloadAvatarModel) if the model file is
+   * already downloaded, and it is not fetched again.
+   */
+  loadAvatar(descriptor: AvatarDescriptor, data?: ArrayBuffer): Promise<boolean>;
   /** Go back to the world's default body. */
   clearAvatar(): void;
 
@@ -329,4 +338,10 @@ export interface WorldMeshHandle {
    * way they face. WorldMesh shows it inside this world's doors in the hub.
    */
   captureDoorView(options?: DoorViewOptions): Promise<DoorView>;
+
+  /**
+   * Export the scene around where the player stands (its meshes as glTF, the
+   * rest as a 360° backdrop), for this world's doors in the hub to draw live.
+   */
+  exportPortal(options?: PortalSceneOptions): Promise<PortalScene>;
 }

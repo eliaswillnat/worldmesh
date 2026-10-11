@@ -1,0 +1,9 @@
+{
+  "name": "worldmesh-preview-door-views",
+  "private": true,
+  "description": "Takes door views of the preview worlds during a preview deploy (scripts/preview.sh).",
+  "type": "module",
+  "dependencies": {
+    "playwright-core": "1.56.1"
+  }
+}

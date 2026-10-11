@@ -1,4 +1,4 @@
-export { CAPTURE_PARAM, createWorldMesh } from './core/worldmesh.js';
+export { CAPTURE_PARAM, EMBED_PARAM, createWorldMesh } from './core/worldmesh.js';
 export {
   DOOR_VIEW_DEPTH_FAR,
   DOOR_VIEW_DEPTH_NEAR,
@@ -7,6 +7,8 @@ export {
   captureDoorView,
 } from './capture/doorView.js';
 export type { DoorView, DoorViewOptions, DoorViewTarget } from './capture/doorView.js';
+export { PORTAL_BACKDROP_FILE, PORTAL_SCENE_VERSION, exportPortal } from './capture/portalScene.js';
+export type { PortalScene, PortalSceneAmbient, PortalSceneExtras, PortalSceneOptions, PortalSceneShadow, PortalSceneTarget } from './capture/portalScene.js';
 export { Emitter } from './core/events.js';
 export { Input } from './controls/input.js';
 export { TouchControls, isTouchDevice } from './controls/touch.js';
@@ -42,7 +44,7 @@ export {
   takeAvatarTicket,
   withAvatarTicket,
 } from './avatar/handoff.js';
-export { loadAvatarModel } from './avatar/loader.js';
+export { downloadAvatarModel, loadAvatarModel } from './avatar/loader.js';
 export type { LoadAvatarOptions, LoadedAvatar } from './avatar/loader.js';
 export { Overlay } from './ui/overlay.js';
 export { immersiveVrSupported, requestImmersiveVr, IMMERSIVE_VR } from './xr/session.js';

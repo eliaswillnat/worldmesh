@@ -275,6 +275,7 @@ build_apps() {
       VITE_SCREENSHOT_ENDPOINT="$screenshot" \
       VITE_VIEWS_ENDPOINT="$views" \
       VITE_ADS_ENABLED=false \
+      VITE_DOOR_COMPARE=on \
       VITE_WORLD_FOREST_URL="https://$(host_of forest)/" \
       VITE_WORLD_MARS_URL="https://$(host_of mars)/" \
       VITE_WORLD_CITY_URL="https://$(host_of city)/" \
@@ -300,6 +301,74 @@ upload_apps() {
   done
 }
 
+# Door views and Doorway scenes of the five preview worlds, taken from the
+# fresh builds (workers/screenshot can't: its browser can't get past Access).
+# Each world publishes its own Doorway scene, like any Doorway destination
+# (docs/specs/doorway.md §2): doorway/scene.glb, its backdrop and
+# doorway/doorway.json, served as /.well-known/doorway.json (_redirects).
+# Runs before upload_apps, so the files ship with the world.
+DOORWAY_OUT=""
+capture_doorways() {
+  local app worlds=()
+  log "Taking door views and Doorway scenes of the preview worlds"
+  DOORWAY_OUT=$(mktemp -d)
+  for app in "${APPS[@]:1}"; do worlds+=("$app=apps/$app/dist"); done
+  node scripts/preview-door-views/capture.mjs "$DOORWAY_OUT" "${worlds[@]}" || { echo "  (skipped: capture failed)"; DOORWAY_OUT=""; return 0; }
+  for app in "${APPS[@]:1}"; do
+    [[ -f $DOORWAY_OUT/$app/portal.glb ]] || continue
+    mkdir -p "apps/$app/dist/doorway"
+    cp "$DOORWAY_OUT/$app/portal.glb" "apps/$app/dist/doorway/scene.glb"
+    cp "$DOORWAY_OUT/$app/backdrop.webp" "apps/$app/dist/doorway/backdrop.webp"
+    printf '{ "doorway": 1, "scene": "/doorway/scene.glb", "embed": true, "characters": ["vrm", "glb"] }\n' >"apps/$app/dist/doorway/doorway.json"
+    echo "  $app publishes its Doorway scene"
+  done
+}
+
+# The same views in the preview bucket, exactly where the worker would put
+# them, status.json last. The hub reads a world's own Doorway scene first;
+# this copy is what it falls back to while Access keeps the hub from reading
+# the worlds' own files (docs/previews.md). Best effort: a world without
+# either just shows its cover.
+seed_door_views() {
+  local out stamp app slug host prefix portal
+  out=$DOORWAY_OUT
+  [[ -n $out ]] || return 0
+  log "Putting door views in the preview bucket"
+
+  local covers; covers="https://$(r2_dev_host)"
+  put() { wrangler r2 object put "$R2_BUCKET/$1" --remote --file "$2" --content-type "$3" "${@:4}" >/dev/null; }
+  for app in "${APPS[@]:1}"; do
+    [[ -f $out/$app/meta.json ]] || continue
+    host=$(host_of "$app")
+    # doorViewSlug() of https://<host>/
+    slug=$(tr -c 'a-zA-Z0-9\n' '-' <<<"$host" | tr 'A-Z' 'a-z')
+    stamp=$(date +%s%3N); prefix="door-views/$slug/$stamp"
+    if ! put "$prefix/color.webp" "$out/$app/color.webp" image/webp || ! put "$prefix/depth.png" "$out/$app/depth.png" image/png; then
+      echo "  $slug: upload failed"
+      continue
+    fi
+    # The portal scene is optional: without it, doors show the door view.
+    portal='null'
+    if [[ -f $out/$app/portal.glb ]] && put "$prefix/portal.glb" "$out/$app/portal.glb" model/gltf-binary \
+      && put "$prefix/backdrop.webp" "$out/$app/backdrop.webp" image/webp; then
+      portal=$(jq -c --arg base "$covers/$prefix" '. + {glb: "\($base)/portal.glb", backdrop: "\($base)/backdrop.webp"}' "$out/$app/portal.json")
+    fi
+    jq -n --arg url "https://$host/" --arg base "$covers/$prefix" --argjson stamp "$stamp" --argjson now "$(date +%s%3N)" \
+      --slurpfile meta "$out/$app/meta.json" --argjson portal "$portal" '
+      {url: $url, requestedAt: $stamp, state: "ready", finishedAt: $now,
+       view: ($meta[0] + {capturedAt: $stamp, color: "\($base)/color.webp", depth: "\($base)/depth.png"}
+              + (if $portal then {portal: $portal} else {} end))}' \
+      >"$out/$app/status.json"
+    if put "door-views/$slug/status.json" "$out/$app/status.json" application/json --cache-control no-cache; then
+      echo "  $slug ready$([[ $portal != null ]] && echo ', with portal')"
+    else
+      echo "  $slug: upload failed"
+    fi
+  done
+  rm -rf "$out"
+  DOORWAY_OUT=""
+}
+
 # ── Commands ───────────────────────────────────────────────────────────────
 
 summary() {
@@ -320,7 +389,9 @@ cmd_deploy() {
   deploy_workers
   configure_hub_project
   build_apps
+  capture_doorways
   upload_apps "$sha"
+  seed_door_views
   summary "### Preview deployed: \`$sha\`"
 }
 
