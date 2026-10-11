@@ -12,6 +12,10 @@
  *
  * Only the connected user's own models are offered, so the license question
  * is theirs to answer; `sourceUrl` points at the model page for credit.
+ *
+ * Uploading: a fresh authorization just for the upload (the stored tokens
+ * are left alone). Its access token goes to the user's browser, which posts
+ * the GLB straight to /v3/models as a draft; then both tokens are revoked.
  */
 import type { Env } from '../auth';
 import { pkceChallenge, randomToken } from './crypto';
@@ -42,7 +46,7 @@ export const sketchfabProvider: AvatarProvider = {
 
   isConfigured: (env) => !!(env.SKETCHFAB_CLIENT_ID && env.SKETCHFAB_CLIENT_SECRET),
 
-  async connect(ctx, { userId }) {
+  async connect(ctx, { userId, upload }) {
     const state = randomToken();
     const verifier = randomToken(48);
     const url = new URL('/oauth2/authorize/', SKETCHFAB);
@@ -54,7 +58,10 @@ export const sketchfabProvider: AvatarProvider = {
       code_challenge: await pkceChallenge(verifier),
       code_challenge_method: 'S256',
     }).toString();
-    return { url: url.toString(), flow: { provider: 'sketchfab', userId, state, verifier, expiresAt: Date.now() + 10 * 60_000 } };
+    return {
+      url: url.toString(),
+      flow: { provider: 'sketchfab', userId, state, verifier, expiresAt: Date.now() + 10 * 60_000, ...(upload ? { extra: { upload: true } } : {}) },
+    };
   },
 
   async completeConnect(ctx, params, flow) {
@@ -70,30 +77,36 @@ export const sketchfabProvider: AvatarProvider = {
     const me = await api(ctx, tokens.access, '/v3/me');
     if (typeof me.uid !== 'string' || !UID.test(me.uid)) throw new AvatarError('Sketchfab did not say who you are.');
     const name = typeof me.displayName === 'string' && me.displayName ? me.displayName : me.username;
-    return {
-      providerAccountId: me.uid,
-      displayName: typeof name === 'string' ? name : null,
-      credentials: tokens,
-    };
+    const account = { providerAccountId: me.uid, displayName: typeof name === 'string' ? name : null };
+    if (flow.extra?.upload) {
+      // For the browser, for one upload; revoked by revokeUpload afterwards.
+      return {
+        ...account,
+        credentials: null,
+        uploadGrant: {
+          provider: 'sketchfab',
+          service: SKETCHFAB_API,
+          account: me.uid,
+          accessToken: tokens.access,
+          refreshToken: tokens.refresh,
+          expiresAt: Math.min(tokens.expiresAt, Date.now() + 15 * 60_000),
+        },
+      };
+    }
+    return { ...account, credentials: tokens };
+  },
+
+  async revokeUpload(ctx, grant) {
+    for (const token of [grant.accessToken, grant.refreshToken]) {
+      if (token) await revokeToken(ctx, token);
+    }
   },
 
   async disconnect(ctx, connection) {
     const tokens = await ctx.credentials<SketchfabTokens>(connection);
     if (!tokens) return;
-    // Not in Sketchfab's docs, but their OAuth server answers the standard
-    // revocation endpoint. Best effort: the connection is deleted either way.
-    ctx.waitUntil(
-      providerFetch(`${SKETCHFAB}/oauth2/revoke_token/`, {
-        ownHost: new URL(ctx.origin).host,
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          client_id: ctx.env.SKETCHFAB_CLIENT_ID ?? '',
-          client_secret: ctx.env.SKETCHFAB_CLIENT_SECRET ?? '',
-          token: tokens.access,
-        }),
-      }).catch(() => undefined),
-    );
+    // Best effort: the connection is deleted either way.
+    ctx.waitUntil(revokeToken(ctx, tokens.access).catch(() => undefined));
   },
 
   async listAvatars(ctx, connection) {
@@ -161,6 +174,20 @@ export const sketchfabProvider: AvatarProvider = {
     return next;
   },
 };
+
+/** Not in Sketchfab's docs, but their OAuth server answers the standard revocation endpoint. */
+function revokeToken(ctx: ProviderContext, token: string) {
+  return providerFetch(`${SKETCHFAB}/oauth2/revoke_token/`, {
+    ownHost: new URL(ctx.origin).host,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: ctx.env.SKETCHFAB_CLIENT_ID ?? '',
+      client_secret: ctx.env.SKETCHFAB_CLIENT_SECRET ?? '',
+      token,
+    }),
+  });
+}
 
 async function accessToken(ctx: ProviderContext, connection: ConnectionRow): Promise<string> {
   const tokens = (await sketchfabProvider.refreshAuth(ctx, connection)) as SketchfabTokens;

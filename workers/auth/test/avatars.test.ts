@@ -689,7 +689,7 @@ describe('at3d / AT Protocol', () => {
 
     const revokesBefore = calls.filter((c) => c.url === `${AS}/oauth/revoke`).length;
     const callback = await finishAtproto(cookie, flow, await flowState(flow), { ...GOOD_TOKEN, scope: UPLOAD_SCOPE });
-    expect(callback.headers.get('Location')).toBe(`${ORIGIN}/?avatar=upload`);
+    expect(callback.headers.get('Location')).toBe(`${ORIGIN}/?avatar=upload&provider=atproto`);
     // Not revoked yet: the browser still needs it.
     expect(calls.filter((c) => c.url === `${AS}/oauth/revoke`).length).toBe(revokesBefore);
     const sealed = cookieValue(callback, UPLOAD_COOKIE);
@@ -919,6 +919,51 @@ describe('Sketchfab', () => {
     ]);
     // The foreign `next` link on page two was not followed.
     expect(calls.map((c) => new URL(c.url).hostname)).not.toContain('evil.example.org');
+  });
+
+  it('authorizes uploads separately, for the connected account only, and revokes them after', async () => {
+    const { user, cookie } = await signedInUser('sf-upload@example.com');
+    await connectSketchfab(cookie);
+    const storedBefore = await env.DB.prepare('select token_enc from avatar_connection where user_id = ?').bind(user.id).first<{ token_enc: string }>();
+
+    const upload = async (who: { uid: string }) => {
+      const start = await post('/api/account/avatar/connect/sketchfab', cookie, { upload: true });
+      expect(start.status).toBe(200);
+      const state = new URL(((await start.json()) as { url: string }).url).searchParams.get('state');
+      route('POST', `${SKETCHFAB}/oauth2/token/`, () =>
+        reply({ access_token: 'sf-upload-access', refresh_token: 'sf-upload-refresh', token_type: 'Bearer', expires_in: 2592000 }),
+      );
+      route('GET', `${SKETCHFAB_API}/v3/me`, () => reply({ uid: who.uid, username: 'mesh-maker' }));
+      route('POST', `${SKETCHFAB}/oauth2/revoke_token/`, () => reply({}));
+      return call(`/api/account/avatar/callback/sketchfab?code=sf-code-2&state=${state}`, {
+        headers: { Cookie: `${cookie}; ${FLOW_COOKIE}=${cookieValue(start, FLOW_COOKIE)}` },
+      });
+    };
+
+    // Approved as a different Sketchfab account: refused, and that grant is given back.
+    const wrong = await upload({ uid: 'ffffffffffffffffffffffffffffffff' });
+    expect(wrong.headers.get('Location')).toBe(`${ORIGIN}/?avatar=error&reason=other-account`);
+    expect(wrong.headers.getSetCookie().some((c) => c.startsWith(`${UPLOAD_COOKIE}=`))).toBe(false);
+    await vi.waitFor(() => expect(calls.some((c) => c.url === `${SKETCHFAB}/oauth2/revoke_token/`)).toBe(true));
+
+    const callback = await upload({ uid: SKETCHFAB_USER });
+    expect(callback.headers.get('Location')).toBe(`${ORIGIN}/?avatar=upload&provider=sketchfab`);
+    // The connection's own tokens are untouched.
+    const storedAfter = await env.DB.prepare('select token_enc from avatar_connection where user_id = ?').bind(user.id).first<{ token_enc: string }>();
+    expect(storedAfter!.token_enc).toBe(storedBefore!.token_enc);
+
+    const withGrant = `${cookie}; ${UPLOAD_COOKIE}=${cookieValue(callback, UPLOAD_COOKIE)}`;
+    const grant = (await (await post('/api/account/avatar/upload/grant', withGrant, {})).json()) as Record<string, unknown>;
+    expect(grant).toMatchObject({ provider: 'sketchfab', service: SKETCHFAB_API, account: SKETCHFAB_USER, accessToken: 'sf-upload-access' });
+    expect(JSON.stringify(grant)).not.toContain('sf-upload-refresh');
+
+    const before = calls.length;
+    expect((await post('/api/account/avatar/upload/done', withGrant, {})).status).toBe(200);
+    await vi.waitFor(() => expect(calls.slice(before).filter((c) => c.url === `${SKETCHFAB}/oauth2/revoke_token/`)).toHaveLength(2));
+    const revoked = await Promise.all(
+      calls.slice(before).filter((c) => c.url === `${SKETCHFAB}/oauth2/revoke_token/`).map(async (c) => new URLSearchParams(await c.text()).get('token')),
+    );
+    expect(revoked).toEqual(['sf-upload-access', 'sf-upload-refresh']);
   });
 
   it("selects only the user's own models", async () => {

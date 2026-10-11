@@ -229,10 +229,11 @@ async function wallet(env: Env, userId: string) {
 }
 
 async function finishConnect(request: Request, env: Env, auth: Auth, exec: WaitUntil, origin: string, providerId: string): Promise<Response> {
-  const done = (outcome: 'connected' | 'upload' | 'error', reason?: string, extraCookie?: string) => {
+  /** For 'upload', `detail` names the provider; for 'error', the reason. */
+  const done = (outcome: 'connected' | 'upload' | 'error', detail?: string, extraCookie?: string) => {
     const target = new URL('/', origin);
     target.searchParams.set('avatar', outcome);
-    if (reason) target.searchParams.set('reason', reason);
+    if (detail) target.searchParams.set(outcome === 'upload' ? 'provider' : 'reason', detail);
     const headers = new Headers({ Location: target.toString() });
     headers.append('Set-Cookie', flowCookie(origin, '', 0));
     if (extraCookie) headers.append('Set-Cookie', extraCookie);
@@ -259,13 +260,19 @@ async function finishConnect(request: Request, env: Env, auth: Auth, exec: WaitU
   try {
     const provider = providerFor(env, providerId);
     const account = await provider.completeConnect(context(env, exec, origin, provider.id), params, flow);
-    await store.saveConnection(env.DB, env.AVATAR_SECRET, flow.userId, provider.id, account);
     if (account.uploadGrant) {
       const grant = account.uploadGrant;
+      // Only for the account already connected; the stored connection is left as it is.
+      const connected = (await store.connectionsOf(env.DB, flow.userId)).find((c) => c.provider === provider.id);
+      if (connected?.provider_account_id !== account.providerAccountId) {
+        exec.waitUntil((provider.revokeUpload?.(context(env, exec, origin, provider.id), grant) ?? Promise.resolve()).catch(() => undefined));
+        return done('error', 'other-account');
+      }
       const sealed = await seal(env.AVATAR_SECRET, 'upload-grant-v1', flow.userId, grant);
       const maxAge = Math.max(0, Math.floor((grant.expiresAt - Date.now()) / 1000));
-      return done('upload', undefined, uploadCookie(origin, sealed, maxAge));
+      return done('upload', provider.id, uploadCookie(origin, sealed, maxAge));
     }
+    await store.saveConnection(env.DB, env.AVATAR_SECRET, flow.userId, provider.id, account);
     return done('connected');
   } catch (error) {
     if (!(error instanceof AvatarError)) console.error('avatar connect failed', error);
