@@ -1,6 +1,7 @@
 import {
   InstancedMesh,
   Mesh,
+  Quaternion,
   Scene,
   Sphere,
   Vector3,
@@ -19,10 +20,18 @@ import { captureDoorView, type DoorViewTarget } from './doorView.js';
  * a glTF file as they are; everything else (sky, far scenery, things glTF
  * can't hold) becomes a 360° backdrop photographed from the spawn point.
  * Far things barely shift as people move, so a photo serves them well.
+ *
+ * The file is a Doorway scene (docs/specs/doorway.md §3), readable by any
+ * glTF loader: the arrival point is a node with OMI_spawn_point (facing its
+ * −Z), directional, point and spot lights are KHR_lights_punctual, and what
+ * has no standard yet rides in extras: the eye height on the spawn node, and
+ * fog, ambient and sky light and the backdrop on the scene.
  */
 
-/** Bumped when the layout of a portal scene changes. */
-export const PORTAL_SCENE_VERSION = 1;
+/** Bumped when the layout of a portal scene changes. 2: everything inside the glTF (Doorway). */
+export const PORTAL_SCENE_VERSION = 2;
+/** The backdrop's file name next to the scene, as written in the scene's extras. */
+export const PORTAL_BACKDROP_FILE = 'backdrop.webp';
 
 export interface PortalSceneOptions {
   /** Meshes this close to the spawn point (metres) go into the 3D scene. Default 60. */
@@ -35,6 +44,7 @@ export interface PortalSceneOptions {
   quality?: number;
 }
 
+/** How a light casts shadows: in a light node's extras (`castShadow: true`, `shadow`). */
 export interface PortalSceneShadow {
   mapSize: number;
   bias: number;
@@ -43,43 +53,40 @@ export interface PortalSceneShadow {
   camera: { left?: number; right?: number; top?: number; bottom?: number; near: number; far: number };
 }
 
-export interface PortalSceneLight {
-  type: 'ambient' | 'hemisphere' | 'directional' | 'point' | 'spot';
-  color: number;
-  /** Hemisphere lights only. */
-  groundColor?: number;
+/**
+ * Light glTF has no standard for, in the scene's extras (`ambient`). Colours
+ * are linear RGB 0–1. A hemisphere light shines from `direction`, relative to
+ * the world, not to the arrival heading.
+ */
+export interface PortalSceneAmbient {
+  type: 'ambient' | 'hemisphere';
+  color: [number, number, number];
   intensity: number;
-  /** World coordinates. A hemisphere light shines from this direction. */
-  position: [number, number, number];
-  /** Directional and spot lights: the point they aim at, world coordinates. */
-  target?: [number, number, number];
-  distance?: number;
-  decay?: number;
-  angle?: number;
-  penumbra?: number;
-  shadow?: PortalSceneShadow;
+  groundColor?: [number, number, number];
+  direction?: [number, number, number];
+}
+
+/** The scene's extras: what has no glTF standard yet. */
+export interface PortalSceneExtras {
+  /** Linear RGB 0–1. */
+  fog?: { color: [number, number, number]; near: number; far: number } | { color: [number, number, number]; density: number };
+  ambient?: PortalSceneAmbient[];
+  /** The 3×2 cube-face atlas of everything further away, relative to the scene file. */
+  backdrop?: { uri: string; faceSize: number };
 }
 
 export interface PortalScene {
   version: number;
   /**
-   * The meshes near the spawn point as a `data:model/gltf-binary` URL, in
-   * world coordinates. Each node's extras say whether it casts and receives
-   * shadows. No lights: those are in `lights`.
+   * The Doorway scene as a `data:model/gltf-binary` URL: the meshes near the
+   * spawn point in world coordinates, the OMI_spawn_point node, the lights
+   * (KHR_lights_punctual) and the scene extras above.
    */
   glb: string;
   /** Everything not in `glb`, a 3×2 cube-face atlas laid out like a door view's colour, as a `data:image/webp` URL. */
   backdrop: string;
-  backdropFaceSize: number;
-  /** Where the player stands at spawn, world coordinates. */
-  feet: [number, number, number];
-  /** Where the backdrop was taken from: the player's eyes at spawn. */
-  eye: [number, number, number];
-  /** The spawn heading the backdrop's faces are relative to, in radians. */
-  yaw: number;
+  /** Meshes this close to the spawn point went into `glb`, metres. */
   radius: number;
-  fog: { color: number; near: number; far: number } | { color: number; density: number } | null;
-  lights: PortalSceneLight[];
   /** Triangles in `glb`, instances counted. */
   triangles: number;
 }
@@ -140,10 +147,21 @@ export async function exportPortal(target: PortalSceneTarget, options: PortalSce
   }
 
   const { GLTFExporter } = await import('three/examples/jsm/exporters/GLTFExporter.js');
-  const glb = (await new GLTFExporter().parseAsync(root, {
+  const exported = (await new GLTFExporter().parseAsync(root, {
     binary: true,
     maxTextureSize: options.maxTextureSize ?? 1024,
   })) as ArrayBuffer;
+  const glb = withDoorway(exported, {
+    feet,
+    yaw: target.yaw,
+    eyeHeight: eye.y - feet.y,
+    lights: describeLights(scene, skip),
+    extras: {
+      ...(scene.fog ? { fog: describeFog(scene.fog) } : {}),
+      ambient: describeAmbient(scene, skip),
+      backdrop: { uri: PORTAL_BACKDROP_FILE, faceSize: backdropFaceSize },
+    },
+  });
 
   const backdrop = await captureDoorView(
     { ...target, hide: [...(target.hide ?? []), ...meshes, ...dropped] },
@@ -154,13 +172,7 @@ export async function exportPortal(target: PortalSceneTarget, options: PortalSce
     version: PORTAL_SCENE_VERSION,
     glb: await toDataUrl(glb, 'model/gltf-binary'),
     backdrop: backdrop.color,
-    backdropFaceSize,
-    feet: feet.toArray() as [number, number, number],
-    eye: eye.toArray() as [number, number, number],
-    yaw: target.yaw,
     radius,
-    fog: describeFog(scene.fog),
-    lights: describeLights(scene, skip),
     triangles,
   };
 }
@@ -191,51 +203,148 @@ function countTriangles(geometry: BufferGeometry): number {
   return Math.floor(count / 3);
 }
 
-function describeFog(fog: Scene['fog']): PortalScene['fog'] {
-  if (!fog) return null;
-  if ((fog as FogExp2).isFogExp2) return { color: fog.color.getHex(), density: (fog as FogExp2).density };
-  return { color: fog.color.getHex(), near: (fog as Fog).near, far: (fog as Fog).far };
+type Rgb = [number, number, number];
+/** Linear RGB, as glTF and its extensions store colours. */
+const linear = (color: { r: number; g: number; b: number }): Rgb => [color.r, color.g, color.b];
+
+function describeFog(fog: NonNullable<Scene['fog']>): NonNullable<PortalSceneExtras['fog']> {
+  if ((fog as FogExp2).isFogExp2) return { color: linear(fog.color), density: (fog as FogExp2).density };
+  return { color: linear(fog.color), near: (fog as Fog).near, far: (fog as Fog).far };
 }
 
-function describeLights(scene: Scene, skip: Set<Object3D>): PortalSceneLight[] {
-  const lights: PortalSceneLight[] = [];
-  const at = (object: Object3D) => object.getWorldPosition(new Vector3()).toArray() as [number, number, number];
+function describeAmbient(scene: Scene, skip: Set<Object3D>): PortalSceneAmbient[] {
+  const out: PortalSceneAmbient[] = [];
   scene.traverseVisible((object) => {
     const light = object as Light & Record<string, any>;
     if (!light.isLight || skip.has(light)) return;
-    const base = { color: light.color.getHex(), intensity: light.intensity, position: at(light) };
-    if (light.isAmbientLight) lights.push({ type: 'ambient', ...base });
-    else if (light.isHemisphereLight) lights.push({ type: 'hemisphere', ...base, groundColor: light.groundColor.getHex() });
-    else if (light.isDirectionalLight || light.isSpotLight || light.isPointLight) {
-      const type = light.isDirectionalLight ? 'directional' : light.isSpotLight ? 'spot' : 'point';
-      const described: PortalSceneLight = { type, ...base };
-      if (light.target) {
-        light.target.updateMatrixWorld();
-        described.target = at(light.target);
-      }
-      if (!light.isDirectionalLight) {
-        described.distance = light.distance;
-        described.decay = light.decay;
-      }
-      if (light.isSpotLight) {
-        described.angle = light.angle;
-        described.penumbra = light.penumbra;
-      }
-      if (light.castShadow && light.shadow) {
-        const camera = light.shadow.camera as unknown as Record<'left' | 'right' | 'top' | 'bottom' | 'near' | 'far', number>;
-        described.shadow = {
-          mapSize: Math.max(light.shadow.mapSize.x, light.shadow.mapSize.y),
-          bias: light.shadow.bias,
-          normalBias: light.shadow.normalBias,
-          camera: light.isDirectionalLight
-            ? { left: camera.left, right: camera.right, top: camera.top, bottom: camera.bottom, near: camera.near, far: camera.far }
-            : { near: camera.near, far: camera.far },
-        };
-      }
-      lights.push(described);
+    if (light.isAmbientLight) out.push({ type: 'ambient', color: linear(light.color), intensity: light.intensity });
+    else if (light.isHemisphereLight) {
+      const direction = light.getWorldPosition(new Vector3()).normalize().toArray() as Rgb;
+      out.push({ type: 'hemisphere', color: linear(light.color), groundColor: linear(light.groundColor), intensity: light.intensity, direction });
     }
   });
+  return out;
+}
+
+/** A directional, point or spot light, ready to become a KHR_lights_punctual light and its node. */
+interface PunctualLight {
+  light: Record<string, unknown>;
+  position: Vector3;
+  /** Where it points (its node's −Z); none for point lights. */
+  target: Vector3 | null;
+  shadow: PortalSceneShadow | null;
+}
+
+function describeLights(scene: Scene, skip: Set<Object3D>): PunctualLight[] {
+  const lights: PunctualLight[] = [];
+  scene.traverseVisible((object) => {
+    const light = object as Light & Record<string, any>;
+    if (!light.isLight || skip.has(light) || !(light.isDirectionalLight || light.isSpotLight || light.isPointLight)) return;
+    const type = light.isDirectionalLight ? 'directional' : light.isSpotLight ? 'spot' : 'point';
+    const described: Record<string, unknown> = { type, color: linear(light.color), intensity: light.intensity };
+    if (!light.isDirectionalLight && light.distance > 0) described.range = light.distance;
+    if (light.isSpotLight) {
+      described.spot = { innerConeAngle: light.angle * (1 - light.penumbra), outerConeAngle: light.angle };
+    }
+    let target: Vector3 | null = null;
+    if (light.target && !light.isPointLight) {
+      light.target.updateMatrixWorld();
+      target = light.target.getWorldPosition(new Vector3());
+    }
+    let shadow: PortalSceneShadow | null = null;
+    if (light.castShadow && light.shadow) {
+      const camera = light.shadow.camera as unknown as Record<'left' | 'right' | 'top' | 'bottom' | 'near' | 'far', number>;
+      shadow = {
+        mapSize: Math.max(light.shadow.mapSize.x, light.shadow.mapSize.y),
+        bias: light.shadow.bias,
+        normalBias: light.shadow.normalBias,
+        camera: light.isDirectionalLight
+          ? { left: camera.left, right: camera.right, top: camera.top, bottom: camera.bottom, near: camera.near, far: camera.far }
+          : { near: camera.near, far: camera.far },
+      };
+    }
+    lights.push({ light: described, position: light.getWorldPosition(new Vector3()), target, shadow });
+  });
   return lights;
+}
+
+/** A node rotation (glTF quaternion) that points the node's −Z from `from` toward `to`. */
+function aim(from: Vector3, to: Vector3): number[] {
+  const direction = to.clone().sub(from);
+  if (direction.lengthSq() < 1e-12) return [0, 0, 0, 1];
+  return new Quaternion().setFromUnitVectors(new Vector3(0, 0, -1), direction.normalize()).toArray();
+}
+
+/**
+ * Adds what makes the exported glTF a Doorway scene: the arrival point as an
+ * OMI_spawn_point node, the lights as KHR_lights_punctual nodes, and the
+ * scene extras. Edits the JSON chunk of the binary glTF; the buffers stay.
+ */
+function withDoorway(
+  glb: ArrayBuffer,
+  doorway: { feet: Vector3; yaw: number; eyeHeight: number; lights: PunctualLight[]; extras: PortalSceneExtras },
+): ArrayBuffer {
+  return editGlbJson(glb, (json) => {
+    const nodes = (json.nodes ??= []) as Array<Record<string, unknown>>;
+    const scenes = (json.scenes ??= [{ nodes: [] }]) as Array<{ nodes?: number[]; extras?: unknown }>;
+    const scene = scenes[(json.scene as number | undefined) ?? 0];
+    const roots = (scene.nodes ??= []);
+    const used = new Set((json.extensionsUsed as string[] | undefined) ?? []);
+
+    // The arrival point: feet at its translation, facing its −Z.
+    roots.push(nodes.length);
+    nodes.push({
+      name: 'doorway-spawn',
+      translation: doorway.feet.toArray(),
+      rotation: new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), doorway.yaw).toArray(),
+      extensions: { OMI_spawn_point: {} },
+      extras: { eyeHeight: doorway.eyeHeight },
+    });
+    used.add('OMI_spawn_point');
+
+    if (doorway.lights.length) {
+      const lights = doorway.lights.map((punctual) => punctual.light);
+      json.extensions = { ...(json.extensions as object), KHR_lights_punctual: { lights } };
+      doorway.lights.forEach((punctual, index) => {
+        roots.push(nodes.length);
+        nodes.push({
+          name: `doorway-light-${index}`,
+          translation: punctual.position.toArray(),
+          ...(punctual.target ? { rotation: aim(punctual.position, punctual.target) } : {}),
+          extensions: { KHR_lights_punctual: { light: index } },
+          ...(punctual.shadow ? { extras: { castShadow: true, shadow: punctual.shadow } } : {}),
+        });
+      });
+      used.add('KHR_lights_punctual');
+    }
+
+    scene.extras = { ...(scene.extras as object), ...doorway.extras };
+    json.extensionsUsed = [...used];
+  });
+}
+
+/** Rewrites the JSON chunk of a binary glTF (GLB), keeping its binary chunk as it is. */
+function editGlbJson(glb: ArrayBuffer, edit: (json: Record<string, any>) => void): ArrayBuffer {
+  const view = new DataView(glb);
+  const jsonLength = view.getUint32(12, true);
+  const json = JSON.parse(new TextDecoder().decode(new Uint8Array(glb, 20, jsonLength))) as Record<string, any>;
+  edit(json);
+  const rest = new Uint8Array(glb, 20 + jsonLength);
+  let text = new TextEncoder().encode(JSON.stringify(json));
+  // Chunks are 4-byte aligned; JSON pads with spaces.
+  const padded = new Uint8Array(Math.ceil(text.length / 4) * 4).fill(0x20);
+  padded.set(text);
+  text = padded;
+  const out = new Uint8Array(12 + 8 + text.length + rest.length);
+  const outView = new DataView(out.buffer);
+  outView.setUint32(0, 0x46546c67, true); // "glTF"
+  outView.setUint32(4, 2, true);
+  outView.setUint32(8, out.length, true);
+  outView.setUint32(12, text.length, true);
+  outView.setUint32(16, 0x4e4f534a, true); // "JSON"
+  out.set(text, 20);
+  out.set(rest, 20 + text.length);
+  return out.buffer;
 }
 
 function toDataUrl(buffer: ArrayBuffer, type: string): Promise<string> {

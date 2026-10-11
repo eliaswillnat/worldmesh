@@ -3,7 +3,6 @@ import {
   DOOR_VIEW_DEPTH_NEAR,
   DOOR_VIEW_VERSION,
   PORTAL_SCENE_VERSION,
-  type PortalScene,
 } from '@worldmesh/runtime';
 import {
   Color,
@@ -19,7 +18,7 @@ import {
 } from 'three';
 import { DOOR_HEIGHT, DOOR_WIDTH, loadCoverTexture, type Door } from './door';
 import { canMakeDoorViewCubes, makeDoorViewCubes } from './doorViewCube';
-import { loadPortal, type LoadedPortal } from './portalScene';
+import { loadPortal, type LoadedPortal, type PortalSource } from './portalScene';
 
 /**
  * Door views: up close, a door stops showing its world's cover and shows the
@@ -51,7 +50,7 @@ export interface LoadedDoorView {
 
 interface DoorViewStatus {
   state: string;
-  view?: { version?: number; color?: string; depth?: string; faceSize?: number; depthFaceSize?: number; portal?: PortalScene };
+  view?: { version?: number; color?: string; depth?: string; faceSize?: number; depthFaceSize?: number; portal?: PortalSource & { version?: number; walkIn?: boolean } };
 }
 
 /** Start loading a door's view this close (metres from its doorway). */
@@ -85,6 +84,8 @@ const COMPARE_STYLES: Record<string, DoorStyle> = {
   mars: 'walk',
   space: 'walk',
 };
+/** The demo worlds' local dev ports (src/main.ts), for comparing on localhost. */
+const LOCAL_DEMO_PORTS: Record<string, string> = { 5171: 'forest', 5172: 'mars', 5173: 'city', 5174: 'medieval', 5175: 'space' };
 
 /** The doorway's corners in its door's own frame, for finding it on screen. */
 const DOORWAY_CORNERS: ReadonlyArray<[number, number]> = [
@@ -93,6 +94,26 @@ const DOORWAY_CORNERS: ReadonlyArray<[number, number]> = [
   [-DOOR_WIDTH / 2, DOOR_HEIGHT],
   [DOOR_WIDTH / 2, DOOR_HEIGHT],
 ];
+
+/**
+ * A world's own Doorway file (docs/specs/doorway.md §2) at
+ * /.well-known/doorway.json, as a portal scene to load: no capture service
+ * needed. Null if it has none, or no scene.
+ */
+async function discoverDoorway(worldUrl: string): Promise<(PortalSource & { version: number; walkIn: boolean }) | null> {
+  try {
+    const file = new URL('/.well-known/doorway.json', worldUrl);
+    const response = await fetch(file, { headers: { Accept: 'application/json' } });
+    if (!response.ok) return null;
+    const doorway = (await response.json()) as { doorway?: unknown; scene?: unknown; embed?: unknown };
+    if (doorway.doorway !== 1 || typeof doorway.scene !== 'string') return null;
+    const scene = new URL(doorway.scene, file);
+    if (scene.protocol !== 'https:' && scene.protocol !== 'http:') return null;
+    return { version: PORTAL_SCENE_VERSION, glb: scene.toString(), walkIn: doorway.embed === true };
+  } catch {
+    return null;
+  }
+}
 
 /** Matches doorViewSlug in workers/screenshot. */
 export function doorViewSlug(worldUrl: string): string | null {
@@ -108,6 +129,8 @@ export class DoorViewManager {
   /** Per world URL: what the screenshot worker has for it. Asked once per visit. */
   private statuses = new Map<string, Promise<DoorViewStatus | null>>();
   private loading = new Set<Door>();
+  /** Worlds whose status lists a portal scene: they can be walked into, even before it has loaded. */
+  private portalWorlds = new Set<string>();
   /** Worlds with no door view to show (none taken yet, or it would not load). */
   private unavailable = new Set<string>();
   private showing = new Set<Door>();
@@ -267,15 +290,36 @@ export class DoorViewManager {
     else if (this.guest?.door === door) this.guest = null;
   }
 
+  /** False when door views are off (no endpoint, or a renderer that can't hold them). */
+  get enabled(): boolean {
+    return this.endpoint !== null;
+  }
+
+  /**
+   * Whether this door can be walked straight through into its world
+   * (walkThrough): any world with a portal scene runs the WorldMesh runtime,
+   * so it can wait behind the door and take the visitor over. True as soon
+   * as its status lists one, so the world starts loading behind the door
+   * while the portal scene does. Compare mode's 'walk' doors always count.
+   */
+  walkable(door: Door): boolean {
+    const style = this.style(door);
+    if (style === 'walk') return true;
+    return style === 'best' && (!!door.doorView?.portal || this.portalWorlds.has(door.world!.url));
+  }
+
   /** The style a door shows its world in: always 'best' outside compare mode. */
   style(door: Door): DoorStyle {
     if (!door.world) return 'best';
     // A world can keep its cover up close (doorView: false); the preview's comparison overrides it.
     if (!this.compare) return door.world.doorView === false ? 'cover' : 'best';
     try {
-      // preview-mars.worldmesh.net, mars.worldmesh.net, worldmesh-mars-preview.pages.dev, …
-      const host = new URL(door.world.url).hostname;
-      const name = Object.keys(COMPARE_STYLES).find((world) => new RegExp(`(^|[.-])${world}([.-]|$)`).test(host));
+      // preview-mars.worldmesh.net, mars.worldmesh.net, worldmesh-mars-preview.pages.dev, localhost:5172, …
+      const { hostname: host, port } = new URL(door.world.url);
+      const name =
+        host === 'localhost'
+          ? LOCAL_DEMO_PORTS[port]
+          : Object.keys(COMPARE_STYLES).find((world) => new RegExp(`(^|[.-])${world}([.-]|$)`).test(host));
       return name ? COMPARE_STYLES[name] : 'best';
     } catch {
       return 'best';
@@ -324,7 +368,11 @@ export class DoorViewManager {
       const view = (await this.status(url))?.view;
       const style = this.style(door);
       const portalAllowed = style === 'best' || style === 'portal' || style === 'walk';
-      if (portalAllowed && view?.portal?.version === PORTAL_SCENE_VERSION && (await this.loadPortal(door, view.portal))) return;
+      if (portalAllowed && view?.portal?.version === PORTAL_SCENE_VERSION) {
+        if (view.portal.walkIn !== false) this.portalWorlds.add(url);
+        if (await this.loadPortal(door, view.portal)) return;
+        this.portalWorlds.delete(url);
+      }
       if (!view?.color || !view.depth || view.version !== DOOR_VIEW_VERSION) {
         this.unavailable.add(url);
         return;
@@ -351,7 +399,7 @@ export class DoorViewManager {
   }
 
   /** Hand a door its portal scene; false if it won't load (the door view is next in line). */
-  private async loadPortal(door: Door, info: PortalScene): Promise<boolean> {
+  private async loadPortal(door: Door, info: PortalSource): Promise<boolean> {
     const portal = await loadPortal(info, this.renderer).catch(() => null);
     if (!portal) return false;
     if (this.disposed) {
@@ -362,15 +410,23 @@ export class DoorViewManager {
     return true;
   }
 
+  /**
+   * What there is to show for a world: the Doorway scene it publishes itself
+   * first, else the capture service's portal scene; plus the capture
+   * service's door view either way.
+   */
   private status(worldUrl: string): Promise<DoorViewStatus | null> {
     let status = this.statuses.get(worldUrl);
     if (!status) {
       const slug = doorViewSlug(worldUrl);
-      status = slug
+      const captured: Promise<DoorViewStatus | null> = slug
         ? fetch(`${this.endpoint!.replace(/\/$/, '')}/door-views/${slug}`)
             .then((response) => (response.ok ? (response.json() as Promise<DoorViewStatus>) : null))
             .catch(() => null)
         : Promise.resolve(null);
+      status = Promise.all([discoverDoorway(worldUrl), captured]).then(([own, found]) =>
+        own ? { ...found, state: found?.state ?? 'ready', view: { ...found?.view, portal: own } } : found,
+      );
       this.statuses.set(worldUrl, status);
     }
     return status;

@@ -206,12 +206,18 @@ preview sends no emails. So, once per fresh preview database:
   `preview.worldmesh.net/api/account/avatar/resolve` with a **Bypass** policy
   (Include: Everyone).
 - **The screenshot Worker can't see preview worlds.** It loads pages in
-  Cloudflare's browser, which has no Access login. Screenshots and door views of
+  Cloudflare's browser, which has no Access login. Door views of
   external world URLs work. So each deploy takes the door views of the five
   preview worlds itself (`scripts/preview-door-views`: the fresh builds, served
-  locally to headless Chrome on the runner) and puts them in the preview bucket,
-  with each world's portal scene (`portal.glb` and a backdrop), which doors
-  draw live.
+  locally to headless Chrome on the runner). Each world then publishes its own
+  Doorway scene (`docs/specs/doorway.md`): `doorway/scene.glb`, its backdrop,
+  and `/.well-known/doorway.json`, uploaded with the world. A copy goes in the
+  preview bucket too, because Access keeps the hub from reading the worlds'
+  own files; the hub tries the world first and falls back to the bucket. To
+  let it read the worlds directly, add one Access application covering the
+  paths `/.well-known/doorway.json` and `/doorway/` on each `preview-*`
+  world host, with a **Bypass** policy (Include: Everyone). Those files are
+  only the 3D snapshot of the arrival area, the same as the bucket copy.
 - **Demo doors can be walked straight through.** The preview hub is built with
   `VITE_DOOR_COMPARE=on`: each demo world's door draws it live in 3D, and the
   real world waits loaded behind the hall (the nearest one only), taking over
@@ -223,11 +229,15 @@ preview sends no emails. So, once per fresh preview database:
   then on, for 24 hours, that door is seamless. A character picked in the
   Avatar Wallet shows in the lobby too and comes along: its model file is
   downloaded once, by the hub, and handed to the waiting world, so it is
-  already on screen when you walk in. Production doors are unaffected.
-  Community worlds get door views only if they use a runtime that can take
-  them, the same as in production.
+  already on screen when you walk in. Outside the preview, any door whose
+  world publishes a Doorway scene can be walked through the same way;
+  production's demo worlds don't publish one yet (their scenes are made by
+  the preview deploy, not by the Pages build), so production doors still
+  travel as before. Community worlds get door views
+  only if they use a runtime that can take them, the same as in production.
+  To try it all on localhost, see `scripts/local-door-views.sh`.
 - **The views and screenshot Workers are public on `workers.dev`.** They hold only
-  preview view counts and preview screenshots.
+  preview view counts, covers and door views.
 - **Production builds the same commit with production settings.** Endpoints are
   baked in at build time, so production isn't the byte-identical bundle, but it is
   the identical source.

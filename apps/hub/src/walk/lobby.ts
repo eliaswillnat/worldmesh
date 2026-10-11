@@ -750,8 +750,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const known = new Map<string, DoorWorld>();
   const doors = new Map<string, Door>();
   const doorViews = new DoorViewManager(options.doorViewEndpoint || null, renderer, options.doorCompare ?? false);
-  // Compare mode's walk door: its world waits behind the hall, to be walked straight into.
-  const walkThrough = options.doorCompare
+  // Doors whose world can wait behind the hall, to be walked straight into (doorViews.walkable).
+  const walkThrough = doorViews.enabled
     ? new WalkThrough(renderer.domElement, {
         views: doorViews,
         avatar: () => world.avatar,
@@ -780,7 +780,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
    * The visitor's character (Avatar Wallet), shown in the lobby as well, so
    * the figure walking through a door is already the one the world shows.
    * Its model file is downloaded once here and handed on to walk-through
-   * worlds (walkThrough). Preview only for now, with the walk-through doors.
+   * worlds (walkThrough).
    */
   let character: { descriptor: AvatarDescriptor; data: ArrayBuffer } | null = null;
   let characterTurn = 0;

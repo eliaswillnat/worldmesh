@@ -44,13 +44,20 @@ const FOV_RETURN = 1.5;
  */
 export const CAPTURE_PARAM = 'worldmesh-capture';
 /**
- * Set by a hub that shows the world live in one of its doors. The world
- * waits offline until the hub posts `{ type: 'worldmesh:enter' }` (the
- * visitor walked through the door), then goes online without reloading.
- * While embedded, it asks the hub to take the visitor anywhere else
- * (`{ type: 'worldmesh:navigate', url }`), as the page around it is the hub's.
+ * Set by a host that shows the world live in one of its doors (Doorway,
+ * docs/specs/doorway.md §4). The world waits offline until the host posts
+ * `{ type: 'doorway:enter' }` (the visitor walked through the door), then
+ * goes online without reloading. While embedded, it asks the host to take
+ * the visitor anywhere else (`{ type: 'doorway:navigate', url }`), as the
+ * page around it is the host's.
  */
-export const EMBED_PARAM = 'worldmesh-embed';
+export const EMBED_PARAM = 'doorway-embed';
+/** The pre-Doorway names, still understood: `worldmesh-embed` and `worldmesh:*` messages. */
+const LEGACY_EMBED_PARAM = 'worldmesh-embed';
+const isDoorwayMessage = (data: unknown, name: string): boolean => {
+  const type = (data as { type?: unknown } | null)?.type;
+  return type === `doorway:${name}` || type === `worldmesh:${name}`;
+};
 
 /**
  * Turn an ordinary Three.js scene into a WorldMesh world.
@@ -237,11 +244,11 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
    * the way back) replaces this page's own address, as if they had arrived
    * through it. A `pose` (in this world's coordinates) puts the player and
    * camera exactly where the hub had them, so the hand-over can't be seen;
-   * the hub hears `worldmesh:entered` once a frame from there is drawn.
+   * the hub hears `doorway:entered` once a frame from there is drawn.
    */
   function awaitEntry(): void {
     const onMessage = (event: MessageEvent) => {
-      if (event.source !== window.parent || event.data?.type !== 'worldmesh:enter') return;
+      if (event.source !== window.parent || !isDoorwayMessage(event.data, 'enter')) return;
       window.removeEventListener('message', onMessage);
       const url = typeof event.data.url === 'string' ? event.data.url : null;
       try {
@@ -257,27 +264,31 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
       window.addEventListener('message', onCarry);
       goOnline();
       // Two frames on, the first one from the new pose has been drawn.
-      requestAnimationFrame(() => requestAnimationFrame(() => window.parent.postMessage({ type: 'worldmesh:entered' }, '*')));
+      requestAnimationFrame(() => requestAnimationFrame(() => window.parent.postMessage({ type: 'doorway:entered' }, '*')));
     };
     // The hub's joystick, still held as the visitor walked in, keeps them walking until it is let go.
     const onCarry = (event: MessageEvent) => {
-      if (event.source !== window.parent || event.data?.type !== 'worldmesh:carry') return;
+      if (event.source !== window.parent || !isDoorwayMessage(event.data, 'carry')) return;
       input.carry(Number(event.data.x) || 0, Number(event.data.z) || 0);
       if (!event.data.x && !event.data.z) window.removeEventListener('message', onCarry);
     };
     window.addEventListener('message', onMessage);
     awaitCharacter();
     // Nothing secret: only tells the hub this world can be walked into.
-    window.parent.postMessage({ type: 'worldmesh:ready' }, '*');
+    window.parent.postMessage({ type: 'doorway:ready' }, '*');
   }
 
   /**
-   * Embedded: the hub hands over the visitor's character (Avatar Wallet) while
-   * the world still waits, so it is on screen from the first frame they walk
-   * in: its descriptor, the model file the hub already downloaded (nothing is
-   * fetched twice), and the handoff ticket for portals onwards. Taken only
-   * from this world's own hub (`avatar.hubUrl`), and only if the world shows
-   * Avatar Wallet characters at all. Answers `worldmesh:avatar-ready`.
+   * Embedded: the host hands over the visitor's character while the world
+   * still waits, so it is on screen from the first frame they walk in
+   * (Doorway §6): `{ type: 'doorway:character', format, name, data }`, the
+   * model file itself (nothing is fetched twice), or `data: null` for the
+   * default body. Taken from any host, only if the world shows visitors'
+   * characters at all. From this world's own hub (`avatar.hubUrl`), the
+   * WorldMesh extras under `worldmesh` are used too: the Avatar Wallet
+   * descriptor (for credits) and the handoff ticket for portals onwards. The
+   * pre-Doorway `worldmesh:avatar` from the hub is still understood. Answers
+   * `doorway:character-ready` (or `worldmesh:avatar-ready`).
    */
   function awaitCharacter(): void {
     const config = options.avatar;
@@ -290,19 +301,40 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     }
     let latest = 0;
     window.addEventListener('message', async (event: MessageEvent) => {
-      if (event.source !== window.parent || event.origin !== hubOrigin || event.data?.type !== 'worldmesh:avatar') return;
+      if (event.source !== window.parent) return;
+      const message = event.data as Record<string, unknown> | null;
+      const fromHub = event.origin === hubOrigin;
+      const neutral = message?.type === 'doorway:character';
+      if (!neutral && !(fromHub && message?.type === 'worldmesh:avatar')) return;
       const turn = ++latest;
-      const { descriptor: raw, data, ticket } = event.data as { descriptor?: unknown; data?: unknown; ticket?: unknown };
-      if (typeof ticket === 'string') setAvatarTicket(ticket);
+
+      const extras = (neutral ? message.worldmesh : message) as { descriptor?: unknown; ticket?: unknown } | undefined;
+      if (fromHub && typeof extras?.ticket === 'string') setAvatarTicket(extras.ticket);
+      const data = message.data instanceof ArrayBuffer ? message.data : undefined;
+      let descriptor = fromHub ? parseAvatarDescriptor(extras?.descriptor) : null;
+      if (!descriptor && neutral && data && (message.format === 'vrm' || message.format === 'glb')) {
+        descriptor = {
+          provider: 'doorway',
+          avatarId: '',
+          name: typeof message.name === 'string' ? message.name.slice(0, 64) : null,
+          thumbnail: null,
+          format: message.format,
+          // Never fetched: the file came with the message.
+          modelUrl: '',
+          expiresAt: null,
+          sourceUrl: null,
+        };
+      }
       let loaded = false;
-      const descriptor = parseAvatarDescriptor(raw);
       if (descriptor) {
-        loaded = await loadAvatar(descriptor, data instanceof ArrayBuffer ? data : undefined);
-      } else if (raw === null) {
+        loaded = await loadAvatar(descriptor, data);
+      } else if (neutral ? message.data === null : extras?.descriptor === null) {
         // Back to the default body (private mode, or no character any more).
         clearAvatar();
       }
-      if (turn === latest && !disposed) window.parent.postMessage({ type: 'worldmesh:avatar-ready', loaded }, hubOrigin);
+      if (turn !== latest || disposed) return;
+      const answer = neutral ? 'doorway:character-ready' : 'worldmesh:avatar-ready';
+      window.parent.postMessage({ type: answer, loaded }, event.origin);
     });
   }
 
@@ -344,7 +376,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
 
   /** Leave for another page; an embedded world asks its hub to go there instead. */
   function leaveFor(url: string): void {
-    if (embedded) window.parent.postMessage({ type: 'worldmesh:navigate', url }, '*');
+    if (embedded) window.parent.postMessage({ type: 'doorway:navigate', url }, '*');
     else window.location.href = url;
   }
 
@@ -683,7 +715,8 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
 
   function isEmbedRequest(): boolean {
     try {
-      return window.parent !== window && new URLSearchParams(window.location.search).has(EMBED_PARAM);
+      const params = new URLSearchParams(window.location.search);
+      return window.parent !== window && (params.has(EMBED_PARAM) || params.has(LEGACY_EMBED_PARAM));
     } catch {
       return false;
     }

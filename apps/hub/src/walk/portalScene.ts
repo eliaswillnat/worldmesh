@@ -1,22 +1,22 @@
 import {
   AmbientLight,
-  DirectionalLight,
+  Color,
   Fog,
   FogExp2,
   Group,
   HemisphereLight,
   Matrix4,
-  PointLight,
+  Quaternion,
   Scene,
-  SpotLight,
   Vector3,
   type CubeTexture,
   type Light,
   type Material,
   type Mesh,
+  type Object3D,
   type WebGLRenderer,
 } from 'three';
-import type { PortalScene, PortalSceneLight } from '@worldmesh/runtime';
+import type { PortalSceneExtras, PortalSceneShadow } from '@worldmesh/runtime';
 import { loadCoverTexture } from './door';
 import { makeColorCube } from './doorViewCube';
 
@@ -46,26 +46,53 @@ export interface LoadedPortal {
 
 /** Point and spot lights kept, the nearest to the spawn point: each costs every pixel of the doorway. */
 const MAX_LOCAL_LIGHTS = 8;
+/** Eye height above the arrival point when the scene doesn't say (Doorway §3). */
+const DEFAULT_EYE_HEIGHT = 1.6;
 
-/** Load a portal scene listed in a door-view status; null if it won't load. */
-export async function loadPortal(info: PortalScene, renderer: WebGLRenderer): Promise<LoadedPortal | null> {
-  const [buffer, backdropAtlas, { GLTFLoader }] = await Promise.all([
-    fetchBuffer(info.glb),
-    loadCoverTexture(info.backdrop),
-    import('three/examples/jsm/loaders/GLTFLoader.js'),
-  ]);
-  if (!buffer || !backdropAtlas) {
-    backdropAtlas?.dispose();
-    return null;
-  }
+/**
+ * Where a Doorway scene is: the glTF file, and the backdrop if its source
+ * names one (else the scene's own `extras.backdrop.uri`, next to the file).
+ */
+export interface PortalSource {
+  glb: string;
+  backdrop?: string | null;
+}
+
+/**
+ * Load a Doorway scene (docs/specs/doorway.md §3); null if it won't load.
+ * Everything is read from the glTF itself: the arrival point (OMI_spawn_point),
+ * the lights (KHR_lights_punctual, read by GLTFLoader) and the scene extras.
+ */
+export async function loadPortal(info: PortalSource, renderer: WebGLRenderer): Promise<LoadedPortal | null> {
+  const [buffer, { GLTFLoader }] = await Promise.all([fetchBuffer(info.glb), import('three/examples/jsm/loaders/GLTFLoader.js')]);
+  if (!buffer) return null;
   let gltf: { scene: Group };
   try {
     gltf = await new GLTFLoader().parseAsync(buffer, '');
   } catch {
-    backdropAtlas.dispose();
     return null;
   }
-  const backdrop = makeColorCube(renderer, backdropAtlas, info.backdropFaceSize);
+  gltf.scene.updateMatrixWorld(true);
+  const extras = gltf.scene.userData as PortalSceneExtras;
+
+  // The arrival point: feet at the node, facing its −Z.
+  let spawn: Object3D | null = null;
+  gltf.scene.traverse((object) => {
+    if (!spawn && (object.userData.gltfExtensions as Record<string, unknown> | undefined)?.OMI_spawn_point) spawn = object;
+  });
+  if (!spawn) return null;
+  const arrival = spawn as Object3D;
+  const feet = arrival.getWorldPosition(new Vector3());
+  const forward = new Vector3(0, 0, -1).applyQuaternion(arrival.getWorldQuaternion(new Quaternion()));
+  const yaw = Math.atan2(-forward.x, -forward.z);
+  const eyeHeight = typeof arrival.userData.eyeHeight === 'number' ? arrival.userData.eyeHeight : DEFAULT_EYE_HEIGHT;
+  const eye = feet.clone().add(new Vector3(0, eyeHeight, 0));
+
+  const backdropUrl = info.backdrop ?? (extras.backdrop?.uri ? new URL(extras.backdrop.uri, new URL(info.glb, window.location.href)).toString() : null);
+  const backdropAtlas = backdropUrl ? await loadCoverTexture(backdropUrl) : null;
+  if (!backdropAtlas) return null;
+  const faceSize = extras.backdrop?.faceSize ?? (backdropAtlas.image as { height: number }).height / 2;
+  const backdrop = makeColorCube(renderer, backdropAtlas, faceSize);
   backdropAtlas.dispose();
 
   // Shadow flags ride in each node's extras; a node with several primitives is a group of meshes.
@@ -77,6 +104,7 @@ export async function loadPortal(info: PortalScene, renderer: WebGLRenderer): Pr
       child.receiveShadow = !!flags.receiveShadow;
     });
   });
+  configureLights(gltf.scene, eye);
 
   const scene = new Scene();
   // The world in its own coordinates, moved as a whole by `place`.
@@ -84,30 +112,26 @@ export async function loadPortal(info: PortalScene, renderer: WebGLRenderer): Pr
   world.matrixAutoUpdate = false;
   world.add(gltf.scene);
   scene.add(world);
-  if (info.fog) {
-    scene.fog = 'density' in info.fog ? new FogExp2(info.fog.color, info.fog.density) : new Fog(info.fog.color, info.fog.near, info.fog.far);
+  if (extras.fog) {
+    const color = new Color(...extras.fog.color);
+    scene.fog = 'density' in extras.fog ? new FogExp2(color, extras.fog.density) : new Fog(color, extras.fog.near, extras.fog.far);
   }
 
-  const eye = new Vector3(...info.eye);
-  // Hemisphere lights shine from the direction of their position, so they stay
-  // out of `world` (which also moves things) and are only turned with it.
+  // Hemisphere lights shine from a direction, so they stay out of `world`
+  // (which also moves things) and are only turned with it.
   const skyLights: Array<{ light: HemisphereLight; from: Vector3 }> = [];
-  for (const described of pickLights(info.lights, eye)) {
-    const light = createLight(described);
-    if (!light) continue;
-    if (light instanceof HemisphereLight) {
-      skyLights.push({ light, from: light.position.clone().normalize() });
-      scene.add(light);
-    } else if (light instanceof AmbientLight) {
-      scene.add(light);
+  for (const ambient of extras.ambient ?? []) {
+    if (ambient.type === 'ambient') {
+      scene.add(new AmbientLight(new Color(...ambient.color), ambient.intensity));
     } else {
-      world.add(light);
-      const aimed = light as DirectionalLight | SpotLight;
-      if (aimed.target) world.add(aimed.target);
+      const light = new HemisphereLight(new Color(...ambient.color), new Color(...(ambient.groundColor ?? [0, 0, 0])), ambient.intensity);
+      const from = new Vector3(...(ambient.direction ?? [0, 1, 0])).normalize();
+      light.position.copy(from);
+      skyLights.push({ light, from });
+      scene.add(light);
     }
   }
 
-  const eyeHeight = info.eye[1] - info.feet[1];
   const portal: LoadedPortal = {
     scene,
     backdrop: backdrop.texture,
@@ -118,7 +142,7 @@ export async function loadPortal(info: PortalScene, renderer: WebGLRenderer): Pr
       world.matrix
         .copy(doorMatrixWorld)
         .multiply(new Matrix4().makeTranslation(0, eyeHeight, -spawnBehind))
-        .multiply(new Matrix4().makeRotationY(-info.yaw))
+        .multiply(new Matrix4().makeRotationY(-yaw))
         .multiply(new Matrix4().makeTranslation(-eye.x, -eye.y, -eye.z));
       world.matrixWorldNeedsUpdate = true;
       const turn = new Matrix4().extractRotation(world.matrix);
@@ -141,48 +165,31 @@ export async function loadPortal(info: PortalScene, renderer: WebGLRenderer): Pr
   return portal;
 }
 
-/** Every light but point and spot lights past the nearest MAX_LOCAL_LIGHTS to the spawn point. */
-function pickLights(lights: PortalSceneLight[], eye: Vector3): PortalSceneLight[] {
-  const local = lights
-    .filter((light) => light.type === 'point' || light.type === 'spot')
-    .sort((a, b) => eye.distanceToSquared(new Vector3(...a.position)) - eye.distanceToSquared(new Vector3(...b.position)))
-    .slice(0, MAX_LOCAL_LIGHTS);
-  return lights.filter((light) => (light.type !== 'point' && light.type !== 'spot') || local.includes(light));
-}
-
-function createLight(described: PortalSceneLight): Light | null {
-  let light: Light;
-  switch (described.type) {
-    case 'ambient':
-      return new AmbientLight(described.color, described.intensity);
-    case 'hemisphere':
-      light = new HemisphereLight(described.color, described.groundColor ?? 0x000000, described.intensity);
-      break;
-    case 'directional':
-      light = new DirectionalLight(described.color, described.intensity);
-      break;
-    case 'point':
-      light = new PointLight(described.color, described.intensity, described.distance, described.decay);
-      break;
-    case 'spot':
-      light = new SpotLight(described.color, described.intensity, described.distance, described.angle, described.penumbra, described.decay);
-      break;
-    default:
-      return null;
-  }
-  light.position.set(...described.position);
-  const aimed = light as DirectionalLight | SpotLight;
-  if (described.target && aimed.target) aimed.target.position.set(...described.target);
-  if (described.shadow && light.shadow) {
-    const { mapSize, bias, normalBias, camera } = described.shadow;
-    light.castShadow = true;
-    light.shadow.mapSize.set(mapSize, mapSize);
-    light.shadow.bias = bias;
-    light.shadow.normalBias = normalBias;
-    Object.assign(light.shadow.camera, camera);
-    (light.shadow.camera as unknown as { updateProjectionMatrix(): void }).updateProjectionMatrix();
-  }
-  return light;
+/**
+ * The scene's own lights (GLTFLoader made them from KHR_lights_punctual):
+ * shadows as their nodes' extras say, and only the point and spot lights
+ * nearest the arrival point.
+ */
+function configureLights(root: Object3D, eye: Vector3): void {
+  const local: Array<{ light: Light; distance: number }> = [];
+  root.traverse((object) => {
+    const light = object as Light & { isPointLight?: boolean; isSpotLight?: boolean };
+    if (!light.isLight) return;
+    const shadow = (light.parent?.userData as { castShadow?: boolean; shadow?: PortalSceneShadow } | undefined)?.shadow;
+    if (shadow && light.shadow) {
+      light.castShadow = true;
+      light.shadow.mapSize.set(shadow.mapSize, shadow.mapSize);
+      light.shadow.bias = shadow.bias;
+      light.shadow.normalBias = shadow.normalBias;
+      Object.assign(light.shadow.camera, shadow.camera);
+      (light.shadow.camera as unknown as { updateProjectionMatrix(): void }).updateProjectionMatrix();
+    } else {
+      light.castShadow = false;
+    }
+    if (light.isPointLight || light.isSpotLight) local.push({ light, distance: light.getWorldPosition(new Vector3()).distanceToSquared(eye) });
+  });
+  local.sort((a, b) => a.distance - b.distance);
+  for (const { light } of local.slice(MAX_LOCAL_LIGHTS)) light.removeFromParent();
 }
 
 /** The file through the hub's same-origin relay (the bucket sends no CORS), else directly. */

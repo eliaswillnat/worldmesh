@@ -301,19 +301,39 @@ upload_apps() {
   done
 }
 
-# Door views (the world seen through a walk-mode door up close) for the five
-# preview worlds. workers/screenshot can't take them: its browser can't get
-# past Access. So take them here from the fresh builds and put them in the
-# preview bucket exactly where the worker would, status.json last. Worlds
-# whose runtime can export one also get a portal scene (portal.glb and a
-# backdrop), which hub doors draw live instead of the door view.
-# Best effort: a world without either just shows its cover.
-seed_door_views() {
-  local out stamp app slug host prefix portal worlds=()
-  log "Taking door views and portal scenes of the preview worlds"
-  out=$(mktemp -d)
+# Door views and Doorway scenes of the five preview worlds, taken from the
+# fresh builds (workers/screenshot can't: its browser can't get past Access).
+# Each world publishes its own Doorway scene, like any Doorway destination
+# (docs/specs/doorway.md §2): doorway/scene.glb, its backdrop and
+# doorway/doorway.json, served as /.well-known/doorway.json (_redirects).
+# Runs before upload_apps, so the files ship with the world.
+DOORWAY_OUT=""
+capture_doorways() {
+  local app worlds=()
+  log "Taking door views and Doorway scenes of the preview worlds"
+  DOORWAY_OUT=$(mktemp -d)
   for app in "${APPS[@]:1}"; do worlds+=("$app=apps/$app/dist"); done
-  node scripts/preview-door-views/capture.mjs "$out" "${worlds[@]}" || { echo "  (skipped: capture failed)"; return 0; }
+  node scripts/preview-door-views/capture.mjs "$DOORWAY_OUT" "${worlds[@]}" || { echo "  (skipped: capture failed)"; DOORWAY_OUT=""; return 0; }
+  for app in "${APPS[@]:1}"; do
+    [[ -f $DOORWAY_OUT/$app/portal.glb ]] || continue
+    mkdir -p "apps/$app/dist/doorway"
+    cp "$DOORWAY_OUT/$app/portal.glb" "apps/$app/dist/doorway/scene.glb"
+    cp "$DOORWAY_OUT/$app/backdrop.webp" "apps/$app/dist/doorway/backdrop.webp"
+    printf '{ "doorway": 1, "scene": "/doorway/scene.glb", "embed": true, "characters": ["vrm", "glb"] }\n' >"apps/$app/dist/doorway/doorway.json"
+    echo "  $app publishes its Doorway scene"
+  done
+}
+
+# The same views in the preview bucket, exactly where the worker would put
+# them, status.json last. The hub reads a world's own Doorway scene first;
+# this copy is what it falls back to while Access keeps the hub from reading
+# the worlds' own files (docs/previews.md). Best effort: a world without
+# either just shows its cover.
+seed_door_views() {
+  local out stamp app slug host prefix portal
+  out=$DOORWAY_OUT
+  [[ -n $out ]] || return 0
+  log "Putting door views in the preview bucket"
 
   local covers; covers="https://$(r2_dev_host)"
   put() { wrangler r2 object put "$R2_BUCKET/$1" --remote --file "$2" --content-type "$3" "${@:4}" >/dev/null; }
@@ -346,6 +366,7 @@ seed_door_views() {
     fi
   done
   rm -rf "$out"
+  DOORWAY_OUT=""
 }
 
 # ── Commands ───────────────────────────────────────────────────────────────
@@ -368,6 +389,7 @@ cmd_deploy() {
   deploy_workers
   configure_hub_project
   build_apps
+  capture_doorways
   upload_apps "$sha"
   seed_door_views
   summary "### Preview deployed: \`$sha\`"

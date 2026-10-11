@@ -16,8 +16,9 @@ import type { DoorViewManager } from './doorViews';
  * heading and camera in its own coordinates, draws that same view, and takes
  * the lobby's place; its camera eases back out from there. No fade, no load.
  *
- * Only for doors in the 'walk' style (doorViews), whose world can be
- * embedded: a world that never says it is ready is travelled to as usual.
+ * Only for doors whose world can be walked into (doorViews.walkable): one
+ * with a portal scene, so on the WorldMesh runtime. A world that never says
+ * it is ready is travelled to as usual.
  */
 
 /** Load the world behind the hall once its door is this close (metres from the doorway). */
@@ -124,7 +125,7 @@ export class WalkThrough {
     let best = PRELOAD;
     let current = Infinity;
     for (const door of doors) {
-      if (!door.world || door.random || this.options.views.style(door) !== 'walk') continue;
+      if (!door.world || door.random || !this.options.views.walkable(door)) continue;
       if (Math.abs(feet.y - door.group.position.y) > 1) continue;
       const front = door.inFront(0);
       const distance = Math.hypot(feet.x - front.x, feet.z - front.z);
@@ -146,6 +147,9 @@ export class WalkThrough {
    */
   enter(door: Door): boolean {
     if (this.handover !== null || this.done) return true;
+    // Part way through one door, nothing else may take them: on the far side
+    // of the wall stands the back of an outside door.
+    if (this.armed && this.armed !== door) return true;
     const world = this.world;
     if (!world || world.door !== door || !world.ready || !door.doorView?.portal) return false;
     if (this.armed !== door) {
@@ -254,7 +258,7 @@ export class WalkThrough {
     }
     this.options.freeze();
     const url = this.options.travelUrl(door.world.url);
-    world.frame.contentWindow?.postMessage({ type: 'worldmesh:enter', url, pose }, new URL(world.frame.src).origin);
+    world.frame.contentWindow?.postMessage({ type: 'doorway:enter', url, pose }, new URL(world.frame.src).origin);
     // Never left standing in a frozen hall: travel the usual way if it doesn't answer.
     this.handover = window.setTimeout(() => {
       window.location.href = url;
@@ -284,7 +288,7 @@ export class WalkThrough {
 
   private carry(z: number): void {
     const frame = this.world?.frame;
-    frame?.contentWindow?.postMessage({ type: 'worldmesh:carry', x: 0, z }, new URL(frame.src).origin);
+    frame?.contentWindow?.postMessage({ type: 'doorway:carry', x: 0, z }, new URL(frame.src).origin);
   }
 
   private onTouches = (event: TouchEvent): void => {
@@ -302,9 +306,10 @@ export class WalkThrough {
   }
 
   /**
-   * The lobby's character to the waiting world: descriptor and the model file
+   * The lobby's character to the waiting world (Doorway §6): the model file
    * the lobby already downloaded (copied across, never fetched again), or
-   * null for the default body.
+   * null for the default body. The Avatar Wallet descriptor and the handoff
+   * ticket ride along under `worldmesh`, for WorldMesh worlds.
    */
   private sendCharacter(): void {
     const world = this.world;
@@ -314,10 +319,14 @@ export class WalkThrough {
     world.characterLoaded = false;
     world.frame.contentWindow?.postMessage(
       {
-        type: 'worldmesh:avatar',
-        descriptor: character?.descriptor ?? null,
+        type: 'doorway:character',
+        format: character?.descriptor.format ?? null,
+        name: character?.descriptor.name ?? null,
         data: character?.data ?? null,
-        ticket: character ? this.options.characterTicket() : null,
+        worldmesh: {
+          descriptor: character?.descriptor ?? null,
+          ticket: character ? this.options.characterTicket() : null,
+        },
       },
       new URL(world.frame.src).origin,
     );
@@ -327,17 +336,20 @@ export class WalkThrough {
     const world = this.world;
     if (!world || event.source !== world.frame.contentWindow) return;
     const data = event.data as { type?: unknown; url?: unknown } | null;
-    if (data?.type === 'worldmesh:ready') {
+    // Doorway's names (docs/specs/doorway.md §4), or the pre-Doorway worldmesh:* ones.
+    const type = typeof data?.type === 'string' ? data.type.replace(/^worldmesh:/, 'doorway:') : null;
+    if (type === 'doorway:ready') {
       world.ready = true;
       window.clearTimeout(world.timeout);
       this.sendCharacter();
-    } else if (data?.type === 'worldmesh:avatar-ready') {
+    } else if (type === 'doorway:character-ready' || type === 'doorway:avatar-ready') {
       world.characterLoaded = (data as { loaded?: unknown }).loaded === true;
-    } else if (data?.type === 'worldmesh:entered' && this.handover !== null) {
+    } else if (type === 'doorway:entered' && this.handover !== null) {
       this.takeOver();
-    } else if (data?.type === 'worldmesh:navigate' && this.done) {
+    } else if (type === 'doorway:navigate' && this.done) {
       // Inside the world, its portals and links leave the hub page.
-      if (typeof data.url === 'string' && /^https?:\/\//.test(data.url)) window.location.href = data.url;
+      const url = data?.url;
+      if (typeof url === 'string' && /^https?:\/\//.test(url)) window.location.href = url;
     }
   };
 
