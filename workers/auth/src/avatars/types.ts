@@ -52,6 +52,8 @@ export interface AvatarRow {
   provider: AvatarProviderId;
   external_avatar_id: string;
   display_name: string | null;
+  /** Set by the user in "My characters"; wins over display_name. */
+  custom_name: string | null;
   thumbnail_url: string | null;
   format: AvatarFormat;
   selected: number;

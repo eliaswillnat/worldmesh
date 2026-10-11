@@ -30,6 +30,7 @@ saved avatar is one row in `avatar` (a pointer, never the model); at most one is
 | `POST /collect` | `{ connectionId, avatarId }` | Saves it (checked with the provider). What is worn does not change. |
 | `POST /select` | `{ connectionId, avatarId }` | Saves it if needed and wears it. |
 | `POST /select` | `{ avatarId: null }` | "Continue without character". The collection stays. |
+| `POST /rename` | `{ connectionId, avatarId, name }` | Names a saved character (up to 64 characters) for this user only; the platform's name is untouched. Worlds get this name too. `null` or `""` goes back to the platform's name. |
 | `POST /remove` | `{ connectionId, avatarId }` | Removes it. If it was worn, worlds get the default body. |
 
 `GET /wallet` returns `collection` alongside `selected`. Disconnecting a

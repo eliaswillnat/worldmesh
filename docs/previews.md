@@ -199,13 +199,16 @@ database: the first deploy, or after "Tear down the preview completely".
 
 ## Known limitations
 
-- **Cross-origin calls between preview addresses are blocked by Access.** A
-  world asking the hub to resolve an Avatar Wallet handoff, or the hub reading a
-  preview world's `worldmesh.json`, gets the Access login page instead. The
-  Avatar Wallet is off in the preview anyway (no `AVATAR_SECRET`). If it's needed
-  later: add a second Access application for just the path
-  `preview.worldmesh.net/api/account/avatar/resolve` with a **Bypass** policy
-  (Include: Everyone).
+- **Cross-origin calls between preview addresses are blocked by Access.** The
+  hub reading a preview world's `worldmesh.json` gets the Access login page
+  instead. The one exception is `preview.worldmesh.net/api/account/avatar/resolve`,
+  which has its own Access application with a **Bypass** policy (Include:
+  Everyone), so worlds can show the character a visitor is wearing.
+- **The Avatar Wallet is on, with a hand-set secret.** The workflow doesn't make
+  an `AVATAR_SECRET`; the preview's auth Worker has one set by hand. "Tear down
+  the preview completely" deletes it, so set it again afterwards:
+  `npx wrangler secret put AVATAR_SECRET --config workers/auth/wrangler.toml --env preview`
+  (`openssl rand -base64 32`).
 - **The screenshot Worker can't see preview worlds.** It loads pages in
   Cloudflare's browser, which has no Access login. Screenshots and door views of
   external world URLs work.

@@ -167,6 +167,14 @@ export function removeAvatar(db: D1Database, userId: string, connectionId: strin
     .run();
 }
 
+/** Names a saved avatar for this user only; null goes back to the platform's name. */
+export function renameAvatar(db: D1Database, userId: string, connectionId: string, avatarId: string, name: string | null) {
+  return db
+    .prepare('update avatar set custom_name = ?4, updated_at = ?5 where user_id = ?1 and connection_id = ?2 and external_avatar_id = ?3')
+    .bind(userId, connectionId, avatarId, name, Date.now())
+    .run();
+}
+
 /** "Continue without character": the collection stays. */
 export function clearSelection(db: D1Database, userId: string) {
   return db.prepare('update avatar set selected = 0 where user_id = ?1 and selected = 1').bind(userId).run();
