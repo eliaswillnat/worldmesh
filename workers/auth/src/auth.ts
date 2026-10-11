@@ -1,5 +1,6 @@
 import { betterAuth } from 'better-auth';
 import { appleClientSecret, appleConfigured, type AppleCredentials } from './apple';
+import { atprotoSignIn } from './atprotoSignIn';
 import { mailConfigured, sendMail, type MailEnv } from './mail';
 import { hashPassword, verifyPassword } from './password';
 
@@ -44,11 +45,15 @@ export function passwordOptions(env: Env) {
   return { email: true, passwordReset: mailConfigured(env) };
 }
 
-export type ProviderId = 'google' | 'apple' | 'github' | 'discord';
+export type ProviderId = 'atproto' | 'google' | 'apple' | 'github' | 'discord';
 
-/** The sign-in options to show, in display order: only those with credentials set. */
+/**
+ * The sign-in options to show, in display order: only those with credentials
+ * set. ATProto needs none (a public client), so it is always offered.
+ */
 export function configuredProviders(env: Env): ProviderId[] {
   const all: [ProviderId, boolean][] = [
+    ['atproto', true],
     ['google', !!(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET)],
     ['apple', appleConfigured(env)],
     ['github', !!(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET)],
@@ -110,6 +115,8 @@ export function createAuth(env: Env, appleSecret?: string) {
     // against trusted origins before bouncing it to a same-site GET.
     trustedOrigins: appleSecret ? [origin, APPLE_ORIGIN] : [origin],
     socialProviders,
+    // Sign in with your own AT Protocol identity (src/atprotoSignIn.ts).
+    plugins: [atprotoSignIn({ db: env.DB })],
     emailAndPassword: {
       enabled: true,
       minPasswordLength: 8,

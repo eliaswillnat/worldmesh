@@ -1,6 +1,6 @@
 /**
- * The account corner: Log in → email + password or Google / Apple / GitHub /
- * Discord; once signed in,
+ * The account corner: Log in → email + password, your own AT Protocol
+ * identity (Bluesky or any PDS), or Google / Apple / GitHub / Discord; once signed in,
  * avatar, name, username and Log out. Talks to workers/auth over plain fetch
  * on the same origin (no auth client library in the bundle).
  *
@@ -20,9 +20,10 @@ interface AccountUser {
   handle: string | null;
 }
 
-type Provider = 'google' | 'apple' | 'github' | 'discord';
+type Provider = 'atproto' | 'google' | 'apple' | 'github' | 'discord';
 
 const PROVIDER_LABELS: Record<Provider, string> = {
+  atproto: 'Continue with Bluesky',
   google: 'Continue with Google',
   apple: 'Continue with Apple',
   github: 'Continue with GitHub',
@@ -55,6 +56,8 @@ let draft = { name: '', email: '', password: '' };
 let signedInView: 'account' | 'wallet' = 'account';
 /** Came back from connecting an avatar platform: open the wallet once signed in. */
 let openWallet = false;
+/** "Continue with Bluesky" was picked: ask for the handle in its place. */
+let atprotoOpen = false;
 
 const PROFILE_ICON =
   '<svg class="account-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>';
@@ -63,6 +66,7 @@ const mobileProfile = document.querySelector<HTMLSpanElement>('#mobile-profile')
 
 export function openAccountDialog(): void {
   message = null;
+  atprotoOpen = false;
   signedInView = 'account';
   if (view === 'forgot' || (view === 'reset' && !resetToken)) view = 'sign-in';
   renderDialog();
@@ -196,7 +200,25 @@ async function loadProviders(): Promise<void> {
   if (dialog.open) renderDialog();
 }
 
+/** Sign in with an AT Protocol handle: the visitor's own server asks them to approve. */
+async function signInWithAtproto(handle: string): Promise<void> {
+  await run(async () => {
+    const { ok, data } = await postAuth('sign-in/atproto', { handle, callbackURL: returnTo ?? '/' });
+    if (!ok || typeof data.url !== 'string') {
+      throw new Error(typeof data.message === 'string' ? data.message : 'Could not start sign-in.');
+    }
+    setHint(true);
+    window.location.assign(data.url);
+  });
+}
+
 async function signIn(provider: Provider): Promise<void> {
+  if (provider === 'atproto') {
+    atprotoOpen = true;
+    renderDialog();
+    body.querySelector<HTMLInputElement>('.account-atproto input')?.focus();
+    return;
+  }
   await run(async () => {
     const response = await fetch('/api/auth/sign-in/social', {
       method: 'POST',
@@ -457,7 +479,12 @@ function renderSignedOut(): void {
     const divider = document.createElement('p');
     divider.className = 'account-divider';
     divider.textContent = 'or';
-    body.append(divider, ...providers.map((provider) => providerButton(provider, PROVIDER_LABELS[provider])));
+    body.append(
+      divider,
+      ...providers.map((provider) =>
+        provider === 'atproto' && atprotoOpen ? atprotoForm() : providerButton(provider, PROVIDER_LABELS[provider]),
+      ),
+    );
   }
 }
 
@@ -583,6 +610,36 @@ function providerButton(provider: Provider, label: string): HTMLButtonElement {
   return b;
 }
 
+/** The handle, in place of the Bluesky button: any AT Protocol handle works, on any server. */
+function atprotoForm(): HTMLElement {
+  const wrap = document.createElement('div');
+  wrap.className = 'account-atproto';
+  const form = document.createElement('form');
+  form.className = 'account-username-row';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.placeholder = 'alice.bsky.social';
+  input.autocomplete = 'username';
+  input.spellcheck = false;
+  input.required = true;
+  input.maxLength = 253;
+  input.setAttribute('aria-label', 'Your Bluesky or AT Protocol handle');
+  const submit = document.createElement('button');
+  submit.type = 'submit';
+  submit.textContent = busy ? 'Please wait…' : 'Continue';
+  submit.disabled = busy;
+  form.append(input, submit);
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    void signInWithAtproto(input.value.trim());
+  });
+  const hint = document.createElement('p');
+  hint.className = 'account-hint';
+  hint.textContent = 'Your Bluesky handle, or any AT Protocol handle. Your own server asks you to approve.';
+  wrap.append(form, hint);
+  return wrap;
+}
+
 function usernameForm(): HTMLFormElement {
   const form = document.createElement('form');
   form.className = 'account-username';
@@ -654,6 +711,8 @@ function setHint(signedIn: boolean): void {
 }
 
 const PROVIDER_ICONS: Record<Provider, string> = {
+  atproto:
+    '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="#1185FE" d="M5.2 3.6C7.5 5.3 10 8.8 12 10.9c2-2.1 4.5-5.6 6.8-7.3 1.7-1.2 4.4-2.2 4.4.8 0 .6-.3 5.1-.5 5.8-.7 2.5-3.3 3.2-5.6 2.8 4 .7 5 3 2.8 5.2-4.2 4.3-6-1.1-6.5-2.5l-.4-1-.4 1c-.5 1.4-2.3 6.8-6.5 2.5-2.2-2.2-1.2-4.5 2.8-5.2-2.3.4-4.9-.3-5.6-2.8C1.1 9.5.8 5 .8 4.4c0-3 2.7-2 4.4-.8z"/></svg>',
   apple:
     '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="currentColor"><path d="M16.37 12.74c-.02-2.3 1.88-3.4 1.96-3.46-1.07-1.56-2.73-1.78-3.32-1.8-1.41-.14-2.76.83-3.48.83-.72 0-1.82-.81-3-.79-1.54.02-2.96.9-3.76 2.28-1.6 2.78-.41 6.9 1.15 9.16.76 1.1 1.67 2.34 2.86 2.3 1.15-.05 1.58-.74 2.97-.74 1.38 0 1.78.74 2.99.72 1.24-.02 2.02-1.12 2.77-2.23.87-1.28 1.23-2.52 1.25-2.58-.03-.01-2.39-.92-2.41-3.65zM14.09 5.99c.63-.77 1.06-1.83.94-2.89-.91.04-2.02.61-2.67 1.37-.58.67-1.1 1.76-.96 2.8 1.02.08 2.06-.52 2.69-1.28z"/></svg>',
   discord:

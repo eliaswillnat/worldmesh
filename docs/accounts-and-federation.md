@@ -6,7 +6,7 @@ neither.
 
 ```
 hub (Cloudflare Pages, worldmesh.net)
- │  /api/auth/*, /api/account/*        ──►  workers/auth        Better Auth: Google, Apple, GitHub, Discord
+ │  /api/auth/*, /api/account/*        ──►  workers/auth        Better Auth: ATProto, Google, Apple, GitHub, Discord
  │  /.well-known/webfinger, /ap/*, /@* ──►  workers/federation  WebFinger + ActivityPub
  │  /api/ads/*                         ──►  workers/ads         billboard ads (see advertising.md)
  │  everything else                    ──►  Pages (static + existing /api Functions, KV)
@@ -24,6 +24,17 @@ nothing about the hub's deployment changes.
 - **Better Auth 1.7** with its native D1 dialect. Google, Apple, GitHub and
   Discord; no passwords, no email flows. The dialog shows only providers whose
   secrets are set (`GET /api/account/providers`).
+- **Sign in with ATProto** (`src/atprotoSignIn.ts`, a Better Auth plugin):
+  log in with your own AT Protocol identity, a Bluesky handle or any handle
+  on any PDS. Same OAuth client and checks as the Avatar Wallet's at3d
+  connection (PAR, PKCE, DPoP, RFC 9207 issuer, the signed-in DID must be the
+  one the handle resolved to), and the tokens are revoked right away: it only
+  proves who someone is. The account key is the DID, so it survives handle
+  changes and PDS moves. A DID already proven in someone's Avatar Wallet signs
+  into that user; otherwise a new user gets the Bluesky profile's name and
+  picture and a placeholder email under `atproto.invalid` (Better Auth needs
+  a unique email; that domain is refused for password sign-ups). Always
+  offered: there is nothing to register.
 - **Apple specifics**: the client secret is an ES256 JWT that Apple limits to
   six months, so the Worker mints a 2-day one from the `.p8` key itself
   (`src/apple.ts`); nothing to rotate. Apple posts the callback cross-site
@@ -55,7 +66,8 @@ nothing about the hub's deployment changes.
   credential).
 
 Endpoints: Better Auth's under `/api/auth/*` (the hub uses
-`POST /sign-in/social`, `GET /callback/:provider`, `POST /sign-out`), plus
+`POST /sign-in/social`, `GET /callback/:provider`, `POST /sign-in/atproto`,
+`GET /atproto/callback`, `POST /sign-out`), plus
 `GET /api/account/me` and `POST /api/account/username`.
 
 ### OAuth provider setup (production)
@@ -80,6 +92,11 @@ then use `http://localhost:5170/api/auth/callback/<provider>`.
 | Apple | `…/callback/apple` | `APPLE_CLIENT_ID`, `APPLE_TEAM_ID`, `APPLE_KEY_ID`, `APPLE_PRIVATE_KEY` |
 | GitHub | `…/callback/github` | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` |
 | Discord | `…/callback/discord` | `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET` |
+
+ATProto needs no row here: its client id is the Avatar Wallet's
+`…/api/account/avatar/atproto/client-metadata.json`, which lists both
+callbacks. Locally, AT Protocol only accepts loopback clients on an IP, so
+open the hub at `http://127.0.0.1:5170` with `BETTER_AUTH_URL` set to it.
 
 Also set `BETTER_AUTH_SECRET` (random, ≥32 bytes). Never commit secret
 values; `.dev.vars` is gitignored.

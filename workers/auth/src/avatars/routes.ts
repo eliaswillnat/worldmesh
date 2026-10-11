@@ -24,6 +24,7 @@
  */
 import type { Auth, Env } from '../auth';
 import { HttpError, isSameOrigin, json, readJson } from '../http';
+import { callbackUri as signInCallbackUri } from '../atprotoSignIn';
 import { atprotoClientMetadata, atprotoProvider } from './atproto';
 import { open, seal } from './crypto';
 import { mintTicket, readTicket } from './handoff';
@@ -86,7 +87,8 @@ export async function handleAvatarRequest(
 
   if (path === '/resolve') return resolve(request, env, exec, origin);
   if (path === '/atproto/client-metadata.json' && method === 'GET') {
-    return json(atprotoClientMetadata(origin, redirectUri(origin, 'atproto')));
+    // One client for both: the Avatar Wallet's callback and Sign in with ATProto's.
+    return json(atprotoClientMetadata(origin, [redirectUri(origin, 'atproto'), signInCallbackUri(origin)]));
   }
   if (!avatarWalletEnabled(env)) {
     if (path === '/wallet' && method === 'GET') return json({ enabled: false, providers: [], connections: [], collection: [], selected: null });
