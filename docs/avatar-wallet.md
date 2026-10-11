@@ -18,6 +18,65 @@ world (any host) @worldmesh/runtime ── POST /resolve {ticket} ──► desc
                  └────────────────────── GET modelUrl ─────────────────────────────►  VRoid S3 / PDS blob / Sketchfab S3
 ```
 
+## My characters
+
+Visitors can save any number of avatars (up to 100) from any of their connected
+platforms to **My characters**, then switch between them or remove them. Each
+saved avatar is one row in `avatar` (a pointer, never the model); at most one is
+`selected`, and that one is what worlds receive.
+
+| Endpoint | Body | Effect |
+| --- | --- | --- |
+| `POST /collect` | `{ connectionId, avatarId }` | Saves it (checked with the provider). What is worn does not change. |
+| `POST /select` | `{ connectionId, avatarId }` | Saves it if needed and wears it. |
+| `POST /select` | `{ avatarId: null }` | "Continue without character". The collection stays. |
+| `POST /remove` | `{ connectionId, avatarId }` | Removes it. If it was worn, worlds get the default body. |
+
+`GET /wallet` returns `collection` alongside `selected`. Disconnecting a
+platform, or reconnecting it as a different account, removes that platform's
+saved avatars.
+
+## Uploading characters
+
+Visitors with a connected at3d or Sketchfab account can upload a VRM or GLB
+(up to 40 MB) from the wallet. The model goes **from their browser straight to
+their own account**; WorldMesh never receives it. Each upload is a separate,
+short authorization that is revoked as soon as the upload is done, and it is
+only accepted for the account already connected (otherwise it is revoked at
+once and the wallet says so).
+
+### at3d
+
+1. "Upload a character" asks the connected account, through AT Protocol OAuth,
+   for `atproto repo:app.at3d.avatar?action=create blob:model/gltf-binary`:
+   create at3d avatars and upload models, nothing else.
+2. The callback does not revoke this grant. It seals it (access and refresh
+   token, DPoP key) into an HttpOnly cookie scoped to `/api/account/avatar/upload`,
+   bound to the user, valid at most 15 minutes. Nothing is written to D1.
+3. `POST /upload/grant` gives the browser the access token and DPoP key (never
+   the refresh token). The browser calls `com.atproto.repo.uploadBlob` and
+   `createRecord` on the PDS with DPoP proofs (`apps/hub/src/at3dUpload.ts`),
+   writing the same record shape at3d itself writes.
+4. `POST /upload/done` revokes both tokens and clears the cookie; the new
+   avatar is added to My characters.
+
+The PDS must support granular OAuth scopes (bsky.social does); otherwise the
+wallet says uploading is not available. The at3d lexicon is a draft: GLB
+uploads use `app.at3d.avatar#gltfAppearance`, VRM uploads `#vrmAppearance`.
+
+### Sketchfab
+
+1. "Upload a character" runs the normal Sketchfab authorization again. The new
+   tokens are **not** stored: the connection keeps its own tokens.
+2. As with at3d, the grant waits in the sealed upload cookie; the browser gets
+   only the access token and posts the file to `POST /v3/models` itself
+   (`apps/hub/src/sketchfabUpload.ts`; `api.sketchfab.com` answers CORS), as a
+   draft (`isPublished=false`) that only the owner can see.
+3. `POST /upload/done` revokes both tokens (best effort: Sketchfab's revocation
+   endpoint is undocumented).
+4. Sketchfab processes the model for a few minutes; it then appears in the
+   Sketchfab listing, where it can be saved like any other.
+
 ## Providers
 
 | | Sketchfab | VRoid Hub | at3d (AT Protocol) |

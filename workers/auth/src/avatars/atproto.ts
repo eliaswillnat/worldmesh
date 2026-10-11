@@ -7,9 +7,14 @@
  * load them.
  *
  * AT Protocol OAuth (https://atproto.com/specs/oauth: PAR, PKCE, DPoP) is used
- * only to prove the user controls the DID. The tokens are revoked and
- * discarded right after the callback; what is stored is the DID, the handle
- * and the PDS URL.
+ * to prove the user controls the DID. The tokens are revoked and discarded
+ * right after the callback; what is stored is the DID, the handle and the PDS
+ * URL.
+ *
+ * Uploading is a separate, explicit authorization limited to creating
+ * app.at3d.avatar records and model blobs (UPLOAD_SCOPE). Its access token
+ * and DPoP key go to the user's browser, which sends the model straight to
+ * their PDS, and are revoked when it is done. WorldMesh never stores them.
  *
  * Every host here (the handle's domain, did:web hosts, the PDS, the
  * authorization server) is user-controlled, so each request goes through the
@@ -26,6 +31,12 @@ import {
 } from './types';
 
 export const AVATAR_COLLECTION = 'app.at3d.avatar';
+/** The MIME type at3d stores VRM and GLB models under. */
+export const MODEL_MIME = 'model/gltf-binary';
+/** Create at3d avatars and upload their models; nothing else in the account. */
+export const UPLOAD_SCOPE = `atproto repo:${AVATAR_COLLECTION}?action=create blob:${MODEL_MIME}`;
+/** Every scope this client may ask for, as its metadata declares. */
+const CLIENT_SCOPE = UPLOAD_SCOPE;
 const PLC_DIRECTORY = 'https://plc.directory';
 const DOH = 'https://cloudflare-dns.com/dns-query';
 
@@ -45,6 +56,7 @@ interface AtprotoFlowExtra {
   revocationEndpoint: string | null;
   dpopKey: JsonWebKey;
   dpopNonce: string | null;
+  upload?: boolean;
   [key: string]: unknown;
 }
 
@@ -55,7 +67,7 @@ export const atprotoProvider: AvatarProvider = {
   // Needs no client secret: WorldMesh is a public client that keeps no tokens.
   isConfigured: () => true,
 
-  async connect(ctx, { userId, handle: input }) {
+  async connect(ctx, { userId, handle: input, upload }) {
     const clientId = atprotoClientId(ctx.origin, ctx.redirectUri);
     const ownHost = new URL(ctx.origin).host;
     const identity = await resolveIdentity((input ?? '').trim().replace(/^@/, ''), ownHost);
@@ -73,11 +85,14 @@ export const atprotoProvider: AvatarProvider = {
       code_challenge_method: 'S256',
       state,
       redirect_uri: ctx.redirectUri,
-      scope: 'atproto',
+      scope: upload ? UPLOAD_SCOPE : 'atproto',
       login_hint: identity.handle ?? identity.did,
     });
     const requestUri = par.body?.request_uri;
     if ((par.response.status !== 201 && par.response.status !== 200) || typeof requestUri !== 'string') {
+      if (upload && par.body?.error === 'invalid_scope') {
+        throw new AvatarError('Your AT Protocol server does not let apps upload avatars yet.', 502);
+      }
       throw new AvatarError('Your AT Protocol server refused the sign-in request.', 502);
     }
 
@@ -92,6 +107,7 @@ export const atprotoProvider: AvatarProvider = {
       revocationEndpoint: server.revocationEndpoint,
       dpopKey,
       dpopNonce: par.nonce,
+      ...(upload ? { upload: true } : {}),
     };
     return { url: url.toString(), flow: { provider: 'atproto', userId, state, verifier, expiresAt: Date.now() + 10 * 60_000, extra } };
   },
@@ -122,6 +138,30 @@ export const atprotoProvider: AvatarProvider = {
       throw new AvatarError('Signed in as a different account than the handle you entered.');
     }
 
+    const account = { providerAccountId: extra.did, displayName: extra.handle, serviceEndpoint: extra.pds, credentials: null };
+    if (extra.upload) {
+      // Handed to the browser for one upload; revoked by revokeUpload afterwards.
+      const granted = scopes.some((s) => s === `repo:${AVATAR_COLLECTION}` || s.startsWith(`repo:${AVATAR_COLLECTION}?`) || s === 'transition:generic');
+      if (!granted || typeof body.access_token !== 'string') {
+        throw new AvatarError('Uploading was not allowed. Please try again and approve the request.');
+      }
+      const expiresIn = typeof body.expires_in === 'number' ? body.expires_in : 300;
+      return {
+        ...account,
+        uploadGrant: {
+          provider: 'atproto',
+          service: extra.pds,
+          account: extra.did,
+          accessToken: body.access_token,
+          refreshToken: typeof body.refresh_token === 'string' ? body.refresh_token : null,
+          dpopKey: extra.dpopKey,
+          expiresAt: Date.now() + Math.min(expiresIn, 15 * 60) * 1000,
+          revocationEndpoint: extra.revocationEndpoint,
+          issuer: extra.issuer,
+        },
+      };
+    }
+
     // WorldMesh only needed to know who this is. Give the tokens back.
     const revoke = extra.revocationEndpoint;
     const secret = typeof body.refresh_token === 'string' ? body.refresh_token : body.access_token;
@@ -133,7 +173,21 @@ export const atprotoProvider: AvatarProvider = {
         }).catch(() => undefined),
       );
     }
-    return { providerAccountId: extra.did, displayName: extra.handle, serviceEndpoint: extra.pds, credentials: null };
+    return account;
+  },
+
+  async revokeUpload(ctx, grant) {
+    if (!grant.revocationEndpoint || !grant.dpopKey) return;
+    const ownHost = new URL(ctx.origin).host;
+    let nonce: string | null = null;
+    for (const token of [grant.refreshToken, grant.accessToken]) {
+      if (!token) continue;
+      const result = await dpopPost(grant.revocationEndpoint, grant.dpopKey, nonce, ownHost, {
+        token,
+        client_id: atprotoClientId(ctx.origin, ctx.redirectUri),
+      });
+      nonce = result.nonce;
+    }
   },
 
   async disconnect() {
@@ -208,7 +262,7 @@ export function atprotoClientId(origin: string, redirectUri: string): string {
   if (new URL(origin).hostname === 'localhost') {
     throw new AvatarError('AT Protocol sign-in needs a loopback IP: open the hub at http://127.0.0.1:5170 (and set BETTER_AUTH_URL to it).');
   }
-  return `http://localhost?${new URLSearchParams({ redirect_uri: redirectUri, scope: 'atproto' })}`;
+  return `http://localhost?${new URLSearchParams({ redirect_uri: redirectUri, scope: CLIENT_SCOPE })}`;
 }
 
 export function atprotoClientMetadata(origin: string, redirectUri: string): Json {
@@ -220,7 +274,7 @@ export function atprotoClientMetadata(origin: string, redirectUri: string): Json
     grant_types: ['authorization_code', 'refresh_token'],
     response_types: ['code'],
     redirect_uris: [redirectUri],
-    scope: 'atproto',
+    scope: CLIENT_SCOPE,
     token_endpoint_auth_method: 'none',
     dpop_bound_access_tokens: true,
   };
