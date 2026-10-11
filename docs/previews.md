@@ -16,7 +16,7 @@ Tell Claude:
 | :--- | :--- |
 | **"Deploy to preview"** | Builds the current branch with preview settings, deploys it to the addresses below, and reports the URL and the exact commit. |
 | **"Deploy to production"** | Merges exactly the previewed commit into `main`, which Pages deploys as usual. Claude refuses if the branch has moved since the preview, or if `main` has moved (then: update the branch, preview again). Changed Workers are listed; deploying those stays manual. |
-| **"Remove the preview"** | Replaces the preview sites with a "Preview removed" page and wipes the preview database, world directory and view counts. Screenshots expire within a day. The setup stays, so the next deploy is quick. |
+| **"Remove the preview"** | Replaces the preview sites with a "Preview removed" page and wipes the preview's worlds, world directory, view counts and other test data. Accounts stay (sign-in, username, verified status), so you sign back in as before. Screenshots expire within a day. The setup stays, so the next deploy is quick. |
 | **"Tear down the preview completely"** | Deletes every preview project, Worker, database, namespace, bucket and DNS record. The next deploy recreates them. |
 | **"Verify me on the preview"** | Marks your preview account's email as verified, which the admin dashboard requires (see [Admin dashboard](#admin-dashboard)). |
 
@@ -194,7 +194,8 @@ preview sends no emails. So, once per fresh preview database:
    preview database only.
 3. Open https://preview-admin.worldmesh.net.
 
-"Remove the preview" wipes the preview database, so after it, sign up again.
+"Remove the preview" keeps accounts, so this is needed once per fresh preview
+database: the first deploy, or after "Tear down the preview completely".
 
 ## Known limitations
 
