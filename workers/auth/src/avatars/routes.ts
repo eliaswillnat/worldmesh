@@ -6,11 +6,14 @@
  *   GET  /wallet                     connected providers, the collection and the selected avatar (D1 only)
  *   GET  /connections/:id/avatars    live listing from the provider
  *   POST /connect/:provider          { handle? } → { url } to the provider's authorization page
+ *                                    { upload: true } asks the connected account for upload permission
  *   GET  /callback/:provider         provider redirect target
  *   POST /disconnect                 { connectionId }
  *   POST /collect                    { connectionId, avatarId } adds to the collection
  *   POST /select                     { connectionId, avatarId } adds and selects, or { avatarId: null }
  *   POST /remove                     { connectionId, avatarId } takes it out of the collection
+ *   POST /upload/grant               → the upload grant the callback left, for the browser to upload with
+ *   POST /upload/done                gives the grant back (revokes it at the provider)
  *   POST /handoff                    → { ticket, expiresAt } for worlds (see handoff.ts)
  *
  * For worlds on any origin, cookie-less:
@@ -27,7 +30,15 @@ import { mintTicket, readTicket } from './handoff';
 import { UnsafeUrlError } from './net';
 import { sketchfabProvider } from './sketchfab';
 import * as store from './store';
-import { AvatarError, type AvatarProvider, type AvatarProviderId, type ConnectionRow, type OAuthFlow, type ProviderContext } from './types';
+import {
+  AvatarError,
+  type AvatarProvider,
+  type AvatarProviderId,
+  type ConnectionRow,
+  type OAuthFlow,
+  type ProviderContext,
+  type UploadGrant,
+} from './types';
 import { vroidProvider } from './vroid';
 
 export const AVATAR_BASE_PATH = '/api/account/avatar';
@@ -104,9 +115,17 @@ export async function handleAvatarRequest(
     const connect = /^\/connect\/([a-z]+)$/.exec(path);
     if (connect && method === 'POST') {
       const provider = providerFor(env, connect[1]);
-      const body = (await readJson(request, 1024)) as { handle?: unknown } | null;
-      const handle = typeof body?.handle === 'string' ? body.handle.slice(0, 256) : undefined;
-      const { url: authorizeUrl, flow } = await provider.connect(context(env, exec, origin, provider.id), { userId, handle });
+      const body = (await readJson(request, 1024)) as { handle?: unknown; upload?: unknown } | null;
+      let handle = typeof body?.handle === 'string' ? body.handle.slice(0, 256) : undefined;
+      const upload = body?.upload === true;
+      if (upload) {
+        // Upload permission is asked of the account already connected, never another one.
+        if (!provider.revokeUpload) throw new HttpError(400, `Uploading to ${provider.label} is not available.`);
+        const connection = (await store.connectionsOf(env.DB, userId)).find((c) => c.provider === provider.id && c.status === 'active');
+        if (!connection) throw new HttpError(404, `Connect ${provider.label} first.`);
+        handle = connection.provider_account_id;
+      }
+      const { url: authorizeUrl, flow } = await provider.connect(context(env, exec, origin, provider.id), { userId, handle, upload });
       const sealed = await seal(env.AVATAR_SECRET, 'oauth-flow-v1', 'flow', flow);
       return json({ url: authorizeUrl }, 200, { 'Set-Cookie': flowCookie(origin, sealed, 600) });
     }
@@ -152,6 +171,23 @@ export async function handleAvatarRequest(
       return json(await wallet(env, userId));
     }
 
+    if (path === '/upload/grant' && method === 'POST') {
+      const grant = await readUploadGrant(request, env, origin, userId);
+      if (!grant) throw new HttpError(410, 'The upload permission has expired. Start the upload again.');
+      // The refresh token and revocation details stay here.
+      const { provider, service, account, accessToken, dpopKey, expiresAt } = grant;
+      return json({ provider, service, account, accessToken, dpopKey, expiresAt });
+    }
+
+    if (path === '/upload/done' && method === 'POST') {
+      const grant = await readUploadGrant(request, env, origin, userId);
+      const provider = grant && PROVIDERS[grant.provider];
+      if (grant && provider?.revokeUpload) {
+        exec.waitUntil(provider.revokeUpload(context(env, exec, origin, provider.id), grant).catch(() => undefined));
+      }
+      return json(await wallet(env, userId), 200, { 'Set-Cookie': uploadCookie(origin, '', 0) });
+    }
+
     if (path === '/handoff' && method === 'POST') return json(await mintTicket(env.AVATAR_SECRET, userId));
   } catch (error) {
     if (error instanceof HttpError) throw error;
@@ -193,12 +229,13 @@ async function wallet(env: Env, userId: string) {
 }
 
 async function finishConnect(request: Request, env: Env, auth: Auth, exec: WaitUntil, origin: string, providerId: string): Promise<Response> {
-  const done = (outcome: 'connected' | 'error', reason?: string) => {
+  const done = (outcome: 'connected' | 'upload' | 'error', reason?: string, extraCookie?: string) => {
     const target = new URL('/', origin);
     target.searchParams.set('avatar', outcome);
     if (reason) target.searchParams.set('reason', reason);
     const headers = new Headers({ Location: target.toString() });
     headers.append('Set-Cookie', flowCookie(origin, '', 0));
+    if (extraCookie) headers.append('Set-Cookie', extraCookie);
     return new Response(null, { status: 302, headers });
   };
 
@@ -223,6 +260,12 @@ async function finishConnect(request: Request, env: Env, auth: Auth, exec: WaitU
     const provider = providerFor(env, providerId);
     const account = await provider.completeConnect(context(env, exec, origin, provider.id), params, flow);
     await store.saveConnection(env.DB, env.AVATAR_SECRET, flow.userId, provider.id, account);
+    if (account.uploadGrant) {
+      const grant = account.uploadGrant;
+      const sealed = await seal(env.AVATAR_SECRET, 'upload-grant-v1', flow.userId, grant);
+      const maxAge = Math.max(0, Math.floor((grant.expiresAt - Date.now()) / 1000));
+      return done('upload', undefined, uploadCookie(origin, sealed, maxAge));
+    }
     return done('connected');
   } catch (error) {
     if (!(error instanceof AvatarError)) console.error('avatar connect failed', error);
@@ -301,6 +344,25 @@ function flowCookieName(origin: string): string {
 function flowCookie(origin: string, value: string, maxAge: number): string {
   const secure = origin.startsWith('https:') ? '; Secure' : '';
   return `${flowCookieName(origin)}=${value}; Path=${AVATAR_BASE_PATH}/callback; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${secure}`;
+}
+
+// ── The upload grant cookie ──────────────────────────────────────────────────
+// Sealed, HttpOnly, scoped to /upload, bound to the user: the browser reads the
+// access token through POST /upload/grant and never sees the refresh token.
+
+function uploadCookieName(origin: string): string {
+  return origin.startsWith('https:') ? '__Secure-worldmesh.avatar_upload' : 'worldmesh.avatar_upload';
+}
+
+function uploadCookie(origin: string, value: string, maxAge: number): string {
+  const secure = origin.startsWith('https:') ? '; Secure' : '';
+  return `${uploadCookieName(origin)}=${value}; Path=${AVATAR_BASE_PATH}/upload; Max-Age=${maxAge}; HttpOnly; SameSite=Strict${secure}`;
+}
+
+async function readUploadGrant(request: Request, env: Env, origin: string, userId: string): Promise<UploadGrant | null> {
+  const sealed = readCookie(request, uploadCookieName(origin));
+  const grant = sealed ? await open<UploadGrant>(env.AVATAR_SECRET, 'upload-grant-v1', userId, sealed) : null;
+  return grant && grant.expiresAt > Date.now() ? grant : null;
 }
 
 function readCookie(request: Request, name: string): string | null {

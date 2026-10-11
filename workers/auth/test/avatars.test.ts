@@ -3,7 +3,7 @@ import { getPlatformProxy } from 'wrangler';
 import { createTestDatabase, type TestDatabase } from '../../../db/test/d1';
 import worker, { type Env } from '../src/index';
 import { createAuth } from '../src/auth';
-import { atprotoClientId } from '../src/avatars/atproto';
+import { atprotoClientId, UPLOAD_SCOPE } from '../src/avatars/atproto';
 import { fromBase64url, pkceChallenge, seal } from '../src/avatars/crypto';
 
 const ORIGIN = 'https://worldmesh.net';
@@ -12,6 +12,7 @@ const SECRET = 'test-secret-test-secret-test-secret-123';
 const AVATAR_SECRET = 'avatar-secret-avatar-secret-avatar-secret';
 const SESSION_COOKIE = '__Secure-worldmesh.session_token';
 const FLOW_COOKIE = '__Secure-worldmesh.avatar_flow';
+const UPLOAD_COOKIE = '__Secure-worldmesh.avatar_upload';
 const VROID = 'https://hub.vroid.com';
 const S3_URL = 'https://vroid-hub.s3.ap-northeast-1.amazonaws.com/model.vrm?X-Amz-Signature=abc';
 const SKETCHFAB = 'https://sketchfab.com';
@@ -212,7 +213,7 @@ describe('avatar wallet', () => {
 
   it('refuses cross-site state changes', async () => {
     const { cookie } = await signedInUser('csrf-avatar@example.com');
-    for (const path of ['connect/vroid', 'select', 'collect', 'remove', 'disconnect', 'handoff']) {
+    for (const path of ['connect/vroid', 'select', 'collect', 'remove', 'disconnect', 'handoff', 'upload/grant', 'upload/done']) {
       const res = await post(`/api/account/avatar/${path}`, cookie, {}, 'https://evil.example.org');
       expect(res.status).toBe(403);
     }
@@ -614,12 +615,12 @@ describe('at3d / AT Protocol', () => {
       grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],
       redirect_uris: [`${ORIGIN}/api/account/avatar/callback/atproto`],
-      scope: 'atproto',
+      scope: 'atproto repo:app.at3d.avatar?action=create blob:model/gltf-binary',
       token_endpoint_auth_method: 'none',
       dpop_bound_access_tokens: true,
     });
     expect(atprotoClientId('http://127.0.0.1:5170', 'http://127.0.0.1:5170/api/account/avatar/callback/atproto')).toBe(
-      'http://localhost?redirect_uri=http%3A%2F%2F127.0.0.1%3A5170%2Fapi%2Faccount%2Favatar%2Fcallback%2Fatproto&scope=atproto',
+      `http://localhost?redirect_uri=http%3A%2F%2F127.0.0.1%3A5170%2Fapi%2Faccount%2Favatar%2Fcallback%2Fatproto&scope=${encodeURIComponent(UPLOAD_SCOPE).replace(/%20/g, '+')}`,
     );
     expect(() => atprotoClientId('http://localhost:5170', 'x')).toThrow(/127\.0\.0\.1/);
   });
@@ -667,6 +668,63 @@ describe('at3d / AT Protocol', () => {
 
     const bad = await post('/api/account/avatar/connect/atproto', cookie, { handle: 'not a handle' });
     expect(bad.status).toBe(400);
+  });
+
+  it('asks the connected account for upload permission and hands it to the browser, never storing it', async () => {
+    const { user, cookie } = await signedInUser('at-upload@example.com');
+    // Upload needs a connected at3d account first.
+    expect((await post('/api/account/avatar/connect/atproto', cookie, { upload: true })).status).toBe(404);
+    const first = await startAtproto(cookie);
+    await finishAtproto(cookie, first.flow, await flowState(first.flow), GOOD_TOKEN);
+
+    route('POST', `${AS}/oauth/par`, async (request) => {
+      const form = Object.fromEntries(new URLSearchParams(await request.text()));
+      // Only what an upload needs, for the account already connected.
+      expect(form).toMatchObject({ scope: UPLOAD_SCOPE, login_hint: HANDLE });
+      return reply({ request_uri: 'urn:ietf:params:oauth:request_uri:req-2' }, 201, { 'DPoP-Nonce': 'nonce-2' });
+    });
+    const start = await post('/api/account/avatar/connect/atproto', cookie, { upload: true, handle: 'someone.else.net' });
+    expect(start.status).toBe(200);
+    const flow = cookieValue(start, FLOW_COOKIE);
+
+    const revokesBefore = calls.filter((c) => c.url === `${AS}/oauth/revoke`).length;
+    const callback = await finishAtproto(cookie, flow, await flowState(flow), { ...GOOD_TOKEN, scope: UPLOAD_SCOPE });
+    expect(callback.headers.get('Location')).toBe(`${ORIGIN}/?avatar=upload`);
+    // Not revoked yet: the browser still needs it.
+    expect(calls.filter((c) => c.url === `${AS}/oauth/revoke`).length).toBe(revokesBefore);
+    const sealed = cookieValue(callback, UPLOAD_COOKIE);
+    expect(decodeURIComponent(sealed)).not.toContain('at-access');
+    const row = await env.DB.prepare('select token_enc from avatar_connection where user_id = ?').bind(user.id).first<{ token_enc: null }>();
+    expect(row!.token_enc).toBeNull();
+
+    const withGrant = `${cookie}; ${UPLOAD_COOKIE}=${sealed}`;
+    const grant = (await (await post('/api/account/avatar/upload/grant', withGrant, {})).json()) as Record<string, unknown>;
+    expect(grant).toMatchObject({ provider: 'atproto', service: PDS, account: DID, accessToken: 'at-access' });
+    expect((grant.dpopKey as JsonWebKey).d).toBeTruthy();
+    expect(grant).not.toHaveProperty('refreshToken');
+    expect(JSON.stringify(grant)).not.toContain('at-refresh');
+
+    // Bound to the user who authorized it.
+    const other = await signedInUser('at-upload-other@example.com');
+    expect((await post('/api/account/avatar/upload/grant', `${other.cookie}; ${UPLOAD_COOKIE}=${sealed}`, {})).status).toBe(410);
+
+    const done = await post('/api/account/avatar/upload/done', withGrant, {});
+    expect(done.status).toBe(200);
+    expect(cookieValue(done, UPLOAD_COOKIE)).toBe('');
+    await vi.waitFor(() => expect(calls.filter((c) => c.url === `${AS}/oauth/revoke`).length).toBe(revokesBefore + 2));
+    const revoked = await Promise.all(calls.filter((c) => c.url === `${AS}/oauth/revoke`).slice(-2).map(async (c) => new URLSearchParams(await c.text()).get('token')));
+    expect(revoked).toEqual(['at-refresh', 'at-access']);
+  });
+
+  it('refuses an upload grant without permission to create avatars', async () => {
+    const { cookie } = await signedInUser('at-upload-scope@example.com');
+    const first = await startAtproto(cookie);
+    await finishAtproto(cookie, first.flow, await flowState(first.flow), GOOD_TOKEN);
+    route('POST', `${AS}/oauth/par`, () => reply({ request_uri: 'urn:ietf:params:oauth:request_uri:req-3' }, 201, { 'DPoP-Nonce': 'nonce-2' }));
+    const flow = cookieValue(await post('/api/account/avatar/connect/atproto', cookie, { upload: true }), FLOW_COOKIE);
+    const callback = await finishAtproto(cookie, flow, await flowState(flow), GOOD_TOKEN);
+    expect(callback.headers.get('Location')).toBe(`${ORIGIN}/?avatar=error`);
+    expect(callback.headers.getSetCookie().some((c) => c.startsWith(`${UPLOAD_COOKIE}=`))).toBe(false);
   });
 
   it('lists renderable app.at3d.avatar records and resolves to the PDS blob', async () => {

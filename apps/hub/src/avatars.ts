@@ -7,10 +7,15 @@
  * the models stay on their platforms. Talks to workers/auth under
  * /api/account/avatar over same-origin fetch.
  *
+ * at3d characters can also be uploaded here: the browser sends the model
+ * straight to the user's own AT Protocol server (see ./at3dUpload).
+ *
  * When a character is picked, the hub mints a short-lived handoff ticket and
  * adds it to world links as a URL fragment (#wm-avatar=…), which never reaches
  * any server. The world's runtime exchanges it for a descriptor of the model.
  */
+
+import { inspectModel, MAX_MODEL_BYTES, uploadToAt3d, type UploadGrant } from './at3dUpload';
 
 interface WalletConnection {
   id: string;
@@ -61,28 +66,36 @@ const listings = new Map<string, WalletAvatar[] | 'loading' | { error: string }>
 let busy = false;
 let message: { text: string; error: boolean } | null = null;
 let ticket: string | null = null;
+/** Back from approving an at3d upload: the wallet shows the upload form. */
+let uploadReady = false;
+let uploadFile: File | null = null;
+let uploadName = '';
+let uploading = false;
 let rerender: () => void = () => {};
 
 /**
  * Wire up the wallet. Returns the outcome of a provider connection the
  * browser just came back from, so the account dialog can open on it.
  */
-export function initAvatarWallet(onChange: () => void): 'connected' | 'error' | null {
+export function initAvatarWallet(onChange: () => void): 'connected' | 'upload' | 'error' | null {
   rerender = onChange;
   document.addEventListener('click', addTicketToWorldLink, true);
   document.addEventListener('auxclick', addTicketToWorldLink, true);
 
   const params = new URLSearchParams(window.location.search);
   const outcome = params.get('avatar');
-  if (outcome !== 'connected' && outcome !== 'error') return null;
+  if (outcome !== 'connected' && outcome !== 'upload' && outcome !== 'error') return null;
   params.delete('avatar');
   params.delete('reason');
   const query = params.toString();
   history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`);
+  uploadReady = outcome === 'upload';
   message =
     outcome === 'connected'
       ? { text: 'Connected. Pick your character below.', error: false }
-      : { text: 'Connecting did not complete. Please try again.', error: true };
+      : outcome === 'upload'
+        ? { text: 'Approved. Choose the model to upload.', error: false }
+        : { text: 'Connecting did not complete. Please try again.', error: true };
   return outcome;
 }
 
@@ -204,6 +217,8 @@ function providerSection(provider: { id: string; label: string }, connection: Wa
     return section;
   }
 
+  if (provider.id === 'atproto') section.append(uploadControls(connection));
+
   const listing = listings.get(connection.id);
   if (!listing) void loadAvatars(connection);
   if (!listing || listing === 'loading') {
@@ -289,6 +304,69 @@ function avatarItem(
 
 function sameAvatar(a: { connectionId: string; avatarId: string }, b: { connectionId: string; avatarId: string }): boolean {
   return a.connectionId === b.connectionId && a.avatarId === b.avatarId;
+}
+
+/** "Upload a character", or, once approved, the form that sends the model to the user's PDS. */
+function uploadControls(connection: WalletConnection): HTMLElement {
+  if (!uploadReady) {
+    const start = document.createElement('button');
+    start.type = 'button';
+    start.className = 'account-provider';
+    start.textContent = `Upload a character to ${connection.label}`;
+    start.disabled = busy;
+    start.addEventListener('click', () => void startUpload(connection));
+    return start;
+  }
+  const form = document.createElement('form');
+  form.className = 'wallet-upload';
+  const file = document.createElement('input');
+  file.type = 'file';
+  file.accept = '.vrm,.glb,model/gltf-binary';
+  file.setAttribute('aria-label', 'Model file (VRM or GLB)');
+  file.disabled = busy;
+  file.addEventListener('change', () => {
+    uploadFile = file.files?.[0] ?? null;
+    if (uploadFile && !uploadName) uploadName = uploadFile.name.replace(/\.(vrm|glb)$/i, '').slice(0, 64);
+    rerender();
+  });
+  // The input is redrawn on every render and would forget the file: show our own button and label.
+  file.hidden = true;
+  const pick = document.createElement('button');
+  pick.type = 'button';
+  pick.className = 'account-provider';
+  pick.textContent = uploadFile ? 'Choose another file' : 'Choose model file';
+  pick.disabled = busy;
+  pick.addEventListener('click', () => file.click());
+  const chosen = note(uploadFile ? `${uploadFile.name} (${(uploadFile.size / 1024 / 1024).toFixed(1)} MB)` : 'VRM or GLB, up to 40 MB.');
+  const name = document.createElement('input');
+  name.type = 'text';
+  name.placeholder = 'Character name';
+  name.maxLength = 64;
+  name.value = uploadName;
+  name.setAttribute('aria-label', 'Character name');
+  name.disabled = busy;
+  name.addEventListener('input', () => {
+    uploadName = name.value;
+  });
+  const row = document.createElement('div');
+  row.className = 'account-username-row';
+  const submit = document.createElement('button');
+  submit.type = 'submit';
+  submit.textContent = uploading ? 'Uploading…' : 'Upload';
+  submit.disabled = busy || !uploadFile;
+  row.append(name, submit);
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'wallet-link';
+  cancel.textContent = 'Cancel upload';
+  cancel.disabled = busy;
+  cancel.addEventListener('click', () => void cancelUpload());
+  form.append(file, pick, chosen, row, cancel);
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    void upload(connection);
+  });
+  return form;
 }
 
 function connectControls(provider: { id: string; label: string }, verb = 'Connect'): HTMLElement {
@@ -414,6 +492,51 @@ async function remove(avatar: CollectedAvatar): Promise<void> {
   await run(async () => {
     applyWallet(await api<Wallet>('/remove', { connectionId: avatar.connectionId, avatarId: avatar.avatarId }));
     message = { text: `${avatar.name || 'Character'} removed.`, error: false };
+  });
+}
+
+async function startUpload(connection: WalletConnection): Promise<void> {
+  await run(async () => {
+    const { url } = await api<{ url: string }>(`/connect/${connection.provider}`, { upload: true });
+    window.location.assign(url);
+  });
+}
+
+async function upload(connection: WalletConnection): Promise<void> {
+  const file = uploadFile;
+  if (!file) return;
+  uploading = true;
+  await run(async () => {
+    if (file.size > MAX_MODEL_BYTES) throw new Error('That model is larger than 40 MB, which worlds cannot load.');
+    const info = await inspectModel(file);
+    const name = uploadName.trim() || 'My character';
+    const grant = await api<UploadGrant>('/upload/grant', {});
+    let uri: string;
+    try {
+      uri = await uploadToAt3d(grant, file, name, info);
+    } catch (error) {
+      if (error instanceof TypeError) throw new Error('Your AT Protocol server could not be reached from this browser.');
+      throw error;
+    }
+    // The model is on the user's account now; give the permission back.
+    await api('/upload/done', {}).catch(() => undefined);
+    uploadReady = false;
+    uploadFile = null;
+    uploadName = '';
+    listings.delete(connection.id);
+    applyWallet(await api<Wallet>('/collect', { connectionId: connection.id, avatarId: uri }));
+    message = { text: `${name} is uploaded to ${connection.label} and saved to My characters.`, error: false };
+  });
+  uploading = false;
+  rerender();
+}
+
+async function cancelUpload(): Promise<void> {
+  await run(async () => {
+    applyWallet(await api<Wallet>('/upload/done', {}));
+    uploadReady = false;
+    uploadFile = null;
+    uploadName = '';
   });
 }
 

@@ -36,6 +36,29 @@ saved avatar is one row in `avatar` (a pointer, never the model); at most one is
 platform, or reconnecting it as a different account, removes that platform's
 saved avatars.
 
+## Uploading to at3d
+
+Visitors with a connected at3d account can upload a VRM or GLB (up to 40 MB)
+from the wallet. The model goes **from their browser straight to their own
+PDS**; WorldMesh never receives it.
+
+1. "Upload a character" asks the connected account, through AT Protocol OAuth,
+   for `atproto repo:app.at3d.avatar?action=create blob:model/gltf-binary`:
+   create at3d avatars and upload models, nothing else.
+2. The callback does not revoke this grant. It seals it (access and refresh
+   token, DPoP key) into an HttpOnly cookie scoped to `/api/account/avatar/upload`,
+   bound to the user, valid at most 15 minutes. Nothing is written to D1.
+3. `POST /upload/grant` gives the browser the access token and DPoP key (never
+   the refresh token). The browser calls `com.atproto.repo.uploadBlob` and
+   `createRecord` on the PDS with DPoP proofs (`apps/hub/src/at3dUpload.ts`),
+   writing the same record shape at3d itself writes.
+4. `POST /upload/done` revokes both tokens and clears the cookie; the new
+   avatar is added to My characters.
+
+The PDS must support granular OAuth scopes (bsky.social does); otherwise the
+wallet says uploading is not available. The at3d lexicon is a draft: GLB
+uploads use `app.at3d.avatar#gltfAppearance`, VRM uploads `#vrmAppearance`.
+
 ## Providers
 
 | | Sketchfab | VRoid Hub | at3d (AT Protocol) |
