@@ -45,6 +45,8 @@ export const AVATAR_BASE_PATH = '/api/account/avatar';
 
 /** Saved avatars per user. Only pointers, but a bound keeps the wallet light. */
 export const MAX_COLLECTION = 100;
+/** Longest name a saved character can be given, the same as an upload's name. */
+const MAX_NAME = 64;
 
 /** Display order in the wallet. Add a provider here and nowhere else. */
 export const PROVIDERS: Record<AvatarProviderId, AvatarProvider> = {
@@ -171,6 +173,17 @@ export async function handleAvatarRequest(
       return json(await wallet(env, userId));
     }
 
+    if (path === '/rename' && method === 'POST') {
+      const body = (await readJson(request, 4096)) as { connectionId?: unknown; avatarId?: unknown; name?: unknown } | null;
+      if (typeof body?.connectionId !== 'string' || typeof body.avatarId !== 'string') throw new HttpError(400, 'Choose an avatar.');
+      if (body.name !== null && typeof body.name !== 'string') throw new HttpError(400, 'Enter a name.');
+      const name = body.name?.replace(/\s+/g, ' ').trim() || null;
+      if (name && name.length > MAX_NAME) throw new HttpError(400, `Names can be at most ${MAX_NAME} characters.`);
+      const { meta } = await store.renameAvatar(env.DB, userId, body.connectionId, body.avatarId, name);
+      if (!meta.changes) throw new HttpError(404, 'That character is not in My characters.');
+      return json(await wallet(env, userId));
+    }
+
     if (path === '/upload/grant' && method === 'POST') {
       const grant = await readUploadGrant(request, env, origin, userId);
       if (!grant) throw new HttpError(410, 'The upload permission has expired. Start the upload again.');
@@ -208,7 +221,7 @@ async function wallet(env: Env, userId: string) {
     connectionId: a.connection_id,
     provider: a.provider,
     avatarId: a.external_avatar_id,
-    name: a.display_name,
+    name: a.custom_name ?? a.display_name,
     thumbnail: a.thumbnail_url,
     format: a.format,
   }));
@@ -309,7 +322,8 @@ async function resolve(request: Request, env: Env, exec: WaitUntil, origin: stri
   const provider = connection && PROVIDERS[connection.provider];
   if (!connection || !provider?.isConfigured(env)) return reply({ avatar: null });
   try {
-    return reply({ avatar: await provider.resolveAvatar(context(env, exec, origin, provider.id), connection, avatar) });
+    const resolved = await provider.resolveAvatar(context(env, exec, origin, provider.id), connection, avatar);
+    return reply({ avatar: { ...resolved, name: avatar.custom_name ?? resolved.name } });
   } catch (error) {
     if (error instanceof AvatarError) {
       if (error.reconnect) await store.markReconnect(env.DB, connection.id);

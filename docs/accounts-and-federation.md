@@ -212,7 +212,7 @@ creator (and once for the instance actor).
 
 How it works: [avatar-wallet.md](avatar-wallet.md). Separate from federation.
 
-1. Migrate: `npx wrangler d1 migrations apply worldmesh --remote --config workers/auth/wrangler.toml` (adds `0004_avatar_wallet.sql` and `0006_avatar_sketchfab.sql`).
+1. Migrate: `npx wrangler d1 migrations apply worldmesh --remote --config workers/auth/wrangler.toml` (adds `0004_avatar_wallet.sql`, `0006_avatar_sketchfab.sql` and `0007_avatar_custom_name.sql`).
 2. `npx wrangler secret put AVATAR_SECRET --config workers/auth/wrangler.toml` (`openssl rand -base64 32`). The wallet stays hidden until it is set.
 3. Sketchfab: ask Sketchfab support for OAuth credentials (sketchfab.com/developers/oauth) with the authorization code grant and redirect URI `https://worldmesh.net/api/account/avatar/callback/sketchfab`, then `wrangler secret put SKETCHFAB_CLIENT_ID` and `SKETCHFAB_CLIENT_SECRET`.
 4. VRoid Hub: register as a developer at hub.vroid.com/en/developer/registration, create an application at hub.vroid.com/oauth/applications with redirect URI `https://worldmesh.net/api/account/avatar/callback/vroid` and scope `default` (set `VROID_SCOPE` if you choose another), then `wrangler secret put VROID_CLIENT_ID` and `VROID_CLIENT_SECRET`.

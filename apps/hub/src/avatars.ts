@@ -243,7 +243,7 @@ function providerSection(provider: { id: string; label: string }, connection: Wa
       const entry = { connectionId: connection.id, provider: connection.provider, avatarId: avatar.id, ...avatar };
       const saved = !!wallet?.collection.some((a) => sameAvatar(a, entry));
       grid.append(
-        avatarItem(entry, saved ? { label: 'Saved', disabled: true } : { label: 'Save', onClick: () => void collect(entry) }),
+        avatarItem(entry, [saved ? { label: 'Saved', disabled: true } : { label: 'Save', onClick: () => void collect(entry) }]),
       );
     }
     section.append(grid);
@@ -272,16 +272,25 @@ function collectionSection(current: Wallet): HTMLElement {
   grid.className = 'wallet-grid';
   for (const avatar of current.collection) {
     const reachable = current.connections.some((c) => c.id === avatar.connectionId && c.status === 'active');
-    grid.append(avatarItem(avatar, { label: 'Remove', onClick: () => void remove(avatar) }, reachable));
+    grid.append(
+      avatarItem(
+        avatar,
+        [
+          { label: 'Rename', onClick: () => void rename(avatar) },
+          { label: 'Remove', onClick: () => void remove(avatar) },
+        ],
+        reachable,
+      ),
+    );
   }
   section.append(grid);
   return section;
 }
 
-/** A tile that wears the avatar, with one small action underneath. */
+/** A tile that wears the avatar, with small actions underneath. */
 function avatarItem(
   avatar: CollectedAvatar,
-  action: { label: string; onClick?: () => void; disabled?: boolean },
+  actions: { label: string; onClick?: () => void; disabled?: boolean }[],
   wearable = true,
 ): HTMLElement {
   const item = document.createElement('div');
@@ -300,14 +309,19 @@ function avatarItem(
     ? `${avatar.name || 'Unnamed'} (${avatar.format.toUpperCase()})`
     : 'Connect this platform again to wear this character.';
   tile.addEventListener('click', () => void select(avatar.connectionId, avatar.avatarId));
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'wallet-link wallet-item-action';
-  button.textContent = action.label;
-  button.disabled = busy || !!action.disabled;
-  button.setAttribute('aria-label', `${action.label} ${avatar.name || 'unnamed character'}`);
-  if (action.onClick) button.addEventListener('click', action.onClick);
-  item.append(tile, button);
+  const row = document.createElement('div');
+  row.className = 'wallet-item-actions';
+  for (const action of actions) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'wallet-link wallet-item-action';
+    button.textContent = action.label;
+    button.disabled = busy || !!action.disabled;
+    button.setAttribute('aria-label', `${action.label} ${avatar.name || 'unnamed character'}`);
+    if (action.onClick) button.addEventListener('click', action.onClick);
+    row.append(button);
+  }
+  item.append(tile, row);
   return item;
 }
 
@@ -499,6 +513,16 @@ async function collect(avatar: CollectedAvatar): Promise<void> {
   await run(async () => {
     applyWallet(await api<Wallet>('/collect', { connectionId: avatar.connectionId, avatarId: avatar.avatarId }));
     message = { text: `${avatar.name || 'Character'} saved to My characters.`, error: false };
+  });
+}
+
+async function rename(avatar: CollectedAvatar): Promise<void> {
+  const input = prompt('Name this character (leave empty to use its name on the platform):', avatar.name ?? '');
+  if (input === null) return;
+  const name = input.trim().slice(0, 64);
+  await run(async () => {
+    applyWallet(await api<Wallet>('/rename', { connectionId: avatar.connectionId, avatarId: avatar.avatarId, name: name || null }));
+    message = { text: name ? `Renamed to ${name}.` : 'Name reset to the one on its platform.', error: false };
   });
 }
 

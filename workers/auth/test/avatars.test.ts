@@ -213,7 +213,7 @@ describe('avatar wallet', () => {
 
   it('refuses cross-site state changes', async () => {
     const { cookie } = await signedInUser('csrf-avatar@example.com');
-    for (const path of ['connect/vroid', 'select', 'collect', 'remove', 'disconnect', 'handoff', 'upload/grant', 'upload/done']) {
+    for (const path of ['connect/vroid', 'select', 'collect', 'remove', 'rename', 'disconnect', 'handoff', 'upload/grant', 'upload/done']) {
       const res = await post(`/api/account/avatar/${path}`, cookie, {}, 'https://evil.example.org');
       expect(res.status).toBe(403);
     }
@@ -358,6 +358,34 @@ describe('VRoid Hub', () => {
     expect(kept!.n).toBe(1);
     expect((await post('/api/account/avatar/collect', other.cookie, { connectionId, avatarId: 'model-1' })).status).toBe(404);
     }, 20_000);
+
+  it('renames a saved character for its owner only, across re-saves and in worlds', async () => {
+    const { cookie } = await signedInUser('vroid-rename@example.com');
+    const connectionId = await connectVroid(cookie);
+    await selectVroidModel(cookie, connectionId);
+    const rename = (name: unknown, who = cookie) => post('/api/account/avatar/rename', who, { connectionId, avatarId: 'model-1', name });
+    type W = { selected: { name: string } | null; collection: { name: string }[] };
+
+    let res = await rename('  Blue   Knight ');
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as W).collection[0].name).toBe('Blue Knight');
+
+    // Wearing it again refreshes the platform details but keeps the chosen name.
+    const wallet = (await (await selectVroidModel(cookie, connectionId)).json()) as W;
+    expect(wallet.selected?.name).toBe('Blue Knight');
+    stubDownload();
+    const resolved = (await (await resolveFromWorld(await ticketFor(cookie))).json()) as { avatar: { name: string } };
+    expect(resolved.avatar.name).toBe('Blue Knight');
+
+    expect((await rename('x'.repeat(65))).status).toBe(400);
+    expect((await rename(42)).status).toBe(400);
+    const other = await signedInUser('vroid-rename-other@example.com');
+    expect((await rename('Stolen', other.cookie)).status).toBe(404);
+
+    // Empty goes back to the platform's name.
+    res = await rename('');
+    expect(((await res.json()) as W).collection[0].name).toBe('Aoi');
+  });
 
   it('resolves for a world on another origin: provider URL, no credentials, no cookies', async () => {
     const { cookie } = await signedInUser('vroid-resolve@example.com');
