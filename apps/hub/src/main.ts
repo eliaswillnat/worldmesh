@@ -468,7 +468,6 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
           email: world.email,
           submittedAt: new Date().toISOString(),
         };
-        requestScreenshot(entry);
         notifySubmission(entry);
       },
       // Lifetime visits, for ranking in the towers (see discovery/ranking.ts).
@@ -881,7 +880,6 @@ submitWorldBtn.addEventListener('click', async () => {
   setAddingMode(false);
   setStatus('Submitted! Your world will appear once approved.');
 
-  requestScreenshot(entry);
   notifySubmission(entry);
 });
 
@@ -900,20 +898,6 @@ async function readManifest(
     }
   }
   return null;
-}
-
-async function requestScreenshot(entry: WorldEntry): Promise<void> {
-  if (entry.cover) return; // Custom cover already provided
-  const endpoint = SCREENSHOT_ENDPOINT || '/api/screenshot';
-  try {
-    await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: entry.url }),
-    });
-  } catch {
-    // Screenshot is best-effort.
-  }
 }
 
 async function notifySubmission(entry: WorldEntry): Promise<void> {

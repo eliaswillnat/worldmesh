@@ -11,9 +11,6 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
-const DEFAULT_SCREENSHOT_ENDPOINT =
-  'https://worldmesh-screenshot.elias-willnat.workers.dev';
-
 export async function onRequestOptions(): Promise<Response> {
   return new Response(null, { status: 204, headers: CORS_HEADERS });
 }
@@ -96,22 +93,6 @@ export async function onRequestPost(context: {
 
   await env.WORLDS.put(`approved:${id}`, JSON.stringify(entry));
   await queueDoorView(env, body.url);
-
-  if (!cover) {
-    const screenshotEndpoint =
-      env.SCREENSHOT_ENDPOINT || DEFAULT_SCREENSHOT_ENDPOINT;
-    try {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (env.SCREENSHOT_SECRET) headers.Authorization = `Bearer ${env.SCREENSHOT_SECRET}`;
-      await fetch(screenshotEndpoint, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ url: body.url }),
-      });
-    } catch {
-      // Screenshot is best-effort.
-    }
-  }
 
   return jsonResponse({
     success: true,
