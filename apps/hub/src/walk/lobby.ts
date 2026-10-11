@@ -1220,7 +1220,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     warpDoor = door;
     returnTo = spot;
     options.onEnterWorld?.(target, returnTo);
-    document.exitPointerLock?.();
+    world.releasePointer();
     flash.classList.add('active');
     const url = travelUrl(target.url);
     warpTimer = window.setTimeout(() => {
