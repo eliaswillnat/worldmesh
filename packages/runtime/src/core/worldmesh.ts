@@ -157,6 +157,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
       portals.add(portal);
     },
     travelTo,
+    releasePointer: () => input.release(),
 
     loadAvatar,
     clearAvatar,
@@ -428,7 +429,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
       },
     });
     if (cancelled) return;
-    input.exitPointerLock();
+    input.release();
     window.location.href = url;
   }
 
@@ -483,7 +484,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   }
 
   function travelTo(url: string): void {
-    input.exitPointerLock();
+    input.release();
     window.location.href = buildTravelUrl(url);
   }
 
