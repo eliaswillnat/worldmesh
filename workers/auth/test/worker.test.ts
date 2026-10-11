@@ -114,13 +114,13 @@ describe('email and password', () => {
 describe('sign-in', () => {
   it('lists configured providers in display order', async () => {
     expect(await (await call('/api/account/providers')).json()).toEqual({
-      providers: ['google', 'apple', 'github', 'discord'],
+      providers: ['atproto', 'google', 'apple', 'github', 'discord'],
       email: true,
       passwordReset: false,
     });
     const { APPLE_PRIVATE_KEY: _key, DISCORD_CLIENT_SECRET: _secret, ...partial } = env;
     const res = await worker.fetch(new Request(`${ORIGIN}/api/account/providers`), partial as Env);
-    expect(await res.json()).toEqual({ providers: ['google', 'github'], email: true, passwordReset: false });
+    expect(await res.json()).toEqual({ providers: ['atproto', 'google', 'github'], email: true, passwordReset: false });
   });
 
   it.each(['google', 'apple', 'github', 'discord'])('starts %s OAuth with state bound to this browser', async (provider) => {

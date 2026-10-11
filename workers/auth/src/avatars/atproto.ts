@@ -47,7 +47,8 @@ const CID = /^[a-zA-Z0-9]{8,128}$/;
 
 type Json = Record<string, unknown>;
 
-interface AtprotoFlowExtra {
+/** What an AT Protocol authorization needs to be finished on the callback. Kept sealed in a cookie. */
+export interface AtprotoAuthFlow {
   did: string;
   handle: string;
   pds: string;
@@ -56,6 +57,9 @@ interface AtprotoFlowExtra {
   revocationEndpoint: string | null;
   dpopKey: JsonWebKey;
   dpopNonce: string | null;
+}
+
+interface AtprotoFlowExtra extends AtprotoAuthFlow {
   upload?: boolean;
   [key: string]: unknown;
 }
@@ -68,75 +72,18 @@ export const atprotoProvider: AvatarProvider = {
   isConfigured: () => true,
 
   async connect(ctx, { userId, handle: input, upload }) {
-    const clientId = atprotoClientId(ctx.origin, ctx.redirectUri);
-    const ownHost = new URL(ctx.origin).host;
-    const identity = await resolveIdentity((input ?? '').trim().replace(/^@/, ''), ownHost);
-    const server = await authorizationServer(identity.pds, ownHost);
-
-    const state = randomToken();
-    const verifier = randomToken(48);
-    const key = (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign'])) as CryptoKeyPair;
-    const dpopKey = (await crypto.subtle.exportKey('jwk', key.privateKey)) as JsonWebKey;
-
-    const par = await dpopPost(server.parEndpoint, dpopKey, null, ownHost, {
-      client_id: clientId,
-      response_type: 'code',
-      code_challenge: await pkceChallenge(verifier),
-      code_challenge_method: 'S256',
-      state,
-      redirect_uri: ctx.redirectUri,
-      scope: upload ? UPLOAD_SCOPE : 'atproto',
-      login_hint: identity.handle ?? identity.did,
-    });
-    const requestUri = par.body?.request_uri;
-    if ((par.response.status !== 201 && par.response.status !== 200) || typeof requestUri !== 'string') {
-      if (upload && par.body?.error === 'invalid_scope') {
-        throw new AvatarError('Your AT Protocol server does not let apps upload avatars yet.', 502);
-      }
-      throw new AvatarError('Your AT Protocol server refused the sign-in request.', 502);
-    }
-
-    const url = new URL(server.authorizationEndpoint);
-    url.search = new URLSearchParams({ client_id: clientId, request_uri: requestUri }).toString();
-    const extra: AtprotoFlowExtra = {
-      did: identity.did,
-      handle: identity.handle ?? identity.did,
-      pds: identity.pds,
-      issuer: server.issuer,
-      tokenEndpoint: server.tokenEndpoint,
-      revocationEndpoint: server.revocationEndpoint,
-      dpopKey,
-      dpopNonce: par.nonce,
-      ...(upload ? { upload: true } : {}),
+    const begun = await beginAtprotoAuth(ctx.origin, ctx.redirectUri, input ?? '', upload ? UPLOAD_SCOPE : 'atproto');
+    const extra: AtprotoFlowExtra = { ...begun.flow, ...(upload ? { upload: true } : {}) };
+    return {
+      url: begun.url,
+      flow: { provider: 'atproto', userId, state: begun.state, verifier: begun.verifier, expiresAt: Date.now() + 10 * 60_000, extra },
     };
-    return { url: url.toString(), flow: { provider: 'atproto', userId, state, verifier, expiresAt: Date.now() + 10 * 60_000, extra } };
   },
 
   async completeConnect(ctx, params, flow) {
     const extra = flow.extra as AtprotoFlowExtra | undefined;
     if (!extra) throw new AvatarError('Sign-in did not complete. Please try again.');
-    // RFC 9207: the response must come from the server we sent the user to.
-    if (params.get('iss') !== extra.issuer) throw new AvatarError('Sign-in came back from the wrong server.');
-    const code = params.get('code');
-    if (!code) throw new AvatarError('Your AT Protocol server did not authorize WorldMesh.');
-
-    const ownHost = new URL(ctx.origin).host;
-    const token = await dpopPost(extra.tokenEndpoint, extra.dpopKey, extra.dpopNonce, ownHost, {
-      grant_type: 'authorization_code',
-      code,
-      redirect_uri: ctx.redirectUri,
-      code_verifier: flow.verifier,
-      client_id: atprotoClientId(ctx.origin, ctx.redirectUri),
-    });
-    const body = token.body;
-    if (token.response.status !== 200 || !body) throw new AvatarError('Your AT Protocol server refused the sign-in.', 502);
-
-    // The account that signed in must be the one the handle resolved to, whose
-    // PDS names this authorization server (checked before sending the user there).
-    const scopes = typeof body.scope === 'string' ? body.scope.split(' ') : [];
-    if (body.sub !== extra.did || !scopes.includes('atproto') || String(body.token_type).toLowerCase() !== 'dpop') {
-      throw new AvatarError('Signed in as a different account than the handle you entered.');
-    }
+    const { body, scopes, nonce } = await finishAtprotoAuth(ctx.origin, ctx.redirectUri, extra, flow.verifier, params);
 
     const account = { providerAccountId: extra.did, displayName: extra.handle, serviceEndpoint: extra.pds, credentials: null };
     if (extra.upload) {
@@ -163,16 +110,7 @@ export const atprotoProvider: AvatarProvider = {
     }
 
     // WorldMesh only needed to know who this is. Give the tokens back.
-    const revoke = extra.revocationEndpoint;
-    const secret = typeof body.refresh_token === 'string' ? body.refresh_token : body.access_token;
-    if (revoke && typeof secret === 'string') {
-      ctx.waitUntil(
-        dpopPost(revoke, extra.dpopKey, token.nonce, ownHost, {
-          token: secret,
-          client_id: atprotoClientId(ctx.origin, ctx.redirectUri),
-        }).catch(() => undefined),
-      );
-    }
+    ctx.waitUntil(revokeAtprotoTokens(ctx.origin, ctx.redirectUri, extra, nonce, body).catch(() => undefined));
     return account;
   },
 
@@ -245,6 +183,113 @@ export const atprotoProvider: AvatarProvider = {
 
 // ── OAuth client ─────────────────────────────────────────────────────────────
 
+/**
+ * Starts an authorization at the user's own AT Protocol server: resolves the
+ * handle (or DID) to its PDS and authorization server, then pushes the
+ * request (PAR) with PKCE and a fresh DPoP key. Shared by the Avatar Wallet
+ * and "Sign in with ATProto" (../atprotoSignIn.ts).
+ */
+export async function beginAtprotoAuth(
+  origin: string,
+  redirectUri: string,
+  input: string,
+  scope: string,
+): Promise<{ url: string; state: string; verifier: string; flow: AtprotoAuthFlow }> {
+  const clientId = atprotoClientId(origin, redirectUri);
+  const ownHost = new URL(origin).host;
+  const identity = await resolveIdentity(input.trim().replace(/^@/, ''), ownHost);
+  const server = await authorizationServer(identity.pds, ownHost);
+
+  const state = randomToken();
+  const verifier = randomToken(48);
+  const key = (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign'])) as CryptoKeyPair;
+  const dpopKey = (await crypto.subtle.exportKey('jwk', key.privateKey)) as JsonWebKey;
+
+  const par = await dpopPost(server.parEndpoint, dpopKey, null, ownHost, {
+    client_id: clientId,
+    response_type: 'code',
+    code_challenge: await pkceChallenge(verifier),
+    code_challenge_method: 'S256',
+    state,
+    redirect_uri: redirectUri,
+    scope,
+    login_hint: identity.handle ?? identity.did,
+  });
+  const requestUri = par.body?.request_uri;
+  if ((par.response.status !== 201 && par.response.status !== 200) || typeof requestUri !== 'string') {
+    if (scope !== 'atproto' && par.body?.error === 'invalid_scope') {
+      throw new AvatarError('Your AT Protocol server does not let apps upload avatars yet.', 502);
+    }
+    throw new AvatarError('Your AT Protocol server refused the sign-in request.', 502);
+  }
+
+  const url = new URL(server.authorizationEndpoint);
+  url.search = new URLSearchParams({ client_id: clientId, request_uri: requestUri }).toString();
+  const flow: AtprotoAuthFlow = {
+    did: identity.did,
+    handle: identity.handle ?? identity.did,
+    pds: identity.pds,
+    issuer: server.issuer,
+    tokenEndpoint: server.tokenEndpoint,
+    revocationEndpoint: server.revocationEndpoint,
+    dpopKey,
+    dpopNonce: par.nonce,
+  };
+  return { url: url.toString(), state, verifier, flow };
+}
+
+/**
+ * Finishes it on the callback: checks the issuer (RFC 9207), redeems the code
+ * and checks the account that signed in is the one the handle resolved to.
+ */
+export async function finishAtprotoAuth(
+  origin: string,
+  redirectUri: string,
+  flow: AtprotoAuthFlow,
+  verifier: string,
+  params: URLSearchParams,
+): Promise<{ body: Json; scopes: string[]; nonce: string | null }> {
+  // RFC 9207: the response must come from the server we sent the user to.
+  if (params.get('iss') !== flow.issuer) throw new AvatarError('Sign-in came back from the wrong server.');
+  const code = params.get('code');
+  if (!code) throw new AvatarError('Your AT Protocol server did not authorize WorldMesh.');
+
+  const ownHost = new URL(origin).host;
+  const token = await dpopPost(flow.tokenEndpoint, flow.dpopKey, flow.dpopNonce, ownHost, {
+    grant_type: 'authorization_code',
+    code,
+    redirect_uri: redirectUri,
+    code_verifier: verifier,
+    client_id: atprotoClientId(origin, redirectUri),
+  });
+  const body = token.body;
+  if (token.response.status !== 200 || !body) throw new AvatarError('Your AT Protocol server refused the sign-in.', 502);
+
+  // The account that signed in must be the one the handle resolved to, whose
+  // PDS names this authorization server (checked before sending the user there).
+  const scopes = typeof body.scope === 'string' ? body.scope.split(' ') : [];
+  if (body.sub !== flow.did || !scopes.includes('atproto') || String(body.token_type).toLowerCase() !== 'dpop') {
+    throw new AvatarError('Signed in as a different account than the handle you entered.');
+  }
+  return { body, scopes, nonce: token.nonce };
+}
+
+/** Hands the tokens of a finished authorization back: WorldMesh only needed to know who it was. */
+export async function revokeAtprotoTokens(
+  origin: string,
+  redirectUri: string,
+  flow: AtprotoAuthFlow,
+  nonce: string | null,
+  body: Json,
+): Promise<void> {
+  const secret = typeof body.refresh_token === 'string' ? body.refresh_token : body.access_token;
+  if (!flow.revocationEndpoint || typeof secret !== 'string') return;
+  await dpopPost(flow.revocationEndpoint, flow.dpopKey, nonce, new URL(origin).host, {
+    token: secret,
+    client_id: atprotoClientId(origin, redirectUri),
+  });
+}
+
 export const CLIENT_METADATA_PATH = '/api/account/avatar/atproto/client-metadata.json';
 
 function isLoopback(origin: string): boolean {
@@ -265,7 +310,8 @@ export function atprotoClientId(origin: string, redirectUri: string): string {
   return `http://localhost?${new URLSearchParams({ redirect_uri: redirectUri, scope: CLIENT_SCOPE })}`;
 }
 
-export function atprotoClientMetadata(origin: string, redirectUri: string): Json {
+/** `redirectUris`: every callback that uses this client (the Avatar Wallet's and sign-in's). */
+export function atprotoClientMetadata(origin: string, redirectUris: string[]): Json {
   return {
     client_id: `${origin}${CLIENT_METADATA_PATH}`,
     client_name: 'WorldMesh',
@@ -273,7 +319,7 @@ export function atprotoClientMetadata(origin: string, redirectUri: string): Json
     application_type: 'web',
     grant_types: ['authorization_code', 'refresh_token'],
     response_types: ['code'],
-    redirect_uris: [redirectUri],
+    redirect_uris: redirectUris,
     scope: CLIENT_SCOPE,
     token_endpoint_auth_method: 'none',
     dpop_bound_access_tokens: true,
@@ -438,6 +484,16 @@ async function getJson(url: string, ownHost: string, headers: Record<string, str
 }
 
 // ── Records ──────────────────────────────────────────────────────────────────
+
+/** The account's public Bluesky profile (app.bsky.actor.profile/self), if it has one. */
+export async function atprotoProfile(pds: string, did: string, ownHost: string): Promise<{ displayName: string | null; avatar: string | null }> {
+  const url = new URL('/xrpc/com.atproto.repo.getRecord', pds);
+  url.search = new URLSearchParams({ repo: did, collection: 'app.bsky.actor.profile', rkey: 'self' }).toString();
+  const value = (await getJson(url.toString(), ownHost))?.value as Json | undefined;
+  const name = typeof value?.displayName === 'string' ? value.displayName.trim().slice(0, 64) : '';
+  const avatar = blobRef(value?.avatar);
+  return { displayName: name || null, avatar: avatar ? blobUrl(pds, did, avatar.cid) : null };
+}
 
 function requirePds(connection: ConnectionRow): string {
   if (!connection.service_endpoint) throw new AvatarError('Connect at3d again.', 409, true);

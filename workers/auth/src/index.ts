@@ -1,6 +1,6 @@
 /**
- * WorldMesh accounts: Better Auth (email + password, Google, Apple, GitHub,
- * Discord) on D1, plus the account endpoints the hub needs and the Avatar
+ * WorldMesh accounts: Better Auth (email + password, ATProto, Google, Apple,
+ * GitHub, Discord) on D1, plus the account endpoints the hub needs and the Avatar
  * Wallet (src/avatars). Served on the hub's own origin through Worker routes,
  * so the session cookie is first-party and host-only.
  *
@@ -16,7 +16,7 @@ export type { Env };
 
 /** Endpoints worth a per-IP limit in front of everything else. */
 const LIMITED =
-  /^\/api\/auth\/(sign-in|sign-up|callback|sign-out|request-password-reset|reset-password|send-verification-email)\b|^\/api\/account\/username$|^\/api\/account\/avatar\/(connect|callback|connections|select|disconnect|handoff|resolve)\b/;
+  /^\/api\/auth\/(sign-in|sign-up|callback|atproto|sign-out|request-password-reset|reset-password|send-verification-email)\b|^\/api\/account\/username$|^\/api\/account\/avatar\/(connect|callback|connections|select|disconnect|handoff|resolve)\b/;
 
 export default {
   async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {

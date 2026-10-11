@@ -642,7 +642,7 @@ describe('at3d / AT Protocol', () => {
       application_type: 'web',
       grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],
-      redirect_uris: [`${ORIGIN}/api/account/avatar/callback/atproto`],
+      redirect_uris: [`${ORIGIN}/api/account/avatar/callback/atproto`, `${ORIGIN}/api/auth/atproto/callback`],
       scope: 'atproto repo:app.at3d.avatar?action=create blob:model/gltf-binary',
       token_endpoint_auth_method: 'none',
       dpop_bound_access_tokens: true,
