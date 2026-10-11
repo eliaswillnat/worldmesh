@@ -303,6 +303,8 @@ export interface WorldMeshHandle {
   addPortal(portal: PortalOptions): void;
   /** Navigate to another WorldMesh world, carrying a `from` back-reference. */
   travelTo(url: string): void;
+  /** Free the cursor for leaving the page, without bringing up the pause screen. */
+  releasePointer(): void;
 
   on<K extends keyof WorldMeshEvents>(event: K, fn: (payload: WorldMeshEvents[K]) => void): () => void;
   off<K extends keyof WorldMeshEvents>(event: K, fn: (payload: WorldMeshEvents[K]) => void): void;
