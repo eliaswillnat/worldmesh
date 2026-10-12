@@ -43,13 +43,16 @@ import {
 } from 'three';
 import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { CITY_GLOW_WHITE, applyCityTheme, applySkyTheme, createCityMaterials, createSky, createSpawnPads, flipInside, skyHorizon, type BillboardSlot } from './city';
+import { CITY_GLOW_WHITE, applyCityTheme, applySkyTheme, createCityMaterials, createSky, createSpawnPads, flipInside, skyHorizon, updateSky, type BillboardSlot } from './city';
 import { DOOR_HALF_SPAN, DOOR_HEIGHT, DOOR_TOP, DOOR_WIDTH, FRAME, Door, worldIsFull, type DoorWorld } from './door';
 import { DoorViewManager } from './doorViews';
 import { LiveDoors } from './liveDoors';
 import { WalkThrough } from './walkThrough';
 import { doorFrameGeometry, frameOuterCorner, openingCorner } from './doorShape';
 import { describeBillboard } from './layout';
+import { planAvenues, type CityPlan } from './avenuePlan';
+import { buildAvenues, dressHall } from './avenues';
+import { STOREFRONT_WIDTH } from './facade';
 import { playSendSound, playWarpSound, setPortalHum, stopPortalHum } from './sounds';
 import { chatRejection } from '../../../../workers/presence/src/chatFilter';
 import { fetchOccupancy } from './occupancy';
@@ -60,13 +63,11 @@ import {
   GALLERY_LEVELS,
   MEDIA_BOTTOM,
   MEDIA_MAX_HEIGHT,
-  OCULUS_RADIUS,
+  buildBoardHanging,
   buildDome,
   buildGalleries,
-  createConcourseSign,
+  createAvenueSign,
   createDepartureBoard,
-  domeShape,
-  rod,
   type Flight,
 } from './rotunda';
 import { fetchBillboards } from '../ads/api';
@@ -243,7 +244,7 @@ function roundedWallHead(
 }
 /** Ways out to the plaza, evenly around the drum, open. Angle 0 faces +Z, behind you on arrival. */
 const GATE_COUNT = 8;
-/** Doors on each stretch of wall between two exits: inside for multiplayer worlds, outside for solo ones. */
+/** Doors on each stretch of wall between two exits, inside the hall, for multiplayer worlds. */
 const DOORS_PER_BAY = 1;
 /** The clear opening of each exit, in metres: the same as a door's. */
 const GATE_WIDTH = DOOR_WIDTH;
@@ -283,30 +284,13 @@ function doorAngles(total: number, radius: number): number[] {
   return angles.map((angle) => (angle + Math.PI * 2) % (Math.PI * 2)).sort((a, b) => a - b);
 }
 /**
- * Doors outside: on the outer wall, evenly along the free wall between two
- * exits. In the first stretch the random door takes the start of the wall,
- * so the doors there share what is left after its porch.
- */
-function outsideAngles(outer: number): number[] {
-  const bay = (Math.PI * 2 * outer) / GATE_COUNT;
-  const mouth = GATE_WIDTH / 2 + GATE_MOUTH_FRAME;
-  return Array.from({ length: GATE_COUNT * DOORS_PER_BAY }, (_, i) => {
-    const gate = Math.floor(i / DOORS_PER_BAY);
-    const start = gate === 0 ? RANDOM_DOOR_ARC + PORCH_WIDTH / 2 : mouth;
-    const end = bay - mouth;
-    const along = start + (((i % DOORS_PER_BAY) + 1) / (DOORS_PER_BAY + 1)) * (end - start);
-    return (gate * bay + along) / outer;
-  });
-}
-
-/**
  * Which worlds get a door, and where. Multiplayer worlds go inside (the demos
- * first, then the newest); solo ones go outside (newest first), along with
- * any multiplayer worlds that did not fit inside. Ties break on the URL, so
- * everyone with the same list gets the same doors. Worlds left over keep
- * their place in the list and on the departures board, but get no door.
+ * first, then the newest); solo ones go out into the city, along the avenues
+ * and ring streets (newest first, avenuePlan), followed by any multiplayer
+ * worlds that did not fit inside. Ties break on the URL, so everyone with
+ * the same list gets the same doors. The rotunda's outer wall has none.
  */
-function assignDoors(worlds: LobbyWorld[], inside: number, outside: number): { inside: string[]; outside: string[] } {
+function assignDoors(worlds: LobbyWorld[], inside: number): { inside: string[]; city: string[] } {
   const listed = (world: LobbyWorld) => Date.parse(world.addedAt ?? world.approvedAt ?? '') || 0;
   const order = (a: LobbyWorld, b: LobbyWorld) =>
     Number(b.source === 'demo') - Number(a.source === 'demo') || listed(b) - listed(a) || (a.url < b.url ? -1 : a.url > b.url ? 1 : 0);
@@ -314,8 +298,8 @@ function assignDoors(worlds: LobbyWorld[], inside: number, outside: number): { i
   const together = worlds.filter(multiplayer).sort(order);
   const solo = worlds.filter((world) => !multiplayer(world)).sort(order);
   const within = together.slice(0, inside);
-  const without = [...solo, ...together.slice(inside)].slice(0, outside);
-  return { inside: within.map((world) => world.url), outside: without.map((world) => world.url) };
+  const url = (world: LobbyWorld) => world.url;
+  return { inside: within.map(url), city: [...solo, ...together.slice(inside)].map(url) };
 }
 /** The portal hum is heard from this far from an open door, in metres. */
 const HUM_RANGE = 9;
@@ -384,12 +368,6 @@ const BILLBOARD_RANGE = 95;
 const FOCUS_INTERVAL = 0.1;
 /** Billboard bookings are refreshed this often while walking. */
 const BILLBOARD_REFRESH_MS = 60_000;
-/** The random door stands on the citadel's outer wall, this far along it from the gate. */
-const RANDOM_DOOR_ARC = 14;
-/** Width of the backing and porch behind each door on the outer wall. */
-const PORCH_WIDTH = DOOR_HALF_SPAN * 2 + 0.8;
-/** How far the random door stands out from the outer wall. */
-const RANDOM_DOOR_OUT = 0.3;
 
 /** The ring of light that runs across the floor on each arrival: metres per second, and seconds it lasts. */
 
@@ -397,10 +375,10 @@ const RANDOM_DOOR_OUT = 0.3;
 const FLOOR_ROUGHNESS = 1;
 
 /**
- * The floor is one mirror plane whose shader also draws the hall's inlay.
- * Drawing the lines as a second plane just above the mirror depth-fights on
- * GPUs with low depth precision, and costs an extra full-screen pass. Outside
- * the hall the floor is plain stone, with only a line along the wall.
+ * The floor is one mirror plane whose shader also draws the rotunda's inlay.
+ * Drawing it as a second plane just above the mirror depth-fights on GPUs with low
+ * depth precision, and costs an extra full-screen pass. Outside the rotunda the
+ * streets are plain stone, with only a line along the building.
  */
 const floorShader = {
   name: 'WorldMeshFloor',
@@ -529,7 +507,8 @@ const floorShader = {
       float spokeMinor = spokes(vWorld.xz, 32.0) * smoothstep(4.0, 8.0, rr);
       float spokeMajor = spokes(vWorld.xz, 8.0) * smoothstep(2.4, 3.0, rr);
       float radial = max(max(ringMinor, spokeMinor) * 0.08 * minorFade, max(ringMajor, spokeMajor) * 0.2);
-      // 4 cm wide, but never less than a solid two pixels, so it does not
+      // Outside, the streets are plain polished stone, but for one line along
+      // the building's outer wall. 4 cm wide, but never less than a solid two pixels, so it does not
       // thin and pale with distance; kept on out to the haze so it reads as
       // one unbroken ring round the building. The pixel size is measured
       // across the line (fwidth overstates it on diagonals and blurs them).
@@ -563,7 +542,9 @@ const floorShader = {
 /**
  * Walk mode: the directory as a place. You arrive inside the citadel, a tall
  * round hall whose wall is lined with a door per listed world; walking into
- * one travels to that world. Gates to the plaza are closed for now. Movement,
+ * one travels to that world. Its gates open onto avenues running out like the
+ * spokes of a wheel, crossed by ring streets, with more worlds' doors along
+ * them (avenuePlan). Movement,
  * camera, touch controls and portal triggers all come from the same runtime
  * the worlds themselves use.
  */
@@ -613,6 +594,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
   const wallMaterial = new MeshStandardMaterial({ side: DoubleSide, roughness: 0.7, metalness: 0 });
   const innerWallMaterial = new MeshBasicMaterial({ side: DoubleSide });
+  // The city's storefronts: piers, beams, fascias and panels, a shade off the walls.
+  const facadeMaterial = new MeshStandardMaterial({ side: DoubleSide, roughness: 0.7, metalness: 0 });
   const gateFrameMaterial = new MeshStandardMaterial({ roughness: 0.4, metalness: 0.05 });
   // The dome's glazing and the gallery rails.
   const glassMaterial = new MeshStandardMaterial({
@@ -811,12 +794,15 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const emptyDoors: Door[] = [];
   // Empty doors round the galleries. Rebuilt with the hall.
   const galleryDoors: Door[] = [];
-  /** Angles of the worlds' doors on the outer wall. Rebuilt with the hall. */
-  let outsideDoors: number[] = [];
-  // Outside, set into the tower beside the gate: a glowing blue door to a
-  // random listed world.
-  const randomDoor = new Door(null, light, true);
-  scene.add(randomDoor.group);
+  /** The avenues and ring streets round the citadel, and how many of their door places hold a world. */
+  let city: CityPlan = planAvenues(HALL_RADIUS + WALL_THICKNESS, GATE_COUNT, 0, STOREFRONT_WIDTH);
+  /** The door at each place round the hall (world, claimed or empty): each gets a storefront and a sign. */
+  let hallPlaces: Door[] = [];
+  /** The doors out in the city, in the order of the plan's slots: each gets its storefront's sign. */
+  let cityDoors: Door[] = [];
+  /** The city's blocks (just for looks) and their walls, one collider per block. */
+  const cityMeshes: Mesh[] = [];
+  const cityColliders: Mesh[] = [];
   let nearEmpty: Door | null = null;
   let time = 0;
   let warping = false;
@@ -924,6 +910,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       // Every doorway's frame and backstop, so nobody slips past one into the wall.
       ...[...doors.values(), ...emptyDoors, ...galleryDoors, ...(exitDoor ? [exitDoor] : [])].flatMap((door) => door.blockers),
       ...spawnPads.colliders,
+      ...cityColliders,
       ...upper,
       ...lifts.colliders,
     ],
@@ -957,7 +944,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       }
       let humDoor: Door | null = null;
       let humDistance = HUM_RANGE;
-      for (const door of [...doors.values(), randomDoor]) {
+      for (const door of doors.values()) {
         door.update(time);
         if (!level(door)) continue;
         if (!warping && !emerging && door.contains(x, z)) enter(door);
@@ -992,6 +979,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       floorUniforms.uPlayer.value.set(x, z);
       // The sky is centred on the camera, so it stays around it however high the towers take them.
       sky.position.copy(camera.position);
+      updateSky(sky, time);
       spawnPads.update(time);
       // Arriving: the figure warps in.
       updateArrivals(dt);
@@ -1192,7 +1180,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   function enter(door: Door): void {
     // A door whose world waits behind the hall: walk on through instead.
     if (walkThrough?.enter(door)) return;
-    const target = door.random ? pickRandomWorld() : door.world;
+    const target = door.world;
     if (!target) return;
     door.surge();
     const [x, y, z] = world.getState().position;
@@ -1229,7 +1217,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     if (![x, y, z].every(Number.isFinite)) return;
     let door: Door | null = null;
     let nearest = WARP_MATCH;
-    for (const candidate of [...doors.values(), randomDoor]) {
+    for (const candidate of doors.values()) {
       if (Math.abs(y - candidate.group.position.y) > 1) continue;
       const { x: doorX, z: doorZ } = candidate.inFront(0);
       const distance = Math.hypot(x - doorX, z - doorZ);
@@ -1350,11 +1338,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     } catch {
       return url;
     }
-  }
-
-  function pickRandomWorld(): DoorWorld | null {
-    const worlds = [...known.values()];
-    return worlds.length ? worlds[Math.floor(Math.random() * worlds.length)] : null;
   }
 
   /** True when this URL already opens a door in the hall or in any tower. */
@@ -1653,7 +1636,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     const [x, , z] = spot.position;
     // Light up the door they come out of, if it is there yet: community
     // worlds may still be loading.
-    const door = [...doors.values(), randomDoor].find((candidate) => {
+    const door = [...doors.values()].find((candidate) => {
       const out = candidate.inFront(RETURN_STEP);
       return Math.hypot(out.x - x, out.z - z) < 0.5;
     }) ?? null;
@@ -1746,14 +1729,14 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     if (isLight === light) return;
     light = isLight;
     applyTheme();
-    for (const door of [...doors.values(), ...emptyDoors, ...galleryDoors, randomDoor]) door.setTheme(light);
+    for (const door of [...doors.values(), ...emptyDoors, ...galleryDoors]) door.setTheme(light);
     for (const draw of gateLabelDraw) draw(light);
   }
 
   function applyTheme(): void {
-    // Light: a plain blue sky over pale towers. Dark: a faint grey horizon deepening to black
-    // overhead, the towers lit by their windows and doors. The fog matches the horizon, reaches
-    // past the towers so they read across the plaza, and swallows their tops.
+    // Light: a blue sky over pale towers. Dark: a faint grey horizon deepening to black
+    // overhead, the towers lit by their windows and doors. Faint auroras hang in both. The fog
+    // matches the horizon, reaches past the towers so they read across the plaza, and swallows their tops.
     background.set(skyHorizon(light));
     renderer.setClearColor(background);
     applySkyTheme(sky, light);
@@ -1778,6 +1761,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     departures.setTheme(light);
     // Lift the shaded sides so white stays white, not grey.
     wallMaterial.emissive.set(light ? CITY_GLOW_WHITE : 0x000000);
+    facadeMaterial.color.set(light ? 0xdde1ea : 0x1f2026);
+    facadeMaterial.emissive.set(light ? 0x4f5460 : 0x000000);
     applyCityTheme(cityMaterials, light);
     billboards?.setTheme(light);
   }
@@ -1851,15 +1836,16 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     const total = GATE_COUNT * DOORS_PER_BAY;
     const radius = HALL_RADIUS;
     const angles = doorAngles(total, radius);
-    const outside = outsideAngles(radius + WALL_THICKNESS);
-    const assigned = assignDoors(listed, total, outside.length);
+    const assigned = assignDoors(listed, total);
     const urls = assigned.inside;
     // Worlds sit next to each other; the doors after them stay empty.
     const slots = urls.map((_, i) => i);
+    hallPlaces = [];
     const at = (door: Door, slot: number) => {
       // Set into the wall, facing the middle of the room, under its gate number.
       door.place(Math.sin(angles[slot]) * radius, Math.cos(angles[slot]) * radius, 0, 0);
       door.setGate(slot + 1);
+      hallPlaces[slot] = door;
     };
     const doorFor = (url: string) => {
       let door = doors.get(url);
@@ -1873,18 +1859,23 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     };
 
     urls.forEach((url, i) => at(doorFor(url), slots[i]));
-    // Outside: against the outer wall, facing the city, numbered after the hall's.
+    // Out in the city: along the avenues and ring streets, nearest ring first,
+    // numbered after the hall's. The city grows a ring when it runs out of doors.
     const outer = radius + WALL_THICKNESS;
-    outsideDoors = assigned.outside.map((url, i) => {
+    city = planAvenues(outer, GATE_COUNT, assigned.city.length, STOREFRONT_WIDTH);
+    const cityUrls = assigned.city.slice(0, city.slots.length);
+    const cityGate = total + 1;
+    cityDoors = cityUrls.map((url, i) => {
+      const slot = city.slots[i];
       const door = doorFor(url);
-      const r = outer + RANDOM_DOOR_OUT;
-      const angle = outside[i];
-      door.place(Math.sin(angle) * r, Math.cos(angle) * r, Math.sin(angle) * r * 2, Math.cos(angle) * r * 2);
-      door.setGate(total + i + 1);
-      return angle;
+      door.place(slot.x, slot.z, slot.x + slot.facingX, slot.z + slot.facingZ);
+      door.setGate(cityGate + i);
+      return door;
     });
+    // Every sign is hung afresh once the hall and the city are built (buildWall).
+    for (const door of doors.values()) door.setSign(null);
     // Worlds that no longer get a door take theirs down.
-    const placed = new Set([...urls, ...assigned.outside]);
+    const placed = new Set([...urls, ...cityUrls]);
     for (const [url, door] of doors) {
       if (placed.has(url) || claimUrls.has(url) || door.group.userData.level) continue;
       door.dispose();
@@ -1921,7 +1912,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     // Gates are numbered round the hall from the first door after exit A.
     flights = [];
     urls.forEach((url, i) => flights.push({ ...pick(known.get(url)!), gate: slots[i] + 1 }));
-    assigned.outside.forEach((url, i) => flights.push({ ...pick(known.get(url)!), gate: total + i + 1 }));
+    cityUrls.forEach((url, i) => flights.push({ ...pick(known.get(url)!), gate: cityGate + i }));
     for (const claim of claims) {
       const slot = angles.findIndex((angle) => angleDelta(claim.angle, angle) < 0.08);
       if (slot >= 0 && !taken.has(slot)) flights.push({ name: claim.name, cover: claim.cover, gate: slot + 1 });
@@ -2019,23 +2010,24 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       gateMouths.push(mouth);
       wall.push(lining);
       // Wayfinding, as in a terminal: on the wall above the exit, clear of its lining.
-      const concourse = createConcourseSign(String.fromCharCode(65 + gateMouths.length - 1));
-      concourse.draw(light);
-      concourse.mesh.userData.ownMaterial = true;
+      const avenue = createAvenueSign(String.fromCharCode(65 + gateMouths.length - 1));
+      avenue.draw(light);
+      avenue.mesh.userData.ownMaterial = true;
       const signY = GATE_HEIGHT + GATE_FRAME + 0.25 + 0.625;
-      concourse.mesh.position.set(0, signY, 0.04);
-      mouth.add(concourse.mesh);
-      trim.push(concourse.mesh);
-      gateLabelDraw.push(concourse.draw);
+      avenue.mesh.position.set(0, signY, 0.04);
+      mouth.add(avenue.mesh);
+      trim.push(avenue.mesh);
+      gateLabelDraw.push(avenue.draw);
     }
 
     floorUniforms.uHall.value = radius;
     // In front of everything standing on the wall's foot (its ribs reach
-    // outer + 0.4, the gate frames outer + 0.45, the outside doors outer +
-    // 0.46), so nothing breaks the line and it runs straight across the gates.
+    // outer + 0.4, the gate frames outer + 0.45), so nothing breaks the line
+    // and it runs straight across the gates.
     floorUniforms.uWall.value = outer + 0.55;
 
     buildTrim(radius, outer, angles.length);
+    dressHallWall(radius, angles);
     buildCity(outer);
     world.refreshColliders();
   }
@@ -2097,9 +2089,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       return geometry.index ? geometry.toNonIndexed() : geometry;
     };
 
-    // Vertical ribs all round the outside, leaving each gate, door and banner bare.
+    // Vertical ribs all round the outside, leaving each gate bare.
     const gateBare = (GATE_WIDTH / 2 + GATE_MOUTH_FRAME + 0.4) / outer;
-    const doorBare = (PORCH_WIDTH / 2 + 0.5) / outer;
     const ribCount = Math.round((Math.PI * 2 * outer) / 3.2);
     for (let i = 0; i < ribCount; i++) {
       const angle = (i / ribCount) * Math.PI * 2;
@@ -2108,10 +2099,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         if (delta > Math.PI) delta = Math.PI * 2 - delta;
         return delta < bare;
       };
-      const byGate =
-        gateAngles().some((gate) => near(gate, gateBare)) ||
-        [RANDOM_DOOR_ARC / outer, ...outsideDoors].some((door) => near(door, doorBare));
-      if (byGate) continue;
+      if (gateAngles().some((gate) => near(gate, gateBare))) continue;
       const r = outer + 0.2;
       solid.push(place(new BoxGeometry(0.5, CITADEL_HEIGHT, 0.4), Math.sin(angle) * r, CITADEL_HEIGHT / 2, Math.cos(angle) * r, angle));
     }
@@ -2156,13 +2144,10 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     }
     hangGalleryDoors(radius, hallDoors);
 
-    // The departures board hangs from the oculus ring on four cables.
-    const { oculusY } = domeShape(radius);
-    for (const corner of departures.hangers) {
-      const anchor = corner.clone().setY(oculusY - 0.2);
-      anchor.multiplyScalar(OCULUS_RADIUS / Math.hypot(anchor.x, anchor.z)).setY(oculusY - 0.2);
-      glow.push(rod(corner, anchor, 0.02));
-    }
+    // The departures board hangs on straight cords from a ring under the dome, as wide as the board.
+    const hanging = buildBoardHanging(radius, departures.hangers);
+    solid.push(...hanging.solid);
+    glow.push(...hanging.glow);
 
     // Light bands: outside above the doors and under the crown, inside above
     // the doors (one unbroken line under the banners) and near the top.
@@ -2170,10 +2155,9 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       glow.push(place(new CylinderGeometry(r, r, 0.07, 128, 1, true, start, length), 0, y, 0));
     band(outer + 0.03, DOOR_TOP + 2.8);
     band(outer + 0.52, CITADEL_HEIGHT - 1.3);
-    band(radius - 0.03, DOOR_TOP + 2.8);
     band(radius - 0.03, CITADEL_HEIGHT - 1);
 
-    // The concourse mouth on the outside: the same rounded doorway, at gate size.
+    // The exit's mouth on the outside: the same rounded doorway, at gate size.
     const frameR = outer + 0.2;
     const atGate = (localZ: number, angle: number): [number, number] => [
       Math.sin(angle) * localZ,
@@ -2191,7 +2175,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     // A tall screen over every gate, facing the plaza. Explore and Discover
     // alternate, each at its own picture's shape, in a deep white bezel.
     const portrait = [cityMaterials.banners.explore, cityMaterials.banners.discover];
-    // Clear of the outside doors' names, and the light band over them.
+    // Over the light band round the drum, at door height.
     const bannerBottom = DOOR_TOP + 3.6;
     // As tall as fits under the cornice.
     const bannerH = Math.min(14, CITADEL_HEIGHT - bannerBottom - 1.6);
@@ -2212,18 +2196,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
     hangInteriorBanners(radius);
 
-    // Backing and porch for each door on the outer wall: the random door beside
-    // the gate, and the worlds' doors between the exits.
-    for (const doorAngle of [RANDOM_DOOR_ARC / outer, ...outsideDoors]) {
-      const around = (r: number) => [Math.sin(doorAngle) * r, Math.cos(doorAngle) * r] as const;
-      const [backX, backZ] = around(outer - 0.05);
-      solid.push(place(new BoxGeometry(PORCH_WIDTH, DOOR_TOP + 2.2, 0.5), backX, (DOOR_TOP + 2.2) / 2, backZ, doorAngle));
-      const [porchX, porchZ] = around(outer + 0.55);
-      solid.push(place(new BoxGeometry(PORCH_WIDTH, 0.16, 0.9), porchX, DOOR_TOP + 0.75, porchZ, doorAngle));
-      const [lineX, lineZ] = around(outer + 1.0);
-      glow.push(place(new BoxGeometry(PORCH_WIDTH, 0.04, 0.04), lineX, DOOR_TOP + 0.67, lineZ, doorAngle));
-    }
-
     const add = (geometries: BufferGeometry[], material: MeshStandardMaterial | typeof cityMaterials.glow) => {
       const mesh = new Mesh(mergeGeometries(geometries), material);
       for (const geometry of geometries) geometry.dispose();
@@ -2237,6 +2209,41 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       scene.add(mesh);
       trim.push(mesh);
     }
+  }
+
+  /**
+   * The hall's wall between the gates, dressed as storefronts like the
+   * city's blocks: a bay with a fascia sign for each door, panelled bays
+   * between, piers flanking each gate, and one beam round the whole hall
+   * with its line of light, just under the screens.
+   */
+  function dressHallWall(radius: number, angles: number[]): void {
+    const facade = dressHall(
+      radius,
+      gateAngles(),
+      GATE_HALF_SPAN,
+      angles.map((angle, slot) => {
+        const door = hallPlaces[slot];
+        door?.group.updateMatrix();
+        return { angle, toDoor: door ? door.group.matrix.clone().invert() : new Matrix4() };
+      }),
+      MEDIA_BOTTOM,
+    );
+    for (const [geometries, material] of [[facade.trim, facadeMaterial], [facade.glow, cityMaterials.glow]] as const) {
+      const mesh = new Mesh(mergeGeometries(geometries), material);
+      for (const geometry of geometries) geometry.dispose();
+      scene.add(mesh);
+      trim.push(mesh);
+    }
+    // The piers stop walkers like the wall does; never drawn.
+    const piers = new Mesh(mergeGeometries(facade.colliders), colliderMaterial);
+    for (const geometry of facade.colliders) geometry.dispose();
+    piers.updateMatrixWorld(true);
+    wall.push(piers);
+    hallPlaces.forEach((door, slot) => {
+      const sign = facade.signs[slot];
+      door.setSign(sign?.geometry ?? null, sign?.aspect);
+    });
   }
 
   /**
@@ -2297,14 +2304,43 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     interiorBannerRing = ringGroup;
   }
 
-  /** The towers stand around the citadel, so they follow its width. */
+  /**
+   * The city round the citadel: an avenue straight out of every gate, ring
+   * streets crossing them, and blocks between, dressed as storefronts round
+   * the worlds' doors. One mesh each for the walls, the storefronts' trim and
+   * the light, like the citadel's trim; each door carries its own sign.
+   */
   function buildCity(outer: number): void {
     billboards?.setSlots(billboardSlots);
-    ground.scale.setScalar(Math.max(PLAZA_RADIUS, outer + PLAZA_RADIUS / 2));
-    // The random door: on the outer wall beside the gate, facing the towers.
-    const angle = RANDOM_DOOR_ARC / outer;
-    const r = outer + RANDOM_DOOR_OUT;
-    randomDoor.place(Math.sin(angle) * r, Math.cos(angle) * r, Math.sin(angle) * r * 2, Math.cos(angle) * r * 2);
+    for (const mesh of [...cityMeshes, ...cityColliders]) {
+      mesh.geometry.dispose();
+      mesh.removeFromParent();
+    }
+    cityMeshes.length = 0;
+    cityColliders.length = 0;
+    const blocks = buildAvenues(city, cityDoors.length);
+    // Each storefront's sign hangs from its door, so it comes and goes with the world.
+    cityDoors.forEach((door, i) => {
+      const sign = blocks.signs[i];
+      door.setSign(sign?.geometry ?? null, sign?.aspect);
+    });
+    for (const [geometries, material] of [[blocks.solid, wallMaterial], [blocks.trim, facadeMaterial], [blocks.glow, cityMaterials.glow]] as const) {
+      const mesh = new Mesh(mergeGeometries(geometries), material);
+      for (const geometry of geometries) geometry.dispose();
+      scene.add(mesh);
+      cityMeshes.push(mesh);
+    }
+    // Colliders need world matrices, but are never drawn: keep them out of the scene.
+    for (const geometry of blocks.colliders) {
+      const collider = new Mesh(geometry, colliderMaterial);
+      collider.updateMatrixWorld(true);
+      cityColliders.push(collider);
+    }
+    // The walkable ground reaches past the outermost ring street; the mirror floor under it too.
+    const reach = Math.max(PLAZA_RADIUS, outer + PLAZA_RADIUS / 2, city.radius + 30);
+    ground.scale.setScalar(reach);
+    ground.updateMatrixWorld(true);
+    mirror.scale.setScalar(Math.max(1, (reach * 2 + 60) / FLOOR_SIZE));
   }
 
   function dispose(): void {
@@ -2329,7 +2365,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     renderer.domElement.removeEventListener('pointerdown', handlePointerDown);
     renderer.domElement.removeEventListener('pointerup', handlePointerUp);
     world.dispose();
-    for (const door of [...doors.values(), ...emptyDoors, ...galleryDoors, randomDoor]) door.dispose();
+    for (const door of [...doors.values(), ...emptyDoors, ...galleryDoors]) door.dispose();
     doors.clear();
     emptyDoors.length = 0;
     addPrompt.remove();
@@ -2348,6 +2384,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       }
       mesh.geometry.dispose();
     }
+    for (const mesh of [...cityMeshes, ...cityColliders]) mesh.geometry.dispose();
     if (interiorBannerRing) {
       interiorBannerRing.traverse((obj) => {
         if (obj instanceof Mesh) obj.geometry.dispose();
