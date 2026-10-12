@@ -43,7 +43,7 @@ import {
 } from 'three';
 import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { CITY_GLOW_WHITE, applyCityTheme, applySkyTheme, createCityMaterials, createSky, createSpawnPads, flipInside, skyHorizon, type BillboardSlot } from './city';
+import { CITY_GLOW_WHITE, applyCityTheme, applySkyTheme, createCityMaterials, createSky, createSpawnPads, flipInside, skyHorizon, updateSky, type BillboardSlot } from './city';
 import { DOOR_HALF_SPAN, DOOR_HEIGHT, DOOR_TOP, DOOR_WIDTH, FRAME, Door, worldIsFull, type DoorWorld } from './door';
 import { DoorViewManager } from './doorViews';
 import { WalkThrough } from './walkThrough';
@@ -964,6 +964,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       floorUniforms.uPlayer.value.set(x, z);
       // The sky is centred on the camera, so it stays around it however high the towers take them.
       sky.position.copy(camera.position);
+      updateSky(sky, time);
       spawnPads.update(time);
       // Arriving: the figure warps in.
       updateArrivals(dt);
@@ -1717,9 +1718,9 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   }
 
   function applyTheme(): void {
-    // Light: a plain blue sky over pale towers. Dark: a faint grey horizon deepening to black
-    // overhead, the towers lit by their windows and doors. The fog matches the horizon, reaches
-    // past the towers so they read across the plaza, and swallows their tops.
+    // Light: a blue sky over pale towers. Dark: a faint grey horizon deepening to black
+    // overhead, the towers lit by their windows and doors. Faint auroras hang in both. The fog
+    // matches the horizon, reaches past the towers so they read across the plaza, and swallows their tops.
     background.set(skyHorizon(light));
     renderer.setClearColor(background);
     applySkyTheme(sky, light);

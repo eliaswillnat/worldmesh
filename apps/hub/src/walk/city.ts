@@ -46,12 +46,53 @@ const skyFragment = /* glsl */ `
   uniform vec3 uTop;
   uniform vec3 uHorizon;
   uniform float uCurve;
+  uniform float uTime;
+  uniform float uAurora;
   varying vec3 vDirection;
+
+  float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+  float noise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
+  }
+  // Noise read round a circle, so it wraps the sky without a seam.
+  float ring(float azimuth, float frequency, float drift) {
+    return noise(vec2(cos(azimuth), sin(azimuth)) * frequency + drift);
+  }
+
+  // Curtains of vertical rays hanging from a wavy hem a little above the horizon: green
+  // at the hem, rising into violet and pink, the hues and curtains drifting round the sky.
+  vec3 aurora(vec3 direction) {
+    float h = direction.y;
+    float azimuth = atan(direction.z, direction.x);
+    vec3 sum = vec3(0.0);
+    for (int i = 0; i < 3; i++) {
+      float fi = float(i);
+      float hem = 0.1 + 0.05 * fi + 0.12 * (ring(azimuth + fi, 1.5, uTime * 0.03 + fi * 7.0) - 0.5);
+      float above = h - hem;
+      float body = smoothstep(-0.05, 0.02, above) * exp(-max(above, 0.0) / (0.1 + 0.04 * fi));
+      float rays = ring(azimuth + fi * 2.0, 45.0 + 15.0 * fi, uTime * 0.08 + fi * 3.0);
+      rays = 0.15 + 0.85 * rays * rays * rays;
+      float curtain = smoothstep(0.45, 0.8, ring(azimuth - fi, 2.0, uTime * 0.02 + fi * 11.0));
+      float hue = ring(azimuth, 1.0, fi * 5.0 + uTime * 0.01);
+      vec3 hemColor = mix(vec3(0.15, 1.0, 0.55), vec3(0.1, 0.8, 1.0), hue);
+      vec3 crownColor = mix(vec3(0.75, 0.3, 1.0), vec3(1.0, 0.35, 0.65), hue);
+      sum += mix(hemColor, crownColor, smoothstep(0.0, 0.25, above)) * body * rays * curtain;
+    }
+    return sum;
+  }
+
   void main() {
-    float h = clamp(normalize(vDirection).y, 0.0, 1.0);
+    vec3 direction = normalize(vDirection);
+    float h = clamp(direction.y, 0.0, 1.0);
     // Light: pale at the horizon, a clean saturated blue overhead.
     // Dark: a faint grey at the horizon, deepening to black overhead.
     vec3 color = mix(uHorizon, uTop, pow(smoothstep(0.0, 0.75, h), uCurve));
+    // Screened over the gradient, so it brightens without ever blowing out.
+    vec3 glow = clamp(aurora(direction) * uAurora, 0.0, 1.0);
+    color = 1.0 - (1.0 - color) * (1.0 - glow);
     gl_FragColor = vec4(color, 1.0);
     #include <colorspace_fragment>
   }
@@ -65,7 +106,11 @@ export const SKY_HORIZON = 0xc4defb;
 export const SKY_TOP_DARK = 0x000000;
 export const SKY_HORIZON_DARK = 0x222429;
 
-/** A plain gradient dome. Move it with the player so it never gets closer. */
+/** How strongly the auroras show. The day's blue hides them more, so it gets the larger share; both stay faint. */
+const AURORA = 0.45;
+const AURORA_DARK = 0.3;
+
+/** A gradient dome with faint auroras. Move it with the player so it never gets closer. */
 export function createSky(): Mesh<SphereGeometry, ShaderMaterial> {
   const sky = new Mesh(
     new SphereGeometry(SKY_RADIUS, 32, 16),
@@ -76,6 +121,8 @@ export function createSky(): Mesh<SphereGeometry, ShaderMaterial> {
         uTop: { value: new Color(SKY_TOP) },
         uHorizon: { value: new Color(SKY_HORIZON) },
         uCurve: { value: 0.55 },
+        uTime: { value: 0 },
+        uAurora: { value: AURORA },
       },
       side: BackSide,
       depthWrite: false,
@@ -99,6 +146,12 @@ export function applySkyTheme(sky: Mesh<SphereGeometry, ShaderMaterial>, light: 
   uniforms.uHorizon.value.set(skyHorizon(light));
   // The dark sky darkens more gradually, so the grey reads as a glow along the horizon.
   uniforms.uCurve.value = light ? 0.55 : 0.8;
+  uniforms.uAurora.value = light ? AURORA : AURORA_DARK;
+}
+
+/** Let the auroras drift; `time` in seconds. */
+export function updateSky(sky: Mesh<SphereGeometry, ShaderMaterial>, time: number): void {
+  sky.material.uniforms.uTime.value = time;
 }
 
 /**
