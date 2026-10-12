@@ -20,7 +20,7 @@ import {
   Vector3,
 } from 'three';
 import { flipInside } from './city';
-import { DOOR_TOP, loadCoverTexture } from './door';
+import { DOOR_HEIGHT, DOOR_TOP, DOOR_WIDTH, loadCoverTexture } from './door';
 
 /**
  * The hall as a hub rotunda, like the atrium of a station, airport or mall:
@@ -59,10 +59,12 @@ export const DRUM_HEIGHT = MEDIA_BOTTOM + MEDIA_MAX_HEIGHT + 0.4;
 
 /** The departures halo: an outer ring of covers and a smaller one of listings below it. */
 const BOARD_HEIGHT = 10.4;
-/** Portrait (3:4) covers round the outer ring, and the radius that fits them exactly. */
-const BOARD_TILES = 16;
-const BOARD_RADIUS = (BOARD_TILES * BOARD_HEIGHT * 0.75) / (Math.PI * 2);
-const TILE_PX = 512;
+/** Covers round the ring in the doors' own shape (3:2), and the radius that fits them exactly. */
+const TILE_ASPECT = DOOR_WIDTH / DOOR_HEIGHT;
+const BOARD_TILES = 8;
+const BOARD_RADIUS = (BOARD_TILES * BOARD_HEIGHT * TILE_ASPECT) / (Math.PI * 2);
+/** A tile's height on the screen's canvas, in pixels. */
+const TILE_PX = 640;
 export const BOARD_BOTTOM = 13.4;
 /** Turns per second of the screens, in radians. */
 const BOARD_SPIN = 0.08;
@@ -302,7 +304,7 @@ export function createDepartureBoard(): {
     texture.anisotropy = 4;
     return { canvas, texture, material: new MeshBasicMaterial({ map: texture, toneMapped: false }) };
   };
-  const outer = screen(BOARD_TILES * TILE_PX, Math.round((TILE_PX * 4) / 3));
+  const outer = screen(Math.round(BOARD_TILES * TILE_PX * TILE_ASPECT), TILE_PX);
   // What the ring showed before the last change, at half size: the covers dissolve
   // from it into the new ones instead of cutting.
   const before = screen(outer.canvas.width / 2, Math.round(outer.canvas.height / 2));
@@ -418,7 +420,7 @@ export function createDepartureBoard(): {
     ctx.rect(x + 3, 0, W - 6, H);
     ctx.clip();
     if (image) {
-      // Covers are 3:4 like the tiles; anything else is cropped, never stretched.
+      // Covers are 3:2 like the tiles and the doors; anything else is cropped, never stretched.
       const { width, height } = image as { width: number; height: number };
       const scale = Math.max(W / width, H / height);
       ctx.drawImage(image, x + (W - width * scale) / 2, (H - height * scale) / 2, width * scale, height * scale);
@@ -471,7 +473,7 @@ export function createDepartureBoard(): {
     fade.uFade.value = 0;
   };
 
-  /** Portrait covers edge to edge round the whole ring, each with its gate. */
+  /** Covers edge to edge round the whole ring, each with its gate. */
   const drawOuter = () => {
     const { canvas, texture } = outer;
     beginFade(0, 1);
