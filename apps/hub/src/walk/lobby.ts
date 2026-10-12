@@ -46,6 +46,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { CITY_GLOW_WHITE, applyCityTheme, applySkyTheme, createCityMaterials, createSky, createSpawnPads, flipInside, skyHorizon, updateSky, type BillboardSlot } from './city';
 import { DOOR_HALF_SPAN, DOOR_HEIGHT, DOOR_TOP, DOOR_WIDTH, FRAME, Door, worldIsFull, type DoorWorld } from './door';
 import { DoorViewManager } from './doorViews';
+import { LiveDoors } from './liveDoors';
 import { WalkThrough } from './walkThrough';
 import { doorFrameGeometry, frameOuterCorner, openingCorner } from './doorShape';
 import { describeBillboard } from './layout';
@@ -376,7 +377,8 @@ const FLOOR_ROUGHNESS = 1;
 /**
  * The floor is one mirror plane whose shader also draws the rotunda's inlay.
  * Drawing it as a second plane just above the mirror depth-fights on GPUs with low
- * depth precision, and costs an extra full-screen pass.
+ * depth precision, and costs an extra full-screen pass. Outside the rotunda the
+ * streets are plain stone, with only a line along the building.
  */
 const floorShader = {
   name: 'WorldMeshFloor',
@@ -390,6 +392,7 @@ const floorShader = {
     uHaze: { value: new Color() },
     uRough: { value: FLOOR_ROUGHNESS },
     uHall: { value: 0 },
+    uWall: { value: 0 },
   },
   vertexShader: /* glsl */ `
     uniform mat4 textureMatrix;
@@ -414,6 +417,7 @@ const floorShader = {
     uniform vec3 uHaze;
     uniform float uRough;
     uniform float uHall;
+    uniform float uWall;
     varying vec4 vUv;
     varying vec3 vWorld;
 
@@ -493,7 +497,8 @@ const floorShader = {
       // Lines light up a little around the player.
       float glow = 1.0 - smoothstep(0.0, 14.0, distance(vWorld.xz, uPlayer));
       // Inside the rotunda, an inlay round the centre: rings every 3 m,
-      // spokes, and a border band inside the wall.
+      // spokes, and a border band inside the wall. Outside it, one line along
+      // the outer face of the wall marks where the building ends.
       float rr = length(vWorld.xz);
       float inside = 1.0 - smoothstep(uHall - 0.6, uHall, rr);
       float ringMinor = line1(rr / 3.0, fwidth(rr / 3.0));
@@ -502,8 +507,15 @@ const floorShader = {
       float spokeMinor = spokes(vWorld.xz, 32.0) * smoothstep(4.0, 8.0, rr);
       float spokeMajor = spokes(vWorld.xz, 8.0) * smoothstep(2.4, 3.0, rr);
       float radial = max(max(ringMinor, spokeMinor) * 0.08 * minorFade, max(ringMajor, spokeMajor) * 0.2);
-      // Outside, the streets are plain polished stone: no lines at all.
-      float lines = radial * inside * fade * (1.0 + glow * 1.6);
+      // Outside, the streets are plain polished stone, but for one line along
+      // the building's outer wall. 4 cm wide, but never less than a solid two pixels, so it does not
+      // thin and pale with distance; kept on out to the haze so it reads as
+      // one unbroken ring round the building. The pixel size is measured
+      // across the line (fwidth overstates it on diagonals and blurs them).
+      float edgePixel = max(length(vec2(dFdx(rr), dFdy(rr))), 1e-4);
+      float edgeHalf = max(0.02, edgePixel);
+      float edge = 1.0 - smoothstep(edgeHalf, edgeHalf + edgePixel, abs(rr - uWall));
+      float lines = max(radial * inside * fade * (1.0 + glow * 1.6), edge * 0.45 * step(1.0, uWall));
 
       // A mirror under a tinted glaze: glossier at grazing angles, faint
       // looking straight down. The rough patches take some of the shine off.
@@ -537,7 +549,8 @@ const floorShader = {
  * the worlds themselves use.
  */
 export function createLobby(container: HTMLElement, options: LobbyOptions): Lobby {
-  const renderer = new WebGLRenderer({ antialias: true });
+  // Alpha, so a live door's world can show through its doorway (liveDoors).
+  const renderer = new WebGLRenderer({ antialias: true, alpha: true });
   container.appendChild(renderer.domElement);
 
   const scene = new Scene();
@@ -750,6 +763,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         },
       })
     : null;
+  // After walkThrough's layer, so a live doorway shows this world over a waiting one.
+  const liveDoors = new LiveDoors(renderer.domElement);
   const feet = new Vector3();
   /**
    * The visitor's character (Avatar Wallet), shown in the lobby as well, so
@@ -986,6 +1001,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       // Last, with the camera where it will be drawn from: the worlds seen live through their doors.
       walkThrough?.step(camera, feet.set(x, y, z));
       doorViews.renderPortals(camera);
+      liveDoors.update(doors.values(), camera, feet, !renderer.xr.isPresenting);
     },
   });
   if (alias) ghost = makeGhost(world.avatar);
@@ -2005,6 +2021,10 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     }
 
     floorUniforms.uHall.value = radius;
+    // In front of everything standing on the wall's foot (its ribs reach
+    // outer + 0.4, the gate frames outer + 0.45), so nothing breaks the line
+    // and it runs straight across the gates.
+    floorUniforms.uWall.value = outer + 0.55;
 
     buildTrim(radius, outer, angles.length);
     dressHallWall(radius, angles);
@@ -2326,6 +2346,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   function dispose(): void {
     window.removeEventListener(CHARACTER_CHANGE_EVENT, onCharacterChange);
     walkThrough?.dispose();
+    liveDoors.dispose();
     doorViews.dispose();
     disposed = true;
     stopPortalHum();

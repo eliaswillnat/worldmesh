@@ -1,5 +1,17 @@
 [
   {
+    "id": "leniverse-q4n8vd",
+    "name": "Leniverse",
+    "url": "https://leniverse.com/?galaxy=1447526953&star=54875&planet=2&surface=1",
+    "description": "A little planet in a procedural galaxy: walk around it and meet whoever else has landed.",
+    "cover": "/covers/leniverse.webp",
+    "creator": "Elias Willnat",
+    "portfolio": "https://x.com/eliaswillnat",
+    "addedAt": "2026-10-12T12:00:00Z",
+    "categories": ["explore"],
+    "tags": ["multiplayer"]
+  },
+  {
     "id": "skydex-online-g8mfh6",
     "name": "skydex.online",
     "url": "https://skydex.online/",

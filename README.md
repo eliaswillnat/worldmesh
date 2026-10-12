@@ -32,7 +32,7 @@ listed worlds yet. See [docs/roadmap.md](docs/roadmap.md).
 
 The hub also has a **walk mode**: the directory
 as a place. Every listed world is a doorway set into a round wall around a
-mirrored grid, showing its cover, and walking into one travels there. The lobby is black or white depending on each visitor's own
+mirrored floor, showing its cover, and walking into one travels there. The lobby is black or white depending on each visitor's own
 light/dark setting. Everyone in
 walk mode sees everyone else, through a tiny presence relay in
 `workers/presence`. Outside the citadel stands the tower city: a tower per
