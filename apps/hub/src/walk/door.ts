@@ -141,6 +141,7 @@ const portalFragment = /* glsl */ `
   uniform sampler2D uPortalColor;
   uniform vec2 uDrawSize;
   uniform vec3 uViewOrigin;
+  uniform float uHole;
   varying vec2 vUv;
   ${ROUNDED_TOP_GLSL}
 
@@ -288,6 +289,12 @@ const portalFragment = /* glsl */ `
     vec2 split = length(outward) > 0.0001 ? normalize(outward) * abs(bent.z) * 0.018 : vec2(0.0);
     float rim = roundedTopEdge(vUv, ${GALLERY_CORNER.toFixed(6)}, ${(DOOR_WIDTH / DOOR_HEIGHT).toFixed(6)});
     if (rim > 1.0) discard;
+    // A live view (liveDoors): leave the doorway clear, so the world drawn
+    // behind the lobby's canvas shows through. Opaque, so nothing blends.
+    if (uHole > 0.5) {
+      gl_FragColor = vec4(0.0);
+      return;
+    }
     if (uRandom > 0.5) {
       vec3 color = randomDoor(p);
       if (uWarp > 0.0) color = vec3(randomDoor(p + split).r, color.g, randomDoor(p - split).b);
@@ -478,6 +485,7 @@ export class Door {
           uPortalColor: { value: null },
           uDrawSize: { value: new Vector2(1, 1) },
           uViewFlat: { value: 0 },
+          uHole: { value: 0 },
         },
         side: DoubleSide,
       }),
@@ -587,6 +595,14 @@ export class Door {
     }
     old?.dispose();
     if (view && this.disposed) view.dispose();
+  }
+
+  /**
+   * Clear the doorway, so a live view drawn behind the lobby shows through it
+   * (liveDoors); false puts back the cover or door view.
+   */
+  setLiveHole(hole: boolean): void {
+    this.portal.material.uniforms.uHole.value = hole ? 1 : 0;
   }
 
   /** Show the door view as a flat 360° window, without its depth. */

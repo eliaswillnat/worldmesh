@@ -28,7 +28,28 @@ interface WorldEntry {
   source?: 'admin' | 'submitted' | 'demo' | 'discovered';
 }
 
-import communityWorldsStatic from './community.json';
+import communityWorldsJson from './community.json';
+
+/**
+ * Dev only: VITE_DEV_WORLD_ORIGINS="https://leniverse.com=http://localhost:3000,…"
+ * points listed worlds at local servers (same path and query), to try a
+ * world's changes in the lobby.
+ */
+function devWorldUrls(worlds: WorldEntry[]): WorldEntry[] {
+  const spec = import.meta.env.DEV ? (import.meta.env.VITE_DEV_WORLD_ORIGINS as string | undefined) : undefined;
+  if (!spec) return worlds;
+  const origins = new Map(spec.split(',').map((pair) => pair.split('=').map((origin) => origin.trim()) as [string, string]));
+  return worlds.map((w) => {
+    try {
+      const url = new URL(w.url);
+      const local = origins.get(url.origin);
+      return local ? { ...w, url: local + url.pathname + url.search } : w;
+    } catch {
+      return w;
+    }
+  });
+}
+const communityWorldsStatic = devWorldUrls(communityWorldsJson as WorldEntry[]);
 import { AD_CONFIG } from './ads/config';
 import { entryIconSvg, formatEntries, hasEntries } from './entries';
 import { HUB_VISIT_KEY, shouldCountHubVisit } from './hubVisit';

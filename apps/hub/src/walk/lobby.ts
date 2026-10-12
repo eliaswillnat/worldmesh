@@ -46,6 +46,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { CITY_GLOW_WHITE, applyCityTheme, applySkyTheme, createCityMaterials, createSky, createSpawnPads, flipInside, skyHorizon, type BillboardSlot } from './city';
 import { DOOR_HALF_SPAN, DOOR_HEIGHT, DOOR_TOP, DOOR_WIDTH, FRAME, Door, worldIsFull, type DoorWorld } from './door';
 import { DoorViewManager } from './doorViews';
+import { LiveDoors } from './liveDoors';
 import { WalkThrough } from './walkThrough';
 import { doorFrameGeometry, frameOuterCorner, openingCorner } from './doorShape';
 import { describeBillboard } from './layout';
@@ -413,8 +414,8 @@ const floorShader = {
     uHaze: { value: new Color() },
     uRough: { value: FLOOR_ROUGHNESS },
     uHall: { value: 0 },
-  },
     uWall: { value: 0 },
+  },
   vertexShader: /* glsl */ `
     uniform mat4 textureMatrix;
     varying vec4 vUv;
@@ -438,8 +439,8 @@ const floorShader = {
     uniform vec3 uHaze;
     uniform float uRough;
     uniform float uHall;
-    varying vec4 vUv;
     uniform float uWall;
+    varying vec4 vUv;
     varying vec3 vWorld;
 
     #include <logdepthbuf_pars_fragment>
@@ -567,7 +568,8 @@ const floorShader = {
  * the worlds themselves use.
  */
 export function createLobby(container: HTMLElement, options: LobbyOptions): Lobby {
-  const renderer = new WebGLRenderer({ antialias: true });
+  // Alpha, so a live door's world can show through its doorway (liveDoors).
+  const renderer = new WebGLRenderer({ antialias: true, alpha: true });
   container.appendChild(renderer.domElement);
 
   const scene = new Scene();
@@ -778,6 +780,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         },
       })
     : null;
+  // After walkThrough's layer, so a live doorway shows this world over a waiting one.
+  const liveDoors = new LiveDoors(renderer.domElement);
   const feet = new Vector3();
   /**
    * The visitor's character (Avatar Wallet), shown in the lobby as well, so
@@ -1009,6 +1013,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       // Last, with the camera where it will be drawn from: the worlds seen live through their doors.
       walkThrough?.step(camera, feet.set(x, y, z));
       doorViews.renderPortals(camera);
+      liveDoors.update(doors.values(), camera, feet, !renderer.xr.isPresenting);
     },
   });
   if (alias) ghost = makeGhost(world.avatar);
@@ -2025,15 +2030,15 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     }
 
     floorUniforms.uHall.value = radius;
+    // In front of everything standing on the wall's foot (its ribs reach
+    // outer + 0.4, the gate frames outer + 0.45, the outside doors outer +
+    // 0.46), so nothing breaks the line and it runs straight across the gates.
+    floorUniforms.uWall.value = outer + 0.55;
 
     buildTrim(radius, outer, angles.length);
     buildCity(outer);
     world.refreshColliders();
   }
-    // In front of everything standing on the wall's foot (its ribs reach
-    // outer + 0.4, the gate frames outer + 0.45, the outside doors outer +
-    // 0.46), so nothing breaks the line and it runs straight across the gates.
-    floorUniforms.uWall.value = outer + 0.55;
 
   /**
    * A ring of doors round the wall of each gallery.
@@ -2305,6 +2310,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   function dispose(): void {
     window.removeEventListener(CHARACTER_CHANGE_EVENT, onCharacterChange);
     walkThrough?.dispose();
+    liveDoors.dispose();
     doorViews.dispose();
     disposed = true;
     stopPortalHum();

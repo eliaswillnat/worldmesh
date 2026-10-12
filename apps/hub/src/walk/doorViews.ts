@@ -88,7 +88,7 @@ const COMPARE_STYLES: Record<string, DoorStyle> = {
 const LOCAL_DEMO_PORTS: Record<string, string> = { 5171: 'forest', 5172: 'mars', 5173: 'city', 5174: 'medieval', 5175: 'space' };
 
 /** The doorway's corners in its door's own frame, for finding it on screen. */
-const DOORWAY_CORNERS: ReadonlyArray<[number, number]> = [
+export const DOORWAY_CORNERS: ReadonlyArray<[number, number]> = [
   [-DOOR_WIDTH / 2, 0],
   [DOOR_WIDTH / 2, 0],
   [-DOOR_WIDTH / 2, DOOR_HEIGHT],
