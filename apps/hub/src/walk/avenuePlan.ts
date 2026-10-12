@@ -31,7 +31,7 @@ export const AVENUES: AvenueConfig = {
   avenueWidth: 16,
   plaza: 36,
   blockDepth: 28,
-  ringStreet: 12,
+  ringStreet: 24,
   minRings: 2,
   maxRings: 6,
   cornerClear: 3,
