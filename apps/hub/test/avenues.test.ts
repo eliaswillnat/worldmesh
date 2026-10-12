@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { AVENUES, blockFaces, planAvenues, ringInner } from '../src/walk/avenuePlan';
-import { blockOutline, buildAvenues, faceBox, prismRoof, prismWalls } from '../src/walk/avenues';
+import { blockOutline, buildAvenues, dressHall, faceBox, prismRoof, prismWalls } from '../src/walk/avenues';
+import { Matrix4 } from 'three';
 import { STOREFRONT_WIDTH } from '../src/walk/facade';
 
 const HUB = 60.2;
@@ -201,6 +202,42 @@ describe('storefront geometry', () => {
       const box = sign.geometry.boundingBox!;
       expect((box.min.x + box.max.x) / 2).toBeCloseTo(0, 1);
       expect(box.min.z).toBeGreaterThan(-0.5);
+    }
+  });
+});
+
+describe('the hall dressed as storefronts', () => {
+  const radius = 59;
+  const gates = Array.from({ length: 8 }, (_, i) => (i / 8) * Math.PI * 2);
+  const gateHalf = 6.15;
+  // A door in the middle of each stretch between two gates, as the hall has them.
+  const doors = gates.map((gate) => {
+    const angle = gate + Math.PI / 8;
+    const toDoor = new Matrix4().makeRotationY(angle + Math.PI).setPosition(Math.sin(angle) * radius, 0, Math.cos(angle) * radius).invert();
+    return { angle, toDoor };
+  });
+  const hall = dressHall(radius, gates, gateHalf, doors, 11.05);
+
+  it('hangs a sign over every door, centred over it, under the screens', () => {
+    expect(hall.signs).toHaveLength(doors.length);
+    for (const sign of hall.signs) {
+      sign.geometry.computeBoundingBox();
+      const box = sign.geometry.boundingBox!;
+      expect((box.min.x + box.max.x) / 2).toBeCloseTo(0, 1);
+      expect(box.max.y).toBeLessThan(11.05);
+    }
+  });
+
+  it('keeps every gate clear: nothing stands in front of an opening below the beam', () => {
+    for (const geometry of hall.colliders) {
+      const position = geometry.getAttribute('position');
+      for (let i = 0; i < position.count; i++) {
+        const angle = Math.atan2(position.getX(i), position.getZ(i));
+        for (const gate of gates) {
+          const off = Math.abs(Math.atan2(Math.sin(angle - gate), Math.cos(angle - gate))) * radius;
+          expect(off).toBeGreaterThan(gateHalf - 0.01);
+        }
+      }
     }
   });
 });

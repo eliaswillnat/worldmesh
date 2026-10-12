@@ -18,6 +18,10 @@ const AMBER = '#ffc23d';
 export interface SignContent {
   name: string;
   creator?: string;
+  /** No world here yet: a quiet sign inviting someone to claim the door, with a "+" for its logo. */
+  empty?: boolean;
+  /** Shown instead of the creator. */
+  subtitle?: string;
   /** What the world offers ("Multiplayer", "VR supported"), as on the door's chips. */
   features: string[];
   entries(): number | undefined;
@@ -49,7 +53,14 @@ function drawLogo(ctx: CanvasRenderingContext2D, content: SignContent, x: number
   ctx.save();
   rounded(ctx, x, y, size, radius);
   ctx.clip();
-  if (cover && cover.width && cover.height) {
+  if (content.empty) {
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+    ctx.fillRect(x, y, size, size);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+    const bar = size * 0.08;
+    ctx.fillRect(x + size * 0.3, y + (size - bar) / 2, size * 0.4, bar);
+    ctx.fillRect(x + (size - bar) / 2, y + size * 0.3, bar, size * 0.4);
+  } else if (cover && cover.width && cover.height) {
     const side = Math.min(cover.width, cover.height);
     ctx.drawImage(cover, (cover.width - side) / 2, (cover.height - side) / 2, side, side, x, y, size, size);
   } else {
@@ -109,8 +120,10 @@ export function createSign(content: SignContent, aspect: number): { texture: Can
     ctx.fillStyle = PLATE;
     ctx.fillRect(0, 0, w, h);
     // A slim rule of the world's own colour along the bottom.
-    ctx.fillStyle = `#${content.tint().getHexString()}`;
-    ctx.fillRect(0, h - Math.round(h * 0.035), w, Math.round(h * 0.035));
+    if (!content.empty) {
+      ctx.fillStyle = `#${content.tint().getHexString()}`;
+      ctx.fillRect(0, h - Math.round(h * 0.035), w, Math.round(h * 0.035));
+    }
 
     const logo = h - pad * 2;
     drawLogo(ctx, content, pad, pad, logo);
@@ -128,7 +141,7 @@ export function createSign(content: SignContent, aspect: number): { texture: Can
     }
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = content.empty ? 'rgba(255, 255, 255, 0.6)' : '#ffffff';
     ctx.fillText(fit(ctx, content.name, room), left, h * 0.54);
 
     // Creator, entries and what the world offers, on one quieter line.
@@ -138,7 +151,7 @@ export function createSign(content: SignContent, aspect: number): { texture: Can
     const baseline = h * 0.8;
     let x = left;
     const gap = Math.round(h * 0.09);
-    const words = [content.creator ? `by ${content.creator}` : '', ...content.features].filter(Boolean);
+    const words = [content.subtitle ?? (content.creator ? `by ${content.creator}` : ''), ...content.features].filter(Boolean);
     const count = content.entries();
     const iconSize = Math.round(h * 0.13);
     const entriesWidth = count === undefined ? 0 : measureEntries(ctx, count, iconSize, 10);

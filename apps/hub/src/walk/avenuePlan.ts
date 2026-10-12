@@ -117,28 +117,34 @@ export interface WallFace {
   normal(along: number): [number, number];
 }
 
+/**
+ * A curved wall of radius `r` from angle `start` to `end` (angle 0 faces +Z),
+ * facing the centre when `inward`, away from it otherwise.
+ */
+export function arcFace(index: number, r: number, start: number, end: number, inward: boolean): WallFace {
+  const facing = inward ? -1 : 1;
+  return {
+    index,
+    length: (end - start) * r,
+    radius: r,
+    concave: inward,
+    at: (along, out) => {
+      const angle = start + along / r;
+      const at = r + facing * out;
+      return [Math.sin(angle) * at, Math.cos(angle) * at];
+    },
+    normal: (along) => {
+      const angle = start + along / r;
+      return [Math.sin(angle) * facing, Math.cos(angle) * facing];
+    },
+  };
+}
+
 /** A block's four walls: inner, outer, and the sides along the avenues either side. */
 export function blockFaces(block: CityBlock, halfAvenue: number): WallFace[] {
   const faces: WallFace[] = [];
   for (const [index, r, inward] of [[0, block.inner, true], [1, block.outer, false]] as const) {
-    const start = block.from + sideAngle(r, halfAvenue);
-    const end = block.to - sideAngle(r, halfAvenue);
-    const facing = inward ? -1 : 1;
-    faces.push({
-      index,
-      length: (end - start) * r,
-      radius: r,
-      concave: inward,
-      at: (along, out) => {
-        const angle = start + along / r;
-        const at = r + facing * out;
-        return [Math.sin(angle) * at, Math.cos(angle) * at];
-      },
-      normal: (along) => {
-        const angle = start + along / r;
-        return [Math.sin(angle) * facing, Math.cos(angle) * facing];
-      },
-    });
+    faces.push(arcFace(index, r, block.from + sideAngle(r, halfAvenue), block.to - sideAngle(r, halfAvenue), inward));
   }
   for (const [index, angle, side] of [[2, block.from, 1], [3, block.to, -1]] as const) {
     // Along the avenue, and across it into the block.

@@ -44,6 +44,44 @@ export const PANEL_BOTTOM = 0.9;
 export const PANEL_TOP = FASCIA_TOP - 0.25;
 export const PANEL_RIM = 0.22;
 export const PANEL_DEPTH = 0.1;
+/** Heights of a façade's parts: the fascia sign, the beam over it, and the blank bays' panels. */
+export interface FacadeLevels {
+  fasciaBottom: number;
+  fasciaTop: number;
+  beamBottom: number;
+  beamTop: number;
+  panelBottom: number;
+  panelTop: number;
+}
+
+/** Out on the streets, under the blocks' cornice. */
+export const STREET_LEVELS: FacadeLevels = {
+  fasciaBottom: FASCIA_BOTTOM,
+  fasciaTop: FASCIA_TOP,
+  beamBottom: BEAM_BOTTOM,
+  beamTop: BEAM_TOP,
+  panelBottom: PANEL_BOTTOM,
+  panelTop: PANEL_TOP,
+};
+
+/**
+ * The same parts fitted under a ceiling, such as the rotunda's band of
+ * screens: the beam just under it, the fascia as tall as is left over the doors.
+ */
+export function levelsUnder(ceiling: number): FacadeLevels {
+  const beamTop = ceiling - 0.15;
+  const beamBottom = beamTop - 0.5;
+  const fasciaTop = beamBottom - 0.15;
+  return {
+    fasciaBottom: Math.min(FASCIA_BOTTOM, DOOR_TOP + 0.4),
+    fasciaTop,
+    beamBottom,
+    beamTop,
+    panelBottom: PANEL_BOTTOM,
+    panelTop: fasciaTop - 0.25,
+  };
+}
+
 /** Blank bays narrower than this keep a plain wall, without a panel. */
 const PANEL_MIN = PANEL_INSET * 2 + PANEL_RIM * 2 + 1;
 

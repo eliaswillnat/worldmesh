@@ -1,21 +1,18 @@
 import { BufferGeometry, Float32BufferAttribute, Matrix4, ShapeUtils, Vector2, Vector3 } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { blockFaces, sideAngle, type CityBlock, type CityPlan, type CitySlot, type WallFace } from './avenuePlan';
+import { arcFace, blockFaces, sideAngle, type CityBlock, type CityPlan, type CitySlot, type WallFace } from './avenuePlan';
 import {
-  BEAM_BOTTOM,
   BEAM_DEPTH,
-  BEAM_TOP,
   CORNER_HALF,
-  FASCIA_BOTTOM,
   FASCIA_DEPTH,
-  FASCIA_TOP,
-  PANEL_BOTTOM,
   PANEL_DEPTH,
   PANEL_INSET,
   PANEL_RIM,
-  PANEL_TOP,
   PIER_DEPTH,
+  STREET_LEVELS,
+  levelsUnder,
   planFacade,
+  type FacadeLevels,
 } from './facade';
 
 /**
@@ -211,66 +208,99 @@ export interface StorefrontSign {
   aspect: number;
 }
 
+/** A door along a dressed wall: how far along it, its index among the signs, and how to carry world space into its own frame. */
+export interface FacadeDoor {
+  along: number;
+  index: number;
+  toDoor: Matrix4;
+}
+
+/** What dressing walls makes: storefront trim, lines of light, piers to bump into, and each door's sign. */
+export interface Dressing {
+  trim: BufferGeometry[];
+  glow: BufferGeometry[];
+  colliders: BufferGeometry[];
+  signs: StorefrontSign[];
+}
+
+interface DressOptions {
+  levels: FacadeLevels;
+  /** Run the beam along this wall (false where one beam already rings the whole room). */
+  beam: boolean;
+  /**
+   * Who stands at the wall's two ends: a block's corner pier, built with the
+   * corner (dressBlock), or a pier of the wall's own, flanking an opening.
+   */
+  ends: 'corner' | 'pier';
+}
+
 /**
  * One wall dressed as storefronts: piers, the beam with its line of light,
  * a fascia over each door with that door's sign, and a recessed panel in
  * each blank bay. Piers go into `colliders` too, so nobody walks into one.
  */
-function dressFace(
-  face: WallFace,
-  doors: Array<{ slot: CitySlot; index: number }>,
-  out: { trim: BufferGeometry[]; glow: BufferGeometry[]; colliders: BufferGeometry[]; signs: StorefrontSign[] },
-): void {
-  const layout = planFacade(face.length, doors.map((door) => door.slot.along));
+function dressFace(face: WallFace, doors: FacadeDoor[], options: DressOptions, out: Dressing): void {
+  const { levels } = options;
+  const layout = planFacade(face.length, doors.map((door) => door.along));
   const end = face.length;
+  const solidPier = (start: number, stop: number, top: number, depth: number) => {
+    out.trim.push(faceBox(face, start, stop, 0, top, 0, depth));
+    out.colliders.push(faceBox(face, start, stop, 0, top, 0, depth));
+  };
   for (const pier of layout.piers) {
-    // The stretch round each corner belongs to the corner pier (dressBlock).
+    // The stretch at each end belongs to the end piers.
     const start = Math.max(pier.start, CORNER_HALF);
     const stop = Math.min(pier.end, end - CORNER_HALF);
-    if (stop - start > 0.01) {
-      out.trim.push(faceBox(face, start, stop, 0, BEAM_BOTTOM, 0, PIER_DEPTH));
-      out.colliders.push(faceBox(face, start, stop, 0, BEAM_BOTTOM, 0, PIER_DEPTH));
-    }
+    if (stop - start > 0.01) solidPier(start, stop, levels.beamBottom, PIER_DEPTH);
   }
-  out.trim.push(faceBox(face, CORNER_HALF, end - CORNER_HALF, BEAM_BOTTOM, BEAM_TOP, 0, BEAM_DEPTH));
-  out.glow.push(faceBox(face, CORNER_HALF, end - CORNER_HALF, BEAM_BOTTOM - 0.05, BEAM_BOTTOM, BEAM_DEPTH - 0.07, BEAM_DEPTH - 0.02));
+  if (options.ends === 'pier') {
+    solidPier(0, CORNER_HALF, levels.beamTop, CORNER_DEPTH);
+    solidPier(end - CORNER_HALF, end, levels.beamTop, CORNER_DEPTH);
+  }
+  if (options.beam) {
+    out.trim.push(faceBox(face, CORNER_HALF, end - CORNER_HALF, levels.beamBottom, levels.beamTop, 0, BEAM_DEPTH));
+    out.glow.push(faceBox(face, CORNER_HALF, end - CORNER_HALF, levels.beamBottom - 0.05, levels.beamBottom, BEAM_DEPTH - 0.07, BEAM_DEPTH - 0.02));
+  }
 
   for (const front of layout.storefronts) {
     const { start, end: stop } = front.sign;
-    out.trim.push(faceBox(face, start, stop, FASCIA_BOTTOM, FASCIA_TOP, 0, FASCIA_DEPTH));
+    const { fasciaBottom: bottom, fasciaTop: top } = levels;
+    out.trim.push(faceBox(face, start, stop, bottom, top, 0, FASCIA_DEPTH));
     // Light along the fascia's lower edge, over the doorway.
-    out.glow.push(faceBox(face, start + 0.2, stop - 0.2, FASCIA_BOTTOM - 0.04, FASCIA_BOTTOM, FASCIA_DEPTH - 0.07, FASCIA_DEPTH - 0.02));
-    const { slot, index } = doors[front.door];
-    const geometry = signFace(face, start + SIGN_INSET, stop - SIGN_INSET, FASCIA_BOTTOM + SIGN_INSET, FASCIA_TOP - SIGN_INSET, FASCIA_DEPTH + 0.01);
+    out.glow.push(faceBox(face, start + 0.2, stop - 0.2, bottom - 0.04, bottom, FASCIA_DEPTH - 0.07, FASCIA_DEPTH - 0.02));
+    const { toDoor, index } = doors[front.door];
+    const geometry = signFace(face, start + SIGN_INSET, stop - SIGN_INSET, bottom + SIGN_INSET, top - SIGN_INSET, FASCIA_DEPTH + 0.01);
     // Into the door's frame: it carries the sign, so the sign comes and goes with it.
-    geometry.applyMatrix4(new Matrix4().makeRotationY(slotYaw(slot)).setPosition(slot.x, 0, slot.z).invert());
+    geometry.applyMatrix4(toDoor);
     const width = stop - start - SIGN_INSET * 2;
-    out.signs[index] = { geometry, aspect: width / (FASCIA_TOP - FASCIA_BOTTOM - SIGN_INSET * 2) };
+    out.signs[index] = { geometry, aspect: width / (top - bottom - SIGN_INSET * 2) };
   }
 
   for (const bay of layout.blanks) {
     if (!bay.panel) continue;
     const s0 = bay.start + PANEL_INSET;
     const s1 = bay.end - PANEL_INSET;
+    const { panelBottom: y0, panelTop: y1 } = levels;
     out.trim.push(
-      faceBox(face, s0, s0 + PANEL_RIM, PANEL_BOTTOM, PANEL_TOP, 0, PANEL_DEPTH),
-      faceBox(face, s1 - PANEL_RIM, s1, PANEL_BOTTOM, PANEL_TOP, 0, PANEL_DEPTH),
-      faceBox(face, s0 + PANEL_RIM, s1 - PANEL_RIM, PANEL_BOTTOM, PANEL_BOTTOM + PANEL_RIM, 0, PANEL_DEPTH),
-      faceBox(face, s0 + PANEL_RIM, s1 - PANEL_RIM, PANEL_TOP - PANEL_RIM, PANEL_TOP, 0, PANEL_DEPTH),
+      faceBox(face, s0, s0 + PANEL_RIM, y0, y1, 0, PANEL_DEPTH),
+      faceBox(face, s1 - PANEL_RIM, s1, y0, y1, 0, PANEL_DEPTH),
+      faceBox(face, s0 + PANEL_RIM, s1 - PANEL_RIM, y0, y0 + PANEL_RIM, 0, PANEL_DEPTH),
+      faceBox(face, s0 + PANEL_RIM, s1 - PANEL_RIM, y1 - PANEL_RIM, y1, 0, PANEL_DEPTH),
     );
   }
+}
+
+/** World space into the frame of a door standing in this slot. */
+function slotFrame(slot: CitySlot): Matrix4 {
+  return new Matrix4().makeRotationY(slotYaw(slot)).setPosition(slot.x, 0, slot.z).invert();
 }
 
 /**
  * A block's storefronts on all four walls, and a square pier at each corner
  * that both walls' beams end against.
  */
-function dressBlock(
-  faces: WallFace[],
-  doors: Map<number, Array<{ slot: CitySlot; index: number }>>,
-  out: { trim: BufferGeometry[]; glow: BufferGeometry[]; colliders: BufferGeometry[]; signs: StorefrontSign[] },
-): void {
-  for (const face of faces) dressFace(face, doors.get(face.index) ?? [], out);
+function dressBlock(faces: WallFace[], doors: Map<number, FacadeDoor[]>, out: Dressing): void {
+  for (const face of faces) dressFace(face, doors.get(face.index) ?? [], { levels: STREET_LEVELS, beam: true, ends: 'corner' }, out);
   const [inner, outer, from, to] = faces;
   // Where the walls meet: inner and outer each start on avenue `from` and end on avenue `to`.
   const corners: Array<[WallFace, number, WallFace, number]> = [
@@ -319,12 +349,12 @@ export function buildAvenues(
   const colliders: BufferGeometry[] = [];
   const signs: StorefrontSign[] = [];
   // The doors on each wall of each block.
-  const byWall = new Map<string, Map<number, Array<{ slot: CitySlot; index: number }>>>();
+  const byWall = new Map<string, Map<number, FacadeDoor[]>>();
   plan.slots.slice(0, doors).forEach((slot, index) => {
     const key = `${slot.ring}:${slot.sector}`;
     const walls = byWall.get(key) ?? new Map();
     byWall.set(key, walls);
-    walls.set(slot.face, [...(walls.get(slot.face) ?? []), { slot, index }]);
+    walls.set(slot.face, [...(walls.get(slot.face) ?? []), { along: slot.along, index, toDoor: slotFrame(slot) }]);
   });
   for (const block of plan.blocks) {
     const footprint = blockOutline(block, plan.halfAvenue);
@@ -337,6 +367,42 @@ export function buildAvenues(
     colliders.push(mergeAll(own));
   }
   return { solid, trim, glow, colliders, signs };
+}
+
+/**
+ * The rotunda's hall dressed the same way: each stretch of its round wall
+ * between two gates becomes a row of storefronts round its doors, with a
+ * pier flanking each gate, under one beam that rings the whole hall. `gates`
+ * are the gates' angles, `gateHalf` half a gate's width along the wall, and
+ * each door's `toDoor` carries world space into its frame. Fitted under
+ * `ceiling`, where the hall's band of screens begins.
+ */
+export function dressHall(
+  radius: number,
+  gates: number[],
+  gateHalf: number,
+  doors: Array<{ angle: number; toDoor: Matrix4 }>,
+  ceiling: number,
+): Dressing {
+  const levels = levelsUnder(ceiling);
+  const out: Dressing = { trim: [], glow: [], colliders: [], signs: [] };
+  const step = (Math.PI * 2) / gates.length;
+  gates.forEach((gate, i) => {
+    const start = gate + gateHalf / radius;
+    const face = arcFace(i, radius, start, gate + step - gateHalf / radius, true);
+    const own: FacadeDoor[] = [];
+    doors.forEach((door, index) => {
+      // Round to this stretch of wall, whichever way the angle was given.
+      const along = (((door.angle - start) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2) * radius;
+      if (along < face.length) own.push({ along, index, toDoor: door.toDoor });
+    });
+    dressFace(face, own, { levels, beam: false, ends: 'pier' }, out);
+  });
+  // One beam all the way round, over the gates too, with its line of light.
+  const ring = arcFace(-1, radius, 0, Math.PI * 2, true);
+  out.trim.push(faceBox(ring, 0, ring.length, levels.beamBottom, levels.beamTop, 0, BEAM_DEPTH));
+  out.glow.push(faceBox(ring, 0, ring.length, levels.beamBottom - 0.05, levels.beamBottom, BEAM_DEPTH - 0.07, BEAM_DEPTH - 0.02));
+  return out;
 }
 
 /** One geometry from several with the same attributes. */

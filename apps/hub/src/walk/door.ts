@@ -571,7 +571,7 @@ export class Door {
       this.sign = null;
     }
     const world = this.world;
-    const show = !geometry || !world || this.random;
+    const show = !geometry || this.random;
     this.label.visible = show;
     if (this.chips) this.chips.mesh.visible = show;
     if (this.gate) this.gate.mesh.visible = show;
@@ -581,9 +581,12 @@ export class Door {
     }
     const { texture, draw } = createSign(
       {
-        name: world.name,
-        creator: world.creator,
-        features: doorFeatures(world.tags),
+        // An empty door's sign invites someone to claim it, as its label did.
+        name: world?.name ?? 'Claim this portal',
+        creator: world?.creator,
+        empty: !world,
+        subtitle: world ? undefined : 'Add your world here',
+        features: doorFeatures(world?.tags),
         entries: () => this.entries,
         gate: () => this.gate?.number ?? null,
         tint: () => this.tint,

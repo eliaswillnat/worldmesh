@@ -50,7 +50,7 @@ import { WalkThrough } from './walkThrough';
 import { doorFrameGeometry, frameOuterCorner, openingCorner } from './doorShape';
 import { describeBillboard } from './layout';
 import { planAvenues, type CityPlan } from './avenuePlan';
-import { buildAvenues } from './avenues';
+import { buildAvenues, dressHall } from './avenues';
 import { STOREFRONT_WIDTH } from './facade';
 import { playSendSound, playWarpSound, setPortalHum, stopPortalHum } from './sounds';
 import { chatRejection } from '../../../../workers/presence/src/chatFilter';
@@ -783,6 +783,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const galleryDoors: Door[] = [];
   /** The avenues and ring streets round the citadel, and how many of their door places hold a world. */
   let city: CityPlan = planAvenues(HALL_RADIUS + WALL_THICKNESS, GATE_COUNT, 0, STOREFRONT_WIDTH);
+  /** The door at each place round the hall (world, claimed or empty): each gets a storefront and a sign. */
+  let hallPlaces: Door[] = [];
   /** The doors out in the city, in the order of the plan's slots: each gets its storefront's sign. */
   let cityDoors: Door[] = [];
   /** The city's blocks (just for looks) and their walls, one collider per block. */
@@ -1823,10 +1825,12 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     const urls = assigned.inside;
     // Worlds sit next to each other; the doors after them stay empty.
     const slots = urls.map((_, i) => i);
+    hallPlaces = [];
     const at = (door: Door, slot: number) => {
       // Set into the wall, facing the middle of the room, under its gate number.
       door.place(Math.sin(angles[slot]) * radius, Math.cos(angles[slot]) * radius, 0, 0);
       door.setGate(slot + 1);
+      hallPlaces[slot] = door;
     };
     const doorFor = (url: string) => {
       let door = doors.get(url);
@@ -1853,8 +1857,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       door.setGate(cityGate + i);
       return door;
     });
-    // A world that moved into the hall takes its storefront sign down (buildCity hangs the rest).
-    for (const door of doors.values()) if (!cityDoors.includes(door)) door.setSign(null);
+    // Every sign is hung afresh once the hall and the city are built (buildWall).
+    for (const door of doors.values()) door.setSign(null);
     // Worlds that no longer get a door take theirs down.
     const placed = new Set([...urls, ...cityUrls]);
     for (const [url, door] of doors) {
@@ -2004,6 +2008,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     floorUniforms.uHall.value = radius;
 
     buildTrim(radius, outer, angles.length);
+    dressHallWall(radius, angles);
     buildCity(outer);
     world.refreshColliders();
   }
@@ -2134,7 +2139,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       glow.push(place(new CylinderGeometry(r, r, 0.07, 128, 1, true, start, length), 0, y, 0));
     band(outer + 0.03, DOOR_TOP + 2.8);
     band(outer + 0.52, CITADEL_HEIGHT - 1.3);
-    band(radius - 0.03, DOOR_TOP + 2.8);
     band(radius - 0.03, CITADEL_HEIGHT - 1);
 
     // The concourse mouth on the outside: the same rounded doorway, at gate size.
@@ -2189,6 +2193,41 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       scene.add(mesh);
       trim.push(mesh);
     }
+  }
+
+  /**
+   * The hall's wall between the gates, dressed as storefronts like the
+   * city's blocks: a bay with a fascia sign for each door, panelled bays
+   * between, piers flanking each gate, and one beam round the whole hall
+   * with its line of light, just under the screens.
+   */
+  function dressHallWall(radius: number, angles: number[]): void {
+    const facade = dressHall(
+      radius,
+      gateAngles(),
+      GATE_HALF_SPAN,
+      angles.map((angle, slot) => {
+        const door = hallPlaces[slot];
+        door?.group.updateMatrix();
+        return { angle, toDoor: door ? door.group.matrix.clone().invert() : new Matrix4() };
+      }),
+      MEDIA_BOTTOM,
+    );
+    for (const [geometries, material] of [[facade.trim, facadeMaterial], [facade.glow, cityMaterials.glow]] as const) {
+      const mesh = new Mesh(mergeGeometries(geometries), material);
+      for (const geometry of geometries) geometry.dispose();
+      scene.add(mesh);
+      trim.push(mesh);
+    }
+    // The piers stop walkers like the wall does; never drawn.
+    const piers = new Mesh(mergeGeometries(facade.colliders), colliderMaterial);
+    for (const geometry of facade.colliders) geometry.dispose();
+    piers.updateMatrixWorld(true);
+    wall.push(piers);
+    hallPlaces.forEach((door, slot) => {
+      const sign = facade.signs[slot];
+      door.setSign(sign?.geometry ?? null, sign?.aspect);
+    });
   }
 
   /**
