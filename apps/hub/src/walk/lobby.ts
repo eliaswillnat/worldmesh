@@ -65,7 +65,7 @@ import {
   OCULUS_RADIUS,
   buildDome,
   buildGalleries,
-  createConcourseSign,
+  createAvenueSign,
   createDepartureBoard,
   domeShape,
   rod,
@@ -1995,14 +1995,14 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       gateMouths.push(mouth);
       wall.push(lining);
       // Wayfinding, as in a terminal: on the wall above the exit, clear of its lining.
-      const concourse = createConcourseSign(String.fromCharCode(65 + gateMouths.length - 1));
-      concourse.draw(light);
-      concourse.mesh.userData.ownMaterial = true;
+      const avenue = createAvenueSign(String.fromCharCode(65 + gateMouths.length - 1));
+      avenue.draw(light);
+      avenue.mesh.userData.ownMaterial = true;
       const signY = GATE_HEIGHT + GATE_FRAME + 0.25 + 0.625;
-      concourse.mesh.position.set(0, signY, 0.04);
-      mouth.add(concourse.mesh);
-      trim.push(concourse.mesh);
-      gateLabelDraw.push(concourse.draw);
+      avenue.mesh.position.set(0, signY, 0.04);
+      mouth.add(avenue.mesh);
+      trim.push(avenue.mesh);
+      gateLabelDraw.push(avenue.draw);
     }
 
     floorUniforms.uHall.value = radius;
@@ -2141,7 +2141,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     band(outer + 0.52, CITADEL_HEIGHT - 1.3);
     band(radius - 0.03, CITADEL_HEIGHT - 1);
 
-    // The concourse mouth on the outside: the same rounded doorway, at gate size.
+    // The exit's mouth on the outside: the same rounded doorway, at gate size.
     const frameR = outer + 0.2;
     const atGate = (localZ: number, angle: number): [number, number] => [
       Math.sin(angle) * localZ,

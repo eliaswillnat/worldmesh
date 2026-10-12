@@ -4,7 +4,7 @@ import { drawEntries, measureEntries } from '../entries';
 /**
  * A storefront's fascia sign: the world's logo and name over its door in the
  * city, like a shop's. Dark with amber gate numbers in either theme, like the
- * concourse signs and the departures board, so the storefronts read as one
+ * avenue signs in the exits and the departures board, so the storefronts read as one
  * street however different the worlds behind them are.
  */
 
