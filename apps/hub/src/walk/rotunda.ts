@@ -20,13 +20,13 @@ import {
   Vector3,
 } from 'three';
 import { flipInside } from './city';
-import { DOOR_TOP, loadCoverTexture } from './door';
+import { DOOR_HEIGHT, DOOR_TOP, DOOR_WIDTH, loadCoverTexture } from './door';
 
 /**
  * The hall as a hub rotunda, like the atrium of a station, airport or mall:
  * a glass dome with an oculus the spawn beam rises through, galleries of
  * doors ringing the drum below the screens, a departures board
- * hanging over the middle, and concourse signs in the exits. Only looks: none of it is solid.
+ * hanging over the middle, and avenue signs in the exits. Only looks: none of it is solid.
  */
 
 /** The dome rises this fraction of the hall's radius above the drum. */
@@ -59,10 +59,12 @@ export const DRUM_HEIGHT = MEDIA_BOTTOM + MEDIA_MAX_HEIGHT + 0.4;
 
 /** The departures halo: an outer ring of covers and a smaller one of listings below it. */
 const BOARD_HEIGHT = 10.4;
-/** Portrait (3:4) covers round the outer ring, and the radius that fits them exactly. */
-const BOARD_TILES = 16;
-const BOARD_RADIUS = (BOARD_TILES * BOARD_HEIGHT * 0.75) / (Math.PI * 2);
-const TILE_PX = 512;
+/** Covers round the ring in the doors' own shape (3:2), and the radius that fits them exactly. */
+const TILE_ASPECT = DOOR_WIDTH / DOOR_HEIGHT;
+const BOARD_TILES = 8;
+const BOARD_RADIUS = (BOARD_TILES * BOARD_HEIGHT * TILE_ASPECT) / (Math.PI * 2);
+/** A tile's height on the screen's canvas, in pixels. */
+const TILE_PX = 640;
 export const BOARD_BOTTOM = 13.4;
 /** Turns per second of the screens, in radians. */
 const BOARD_SPIN = 0.08;
@@ -71,6 +73,8 @@ const BOARD_SWAP_S = 4;
 /** Seconds a cover takes to dissolve into the next one. */
 const BOARD_FADE_S = 1.6;
 const AMBER = '#ffc23d';
+/** Cords the board hangs from, straight down from a ring under the dome as wide as the board. */
+const HANGERS = 8;
 
 
 const matrix = new Matrix4();
@@ -153,6 +157,27 @@ export function buildDome(radius: number): { glass: BufferGeometry; solid: Buffe
   foot.translate(0, DRUM_HEIGHT + 0.1, 0);
   solid.push(flat(foot));
   return { glass, solid, glow };
+}
+
+/**
+ * The ring the departures board hangs from: under the dome, as wide as the
+ * board, so every cord drops straight down onto the board's top rim. Drawn
+ * like the oculus's own ring: a stout rim (solid) with a line of light
+ * under it (glow), and the cords themselves as lines of light.
+ */
+export function buildBoardHanging(radius: number, hangers: Vector3[]): { solid: BufferGeometry[]; glow: BufferGeometry[] } {
+  const { sphereRadius, centerY } = domeShape(radius);
+  const hangRadius = Math.hypot(hangers[0].x, hangers[0].z);
+  // Just under the dome's ribs, where they pass over the cords.
+  const ringY = centerY + Math.sqrt((sphereRadius - 0.12) ** 2 - hangRadius ** 2) - 0.7;
+  const rim = new TorusGeometry(hangRadius, 0.28, 8, 192);
+  rim.rotateX(Math.PI / 2);
+  rim.translate(0, ringY, 0);
+  const light = new TorusGeometry(hangRadius, 0.035, 6, 192);
+  light.rotateX(Math.PI / 2);
+  light.translate(0, ringY - 0.32, 0);
+  const cords = hangers.map((point) => rod(point, point.clone().setY(ringY - 0.28), 0.02));
+  return { solid: [flat(rim)], glow: [flat(light), ...cords] };
 }
 
 /**
@@ -279,7 +304,7 @@ export function createDepartureBoard(): {
     texture.anisotropy = 4;
     return { canvas, texture, material: new MeshBasicMaterial({ map: texture, toneMapped: false }) };
   };
-  const outer = screen(BOARD_TILES * TILE_PX, Math.round((TILE_PX * 4) / 3));
+  const outer = screen(Math.round(BOARD_TILES * TILE_PX * TILE_ASPECT), TILE_PX);
   // What the ring showed before the last change, at half size: the covers dissolve
   // from it into the new ones instead of cutting.
   const before = screen(outer.canvas.width / 2, Math.round(outer.canvas.height / 2));
@@ -347,8 +372,9 @@ export function createDepartureBoard(): {
   ring(BOARD_RADIUS + 0.38, BOARD_BOTTOM - 0.45, 0.03, edgeLight);
   ring(BOARD_RADIUS + 0.34, outerTop + 0.2, 0.025, edgeLight);
 
-  const hangers = Array.from({ length: 6 }, (_, i) => {
-    const angle = ((i + 0.5) / 6) * Math.PI * 2;
+  // Where the cords meet the board's top rim: one over each stretch of wall between two exits.
+  const hangers = Array.from({ length: HANGERS }, (_, i) => {
+    const angle = ((i + 0.5) / HANGERS) * Math.PI * 2;
     return new Vector3(Math.sin(angle) * (BOARD_RADIUS - 0.2), outerTop + 0.4, Math.cos(angle) * (BOARD_RADIUS - 0.2));
   });
 
@@ -394,7 +420,7 @@ export function createDepartureBoard(): {
     ctx.rect(x + 3, 0, W - 6, H);
     ctx.clip();
     if (image) {
-      // Covers are 3:4 like the tiles; anything else is cropped, never stretched.
+      // Covers are 3:2 like the tiles and the doors; anything else is cropped, never stretched.
       const { width, height } = image as { width: number; height: number };
       const scale = Math.max(W / width, H / height);
       ctx.drawImage(image, x + (W - width * scale) / 2, (H - height * scale) / 2, width * scale, height * scale);
@@ -447,7 +473,7 @@ export function createDepartureBoard(): {
     fade.uFade.value = 0;
   };
 
-  /** Portrait covers edge to edge round the whole ring, each with its gate. */
+  /** Covers edge to edge round the whole ring, each with its gate. */
   const drawOuter = () => {
     const { canvas, texture } = outer;
     beginFade(0, 1);
@@ -562,8 +588,8 @@ function painted(width: number, height: number, canvasW: number, canvasH: number
   };
 }
 
-/** Wayfinding in an exit: the concourse letter and where it leads. */
-export function createConcourseSign(letter: string): Painted {
+/** Wayfinding in an exit: the letter of the avenue it opens onto. */
+export function createAvenueSign(letter: string): Painted {
   return painted(5, 1.25, 1024, 256, (ctx) => {
     // Signs stay dark with amber letters in either theme, like the board.
     ctx.fillStyle = '#0d0d10';
@@ -582,9 +608,9 @@ export function createConcourseSign(letter: string): Painted {
     ctx.textAlign = 'left';
     ctx.fillStyle = '#ffffff';
     ctx.font = '700 92px Urbanist, ui-sans-serif, system-ui, sans-serif';
-    ctx.fillText(`Concourse ${letter}`, 268, 104);
+    ctx.fillText(`Avenue ${letter}`, 268, 104);
     ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
     ctx.font = '600 44px Urbanist, ui-sans-serif, system-ui, sans-serif';
-    ctx.fillText('Exit to the plaza', 270, 186);
+    ctx.fillText('Exit to the city', 270, 186);
   });
 }
