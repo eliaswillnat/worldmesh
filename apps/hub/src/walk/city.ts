@@ -64,7 +64,7 @@ const skyFragment = /* glsl */ `
   }
 
   // The colours run across the sky, not up it: teal, sky blue, periwinkle, dusty rose
-  // and back, twice round, drifting slowly.
+  // and back, six times round, so neighbouring curtains differ, drifting slowly.
   vec3 auroraPalette(float x) {
     float t = fract(x) * 4.0;
     float f = smoothstep(0.0, 1.0, fract(t));
@@ -102,7 +102,7 @@ const skyFragment = /* glsl */ `
       float curtain = smoothstep(0.4, 0.8, ring(a - fi, 2.0, uTime * 0.05 + fi * 11.0));
       float pulse = 0.8 + 0.2 * sin(uTime * 0.5 + fi * 2.1 + azimuth * 2.0);
       float strength = body * rays * curtain * pulse;
-      color += auroraPalette(azimuth / 3.14159265 + fi * 0.08 + uTime * 0.01) * strength;
+      color += auroraPalette(azimuth * 3.0 / 3.14159265 + fi * 0.08 + uTime * 0.02) * strength;
       amount += strength;
     }
     // Gone by the horizon, where the fog has to meet the sky's own colour.
@@ -121,8 +121,8 @@ const skyFragment = /* glsl */ `
     // would vanish into the blue, so they tint it instead, in their own colours.
     vec3 screened = 1.0 - (1.0 - color) * (1.0 - clamp(glow.rgb * uAurora, 0.0, 1.0));
     vec3 tint = glow.rgb / max(glow.a, 0.0001);
-    // Deepened, so the pastel colours still stand apart from the blue.
-    vec3 tinted = mix(color, tint * tint * 1.2, clamp(glow.a * uAurora, 0.0, 0.65));
+    // Deepened, so the pastel colours still stand apart from the blue, then lifted with white.
+    vec3 tinted = mix(color, mix(tint * tint * 1.2, vec3(1.0), 0.4), clamp(glow.a * uAurora, 0.0, 0.5));
     color = mix(screened, tinted, uDaylight);
     gl_FragColor = vec4(color, 1.0);
     #include <colorspace_fragment>
@@ -138,7 +138,7 @@ export const SKY_TOP_DARK = 0x000000;
 export const SKY_HORIZON_DARK = 0x222429;
 
 /** How strongly the auroras show: how much they tint the day's blue, and glow at night. */
-const AURORA = 1.3;
+const AURORA = 0.85;
 const AURORA_DARK = 0.4;
 
 /** A gradient dome with faint auroras. Move it with the player so it never gets closer. */
