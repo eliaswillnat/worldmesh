@@ -62,26 +62,35 @@ const skyFragment = /* glsl */ `
     return noise(vec2(cos(azimuth), sin(azimuth)) * frequency + drift);
   }
 
-  // Curtains of vertical rays hanging from a wavy hem a little above the horizon: green
-  // at the hem, rising into violet and pink, the hues and curtains drifting round the sky.
+  // Curtains of vertical rays rising from a wavy hem above the horizon: soft teal at the
+  // hem, fading into periwinkle and dusty rose. The hem melts into the sky rather than
+  // ending on a line, and the curtains sway, ripple and pulse as they drift round.
   vec3 aurora(vec3 direction) {
     float h = direction.y;
     float azimuth = atan(direction.z, direction.x);
     vec3 sum = vec3(0.0);
     for (int i = 0; i < 3; i++) {
       float fi = float(i);
-      float hem = 0.1 + 0.05 * fi + 0.12 * (ring(azimuth + fi, 1.5, uTime * 0.03 + fi * 7.0) - 0.5);
+      // Swaying side to side, more higher up, so the curtains bend as they move.
+      float sway = 0.03 * sin(uTime * 0.35 + azimuth * 4.0 + fi * 2.0)
+        + 0.015 * sin(uTime * 0.6 - azimuth * 7.0 + h * 6.0 + fi);
+      float a = azimuth + sway;
+      float hem = 0.14 + 0.05 * fi + 0.12 * (ring(a + fi, 1.5, uTime * 0.08 + fi * 7.0) - 0.5);
       float above = h - hem;
-      float body = smoothstep(-0.05, 0.02, above) * exp(-max(above, 0.0) / (0.1 + 0.04 * fi));
-      float rays = ring(azimuth + fi * 2.0, 45.0 + 15.0 * fi, uTime * 0.08 + fi * 3.0);
-      rays = 0.15 + 0.85 * rays * rays * rays;
-      float curtain = smoothstep(0.45, 0.8, ring(azimuth - fi, 2.0, uTime * 0.02 + fi * 11.0));
-      float hue = ring(azimuth, 1.0, fi * 5.0 + uTime * 0.01);
-      vec3 hemColor = mix(vec3(0.15, 1.0, 0.55), vec3(0.1, 0.8, 1.0), hue);
-      vec3 crownColor = mix(vec3(0.75, 0.3, 1.0), vec3(1.0, 0.35, 0.65), hue);
-      sum += mix(hemColor, crownColor, smoothstep(0.0, 0.25, above)) * body * rays * curtain;
+      // A soft fall-off below the hem and a long fade above it, so no edge shows.
+      float below = min(above, 0.0) / 0.07;
+      float body = exp(-below * below) * exp(-max(above, 0.0) / (0.1 + 0.04 * fi));
+      float rays = ring(a + fi * 2.0, 45.0 + 15.0 * fi, uTime * 0.2 + fi * 3.0);
+      rays = 0.2 + 0.8 * rays * rays * rays;
+      float curtain = smoothstep(0.4, 0.8, ring(a - fi, 2.0, uTime * 0.05 + fi * 11.0));
+      float pulse = 0.8 + 0.2 * sin(uTime * 0.5 + fi * 2.1 + azimuth * 2.0);
+      float hue = ring(azimuth, 1.0, fi * 5.0 + uTime * 0.02);
+      vec3 hemColor = mix(vec3(0.25, 0.8, 0.7), vec3(0.3, 0.68, 0.95), hue);
+      vec3 crownColor = mix(vec3(0.5, 0.48, 0.95), vec3(0.85, 0.5, 0.78), hue);
+      sum += mix(hemColor, crownColor, smoothstep(0.0, 0.3, above)) * body * rays * curtain * pulse;
     }
-    return sum;
+    // Gone by the horizon, where the fog has to meet the sky's own colour.
+    return sum * smoothstep(0.0, 0.1, h);
   }
 
   void main() {
@@ -108,7 +117,7 @@ export const SKY_HORIZON_DARK = 0x222429;
 
 /** How strongly the auroras show. The day's blue hides them more, so it gets the larger share; both stay faint. */
 const AURORA = 0.45;
-const AURORA_DARK = 0.3;
+const AURORA_DARK = 0.4;
 
 /** A gradient dome with faint auroras. Move it with the player so it never gets closer. */
 export function createSky(): Mesh<SphereGeometry, ShaderMaterial> {
