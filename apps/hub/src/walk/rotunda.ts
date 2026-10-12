@@ -585,6 +585,6 @@ export function createConcourseSign(letter: string): Painted {
     ctx.fillText(`Concourse ${letter}`, 268, 104);
     ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
     ctx.font = '600 44px Urbanist, ui-sans-serif, system-ui, sans-serif';
-    ctx.fillText('Exit to the plaza', 270, 186);
+    ctx.fillText(`Exit to Avenue ${letter}`, 270, 186);
   });
 }

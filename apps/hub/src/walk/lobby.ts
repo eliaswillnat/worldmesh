@@ -49,6 +49,8 @@ import { DoorViewManager } from './doorViews';
 import { WalkThrough } from './walkThrough';
 import { doorFrameGeometry, frameOuterCorner, openingCorner } from './doorShape';
 import { describeBillboard } from './layout';
+import { planAvenues, type CityPlan } from './avenuePlan';
+import { PORCH_WIDTH, buildAvenues, porch } from './avenues';
 import { playSendSound, playWarpSound, setPortalHum, stopPortalHum } from './sounds';
 import { chatRejection } from '../../../../workers/presence/src/chatFilter';
 import { fetchOccupancy } from './occupancy';
@@ -302,10 +304,10 @@ function outsideAngles(outer: number): number[] {
  * Which worlds get a door, and where. Multiplayer worlds go inside (the demos
  * first, then the newest); solo ones go outside (newest first), along with
  * any multiplayer worlds that did not fit inside. Ties break on the URL, so
- * everyone with the same list gets the same doors. Worlds left over keep
- * their place in the list and on the departures board, but get no door.
+ * everyone with the same list gets the same doors. Worlds left over get a
+ * door out in the city, along the avenues and ring streets (avenuePlan).
  */
-function assignDoors(worlds: LobbyWorld[], inside: number, outside: number): { inside: string[]; outside: string[] } {
+function assignDoors(worlds: LobbyWorld[], inside: number, outside: number): { inside: string[]; outside: string[]; city: string[] } {
   const listed = (world: LobbyWorld) => Date.parse(world.addedAt ?? world.approvedAt ?? '') || 0;
   const order = (a: LobbyWorld, b: LobbyWorld) =>
     Number(b.source === 'demo') - Number(a.source === 'demo') || listed(b) - listed(a) || (a.url < b.url ? -1 : a.url > b.url ? 1 : 0);
@@ -313,8 +315,9 @@ function assignDoors(worlds: LobbyWorld[], inside: number, outside: number): { i
   const together = worlds.filter(multiplayer).sort(order);
   const solo = worlds.filter((world) => !multiplayer(world)).sort(order);
   const within = together.slice(0, inside);
-  const without = [...solo, ...together.slice(inside)].slice(0, outside);
-  return { inside: within.map((world) => world.url), outside: without.map((world) => world.url) };
+  const rest = [...solo, ...together.slice(inside)];
+  const url = (world: LobbyWorld) => world.url;
+  return { inside: within.map(url), outside: rest.slice(0, outside).map(url), city: rest.slice(outside).map(url) };
 }
 /** The portal hum is heard from this far from an open door, in metres. */
 const HUM_RANGE = 9;
@@ -385,8 +388,6 @@ const FOCUS_INTERVAL = 0.1;
 const BILLBOARD_REFRESH_MS = 60_000;
 /** The random door stands on the citadel's outer wall, this far along it from the gate. */
 const RANDOM_DOOR_ARC = 14;
-/** Width of the backing and porch behind each door on the outer wall. */
-const PORCH_WIDTH = DOOR_HALF_SPAN * 2 + 0.8;
 /** How far the random door stands out from the outer wall. */
 const RANDOM_DOOR_OUT = 0.3;
 
@@ -559,7 +560,9 @@ const floorShader = {
 /**
  * Walk mode: the directory as a place. You arrive inside the citadel, a tall
  * round hall whose wall is lined with a door per listed world; walking into
- * one travels to that world. Gates to the plaza are closed for now. Movement,
+ * one travels to that world. Its gates open onto avenues running out like the
+ * spokes of a wheel, crossed by ring streets, with more worlds' doors along
+ * them (avenuePlan). Movement,
  * camera, touch controls and portal triggers all come from the same runtime
  * the worlds themselves use.
  */
@@ -806,6 +809,12 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const galleryDoors: Door[] = [];
   /** Angles of the worlds' doors on the outer wall. Rebuilt with the hall. */
   let outsideDoors: number[] = [];
+  /** The avenues and ring streets round the citadel, and how many of their door places hold a world. */
+  let city: CityPlan = planAvenues(HALL_RADIUS + WALL_THICKNESS, GATE_COUNT, 0, PORCH_WIDTH);
+  let cityDoors = 0;
+  /** The city's blocks (just for looks) and their walls, one collider per block. */
+  const cityMeshes: Mesh[] = [];
+  const cityColliders: Mesh[] = [];
   // Outside, set into the tower beside the gate: a glowing blue door to a
   // random listed world.
   const randomDoor = new Door(null, light, true);
@@ -917,6 +926,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       // Every doorway's frame and backstop, so nobody slips past one into the wall.
       ...[...doors.values(), ...emptyDoors, ...galleryDoors, ...(exitDoor ? [exitDoor] : [])].flatMap((door) => door.blockers),
       ...spawnPads.colliders,
+      ...cityColliders,
       ...upper,
       ...lifts.colliders,
     ],
@@ -1875,8 +1885,19 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       door.setGate(total + i + 1);
       return angle;
     });
+    // Out in the city: along the avenues and ring streets, nearest ring first,
+    // numbered after the outer wall's. The city grows a ring when it runs out of doors.
+    city = planAvenues(outer, GATE_COUNT, assigned.city.length, PORCH_WIDTH);
+    const cityUrls = assigned.city.slice(0, city.slots.length);
+    const cityGate = total + assigned.outside.length + 1;
+    cityUrls.forEach((url, i) => {
+      const slot = city.slots[i];
+      doorFor(url).place(slot.x, slot.z, slot.x + slot.facingX, slot.z + slot.facingZ);
+      doorFor(url).setGate(cityGate + i);
+    });
+    cityDoors = cityUrls.length;
     // Worlds that no longer get a door take theirs down.
-    const placed = new Set([...urls, ...assigned.outside]);
+    const placed = new Set([...urls, ...assigned.outside, ...cityUrls]);
     for (const [url, door] of doors) {
       if (placed.has(url) || claimUrls.has(url) || door.group.userData.level) continue;
       door.dispose();
@@ -1914,6 +1935,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     flights = [];
     urls.forEach((url, i) => flights.push({ ...pick(known.get(url)!), gate: slots[i] + 1 }));
     assigned.outside.forEach((url, i) => flights.push({ ...pick(known.get(url)!), gate: total + i + 1 }));
+    cityUrls.forEach((url, i) => flights.push({ ...pick(known.get(url)!), gate: cityGate + i }));
     for (const claim of claims) {
       const slot = angles.findIndex((angle) => angleDelta(claim.angle, angle) < 0.08);
       if (slot >= 0 && !taken.has(slot)) flights.push({ name: claim.name, cover: claim.cover, gate: slot + 1 });
@@ -2203,13 +2225,9 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     // Backing and porch for each door on the outer wall: the random door beside
     // the gate, and the worlds' doors between the exits.
     for (const doorAngle of [RANDOM_DOOR_ARC / outer, ...outsideDoors]) {
-      const around = (r: number) => [Math.sin(doorAngle) * r, Math.cos(doorAngle) * r] as const;
-      const [backX, backZ] = around(outer - 0.05);
-      solid.push(place(new BoxGeometry(PORCH_WIDTH, DOOR_TOP + 2.2, 0.5), backX, (DOOR_TOP + 2.2) / 2, backZ, doorAngle));
-      const [porchX, porchZ] = around(outer + 0.55);
-      solid.push(place(new BoxGeometry(PORCH_WIDTH, 0.16, 0.9), porchX, DOOR_TOP + 0.75, porchZ, doorAngle));
-      const [lineX, lineZ] = around(outer + 1.0);
-      glow.push(place(new BoxGeometry(PORCH_WIDTH, 0.04, 0.04), lineX, DOOR_TOP + 0.67, lineZ, doorAngle));
+      const back = porch(Math.sin(doorAngle) * outer, Math.cos(doorAngle) * outer, doorAngle);
+      solid.push(...back.solid);
+      glow.push(...back.glow);
     }
 
     const add = (geometries: BufferGeometry[], material: MeshStandardMaterial | typeof cityMaterials.glow) => {
@@ -2285,10 +2303,38 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     interiorBannerRing = ringGroup;
   }
 
-  /** The towers stand around the citadel, so they follow its width. */
+  /**
+   * The city round the citadel: an avenue straight out of every gate, ring
+   * streets crossing them, and plain blocks between, with the porches of the
+   * worlds' doors. One mesh for the walls and one for the light, like the
+   * citadel's trim.
+   */
   function buildCity(outer: number): void {
     billboards?.setSlots(billboardSlots);
-    ground.scale.setScalar(Math.max(PLAZA_RADIUS, outer + PLAZA_RADIUS / 2));
+    for (const mesh of [...cityMeshes, ...cityColliders]) {
+      mesh.geometry.dispose();
+      mesh.removeFromParent();
+    }
+    cityMeshes.length = 0;
+    cityColliders.length = 0;
+    const blocks = buildAvenues(city, cityDoors);
+    for (const [geometries, material] of [[blocks.solid, wallMaterial], [blocks.glow, cityMaterials.glow]] as const) {
+      const mesh = new Mesh(mergeGeometries(geometries), material);
+      for (const geometry of geometries) geometry.dispose();
+      scene.add(mesh);
+      cityMeshes.push(mesh);
+    }
+    // Colliders need world matrices, but are never drawn: keep them out of the scene.
+    for (const geometry of blocks.colliders) {
+      const collider = new Mesh(geometry, colliderMaterial);
+      collider.updateMatrixWorld(true);
+      cityColliders.push(collider);
+    }
+    // The walkable ground reaches past the outermost ring street; the mirror floor under it too.
+    const reach = Math.max(PLAZA_RADIUS, outer + PLAZA_RADIUS / 2, city.radius + 30);
+    ground.scale.setScalar(reach);
+    ground.updateMatrixWorld(true);
+    mirror.scale.setScalar(Math.max(1, (reach * 2 + 60) / FLOOR_SIZE));
     // The random door: on the outer wall beside the gate, facing the towers.
     const angle = RANDOM_DOOR_ARC / outer;
     const r = outer + RANDOM_DOOR_OUT;
@@ -2335,6 +2381,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       }
       mesh.geometry.dispose();
     }
+    for (const mesh of [...cityMeshes, ...cityColliders]) mesh.geometry.dispose();
     if (interiorBannerRing) {
       interiorBannerRing.traverse((obj) => {
         if (obj instanceof Mesh) obj.geometry.dispose();
