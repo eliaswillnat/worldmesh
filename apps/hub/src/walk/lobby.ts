@@ -778,16 +778,12 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const emptyDoors: Door[] = [];
   // Empty doors round the galleries. Rebuilt with the hall.
   const galleryDoors: Door[] = [];
-  /** The avenues and ring streets round the citadel, and how many of their door places hold a door. */
+  /** The avenues and ring streets round the citadel, and how many of their door places hold a world. */
   let city: CityPlan = planAvenues(HALL_RADIUS + WALL_THICKNESS, GATE_COUNT, 0, PORCH_WIDTH);
   let cityDoors = 0;
   /** The city's blocks (just for looks) and their walls, one collider per block. */
   const cityMeshes: Mesh[] = [];
   const cityColliders: Mesh[] = [];
-  // Out in the city, the first door on the first ring, facing the rotunda
-  // beside Avenue A: a glowing blue door to a random listed world.
-  const randomDoor = new Door(null, light, true);
-  scene.add(randomDoor.group);
   let nearEmpty: Door | null = null;
   let time = 0;
   let warping = false;
@@ -929,7 +925,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       }
       let humDoor: Door | null = null;
       let humDistance = HUM_RANGE;
-      for (const door of [...doors.values(), randomDoor]) {
+      for (const door of doors.values()) {
         door.update(time);
         if (!level(door)) continue;
         if (!warping && !emerging && door.contains(x, z)) enter(door);
@@ -1163,7 +1159,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   function enter(door: Door): void {
     // A door whose world waits behind the hall: walk on through instead.
     if (walkThrough?.enter(door)) return;
-    const target = door.random ? pickRandomWorld() : door.world;
+    const target = door.world;
     if (!target) return;
     door.surge();
     const [x, y, z] = world.getState().position;
@@ -1200,7 +1196,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     if (![x, y, z].every(Number.isFinite)) return;
     let door: Door | null = null;
     let nearest = WARP_MATCH;
-    for (const candidate of [...doors.values(), randomDoor]) {
+    for (const candidate of doors.values()) {
       if (Math.abs(y - candidate.group.position.y) > 1) continue;
       const { x: doorX, z: doorZ } = candidate.inFront(0);
       const distance = Math.hypot(x - doorX, z - doorZ);
@@ -1321,11 +1317,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     } catch {
       return url;
     }
-  }
-
-  function pickRandomWorld(): DoorWorld | null {
-    const worlds = [...known.values()];
-    return worlds.length ? worlds[Math.floor(Math.random() * worlds.length)] : null;
   }
 
   /** True when this URL already opens a door in the hall or in any tower. */
@@ -1624,7 +1615,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     const [x, , z] = spot.position;
     // Light up the door they come out of, if it is there yet: community
     // worlds may still be loading.
-    const door = [...doors.values(), randomDoor].find((candidate) => {
+    const door = [...doors.values()].find((candidate) => {
       const out = candidate.inFront(RETURN_STEP);
       return Math.hypot(out.x - x, out.z - z) < 0.5;
     }) ?? null;
@@ -1717,7 +1708,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     if (isLight === light) return;
     light = isLight;
     applyTheme();
-    for (const door of [...doors.values(), ...emptyDoors, ...galleryDoors, randomDoor]) door.setTheme(light);
+    for (const door of [...doors.values(), ...emptyDoors, ...galleryDoors]) door.setTheme(light);
     for (const draw of gateLabelDraw) draw(light);
   }
 
@@ -1844,20 +1835,17 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
     urls.forEach((url, i) => at(doorFor(url), slots[i]));
     // Out in the city: along the avenues and ring streets, nearest ring first,
-    // numbered after the hall's. The random door takes the first place; the
-    // city grows a ring when it runs out of doors.
+    // numbered after the hall's. The city grows a ring when it runs out of doors.
     const outer = radius + WALL_THICKNESS;
-    city = planAvenues(outer, GATE_COUNT, assigned.city.length + 1, PORCH_WIDTH);
-    const [randomSlot, ...worldSlots] = city.slots;
-    randomDoor.place(randomSlot.x, randomSlot.z, randomSlot.x + randomSlot.facingX, randomSlot.z + randomSlot.facingZ);
-    const cityUrls = assigned.city.slice(0, worldSlots.length);
+    city = planAvenues(outer, GATE_COUNT, assigned.city.length, PORCH_WIDTH);
+    const cityUrls = assigned.city.slice(0, city.slots.length);
     const cityGate = total + 1;
     cityUrls.forEach((url, i) => {
-      const slot = worldSlots[i];
+      const slot = city.slots[i];
       doorFor(url).place(slot.x, slot.z, slot.x + slot.facingX, slot.z + slot.facingZ);
       doorFor(url).setGate(cityGate + i);
     });
-    cityDoors = cityUrls.length + 1;
+    cityDoors = cityUrls.length;
     // Worlds that no longer get a door take theirs down.
     const placed = new Set([...urls, ...cityUrls]);
     for (const [url, door] of doors) {
@@ -2255,7 +2243,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   /**
    * The city round the citadel: an avenue straight out of every gate, ring
    * streets crossing them, and plain blocks between, with the porches of the
-   * worlds' doors and the random door. One mesh for the walls and one for the light, like the
+   * worlds' doors. One mesh for the walls and one for the light, like the
    * citadel's trim.
    */
   function buildCity(outer: number): void {
@@ -2307,7 +2295,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     renderer.domElement.removeEventListener('pointerdown', handlePointerDown);
     renderer.domElement.removeEventListener('pointerup', handlePointerUp);
     world.dispose();
-    for (const door of [...doors.values(), ...emptyDoors, ...galleryDoors, randomDoor]) door.dispose();
+    for (const door of [...doors.values(), ...emptyDoors, ...galleryDoors]) door.dispose();
     doors.clear();
     emptyDoors.length = 0;
     addPrompt.remove();
