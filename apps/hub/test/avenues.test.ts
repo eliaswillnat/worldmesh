@@ -6,21 +6,51 @@ const HUB = 60.2;
 const SPOKES = 8;
 const SLOT = 13.1;
 
+/** An angle brought into -π..π. */
+const turn = (angle: number) => Math.atan2(Math.sin(angle), Math.cos(angle));
+
 describe('avenue plan', () => {
   it('keeps at least the minimum rings, and grows a ring when doors run out', () => {
     const empty = planAvenues(HUB, SPOKES, 0, SLOT);
     expect(empty.rings).toBe(AVENUES.minRings);
     expect(empty.blocks).toHaveLength(AVENUES.minRings * SPOKES);
-    const more = planAvenues(HUB, SPOKES, empty.slots.length + 1, SLOT);
+    expect(empty.slots).toHaveLength(0);
+    const more = planAvenues(HUB, SPOKES, empty.capacity + 1, SLOT);
     expect(more.rings).toBe(AVENUES.minRings + 1);
     expect(more.radius).toBeGreaterThan(empty.radius);
     expect(planAvenues(HUB, SPOKES, 100_000, SLOT).rings).toBe(AVENUES.maxRings);
   });
 
-  it('keeps every door place where it was when the city grows', () => {
-    const small = planAvenues(HUB, SPOKES, 0, SLOT);
-    const large = planAvenues(HUB, SPOKES, small.slots.length + 50, SLOT);
-    expect(large.slots.slice(0, small.slots.length)).toEqual(small.slots);
+  it('gives a door to every world that fits, and keeps each in its block as the city grows', () => {
+    const small = planAvenues(HUB, SPOKES, 20, SLOT);
+    expect(small.slots).toHaveLength(20);
+    const large = planAvenues(HUB, SPOKES, small.capacity + 50, SLOT);
+    small.slots.forEach((slot, i) => {
+      expect([large.slots[i].ring, large.slots[i].sector]).toEqual([slot.ring, slot.sector]);
+      // The same wall: a door on a curved wall turns a little as it moves along it, no more.
+      expect(large.slots[i].facingX * slot.facingX + large.slots[i].facingZ * slot.facingZ).toBeGreaterThan(0.7);
+    });
+  });
+
+  it('centres a lone door on its wall, in the middle of its block', () => {
+    const plan = planAvenues(HUB, SPOKES, SPOKES, SLOT);
+    for (const slot of plan.slots) {
+      const block = plan.blocks.find((b) => b.ring === slot.ring && b.sector === slot.sector)!;
+      expect(turn(Math.atan2(slot.x, slot.z) - (block.from + block.to) / 2)).toBeCloseTo(0, 6);
+      // On the wall facing the rotunda.
+      expect(Math.hypot(slot.x, slot.z)).toBeLessThan(block.inner);
+    }
+  });
+
+  it('shares a wall evenly between its doors', () => {
+    const plan = planAvenues(HUB, SPOKES, SPOKES * 2, SLOT);
+    for (let sector = 0; sector < SPOKES; sector++) {
+      const block = plan.blocks.find((b) => b.ring === 0 && b.sector === sector)!;
+      const middle = (block.from + block.to) / 2;
+      const offsets = plan.slots.filter((slot) => slot.sector === sector).map((slot) => turn(Math.atan2(slot.x, slot.z) - middle));
+      expect(offsets).toHaveLength(2);
+      expect(offsets[0] + offsets[1]).toBeCloseTo(0, 6);
+    }
   });
 
   it('runs an avenue straight out of every gate', () => {
@@ -46,7 +76,7 @@ describe('avenue plan', () => {
     expect(ringInner(HUB, 0)).toBe(HUB + AVENUES.plaza);
     for (const block of plan.blocks) {
       const next = plan.blocks.find((other) => other.ring === block.ring + 1);
-      if (next) expect(next.inner - block.outer).toBe(AVENUES.ringStreet);
+      if (next) expect(next.inner - block.outer).toBeCloseTo(AVENUES.ringStreet);
     }
   });
 
@@ -83,7 +113,7 @@ describe('avenue plan', () => {
   });
 
   it('fills the nearest ring first, round every avenue', () => {
-    const plan = planAvenues(HUB, SPOKES, 0, SLOT);
+    const plan = planAvenues(HUB, SPOKES, 1000, SLOT);
     const firstRing = plan.slots.filter((slot) => slot.ring === 0).length;
     expect(plan.slots.slice(0, firstRing).every((slot) => slot.ring === 0)).toBe(true);
     expect(new Set(plan.slots.slice(0, SPOKES).map((slot) => slot.sector)).size).toBe(SPOKES);
