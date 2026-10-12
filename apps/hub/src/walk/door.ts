@@ -757,7 +757,7 @@ export class Door {
   setTheme(light: boolean): void {
     this.light = light;
     this.portal.material.uniforms.uLight.value = light ? 1 : 0;
-    // White doors on the black grid, ink doors on the white one.
+    // White doors on the black floor, ink doors on the white one.
     this.frameMaterial.color.set(light ? 0x1c1c1c : 0xf2f2f2);
     this.tintFrame();
     if (this.random) {

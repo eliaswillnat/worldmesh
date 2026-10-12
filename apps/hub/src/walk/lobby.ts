@@ -396,9 +396,10 @@ const RANDOM_DOOR_OUT = 0.3;
 const FLOOR_ROUGHNESS = 1;
 
 /**
- * The floor is one mirror plane whose shader also draws the grid. Drawing the
- * grid as a second plane just above the mirror depth-fights on GPUs with low
- * depth precision, and costs an extra full-screen pass.
+ * The floor is one mirror plane whose shader also draws the hall's inlay.
+ * Drawing the lines as a second plane just above the mirror depth-fights on
+ * GPUs with low depth precision, and costs an extra full-screen pass. Outside
+ * the hall the floor is plain stone, with only a line along the wall.
  */
 const floorShader = {
   name: 'WorldMeshFloor',
@@ -413,6 +414,7 @@ const floorShader = {
     uRough: { value: FLOOR_ROUGHNESS },
     uHall: { value: 0 },
   },
+    uWall: { value: 0 },
   vertexShader: /* glsl */ `
     uniform mat4 textureMatrix;
     varying vec4 vUv;
@@ -437,14 +439,10 @@ const floorShader = {
     uniform float uRough;
     uniform float uHall;
     varying vec4 vUv;
+    uniform float uWall;
     varying vec3 vWorld;
 
     #include <logdepthbuf_pars_fragment>
-
-    float gridLine(vec2 coord) {
-      vec2 g = abs(fract(coord - 0.5) - 0.5) / max(fwidth(coord), vec2(1e-4));
-      return 1.0 - min(min(g.x, g.y), 1.0);
-    }
 
     float line1(float coord, float width) {
       return 1.0 - min(abs(fract(coord - 0.5) - 0.5) / max(width, 1e-4), 1.0);
@@ -513,16 +511,15 @@ const floorShader = {
       float grain = (valueNoise(grainCoord) - 0.5) * grainVisible;
       float rough = ((patches - 0.5) * 0.9 + grain * 1.2) * uRough;
 
-      float minor = gridLine(vWorld.xz / 2.0);
-      float major = gridLine(vWorld.xz / 10.0);
       // Fade out well before the horizon, where dense lines would add up to a bright band.
       float dist = distance(vWorld.xz, cameraPosition.xz);
       float fade = 1.0 - smoothstep(12.0, 75.0, dist);
       float minorFade = 1.0 - smoothstep(8.0, 40.0, dist);
       // Lines light up a little around the player.
       float glow = 1.0 - smoothstep(0.0, 14.0, distance(vWorld.xz, uPlayer));
-      // Inside the rotunda the square grid gives way to an inlay round the
-      // centre: rings every 3 m, spokes, and a border band inside the wall.
+      // Inside the rotunda, an inlay round the centre: rings every 3 m,
+      // spokes, and a border band inside the wall. Outside it, one line along
+      // the outer face of the wall marks where the building ends.
       float rr = length(vWorld.xz);
       float inside = 1.0 - smoothstep(uHall - 0.6, uHall, rr);
       float ringMinor = line1(rr / 3.0, fwidth(rr / 3.0));
@@ -531,8 +528,14 @@ const floorShader = {
       float spokeMinor = spokes(vWorld.xz, 32.0) * smoothstep(4.0, 8.0, rr);
       float spokeMajor = spokes(vWorld.xz, 8.0) * smoothstep(2.4, 3.0, rr);
       float radial = max(max(ringMinor, spokeMinor) * 0.08 * minorFade, max(ringMajor, spokeMajor) * 0.2);
-      float square = max(minor * 0.08 * minorFade, major * 0.2);
-      float lines = mix(square, radial, inside) * fade * (1.0 + glow * 1.6);
+      // 4 cm wide, but never less than a solid two pixels, so it does not
+      // thin and pale with distance; kept on out to the haze so it reads as
+      // one unbroken ring round the building. The pixel size is measured
+      // across the line (fwidth overstates it on diagonals and blurs them).
+      float edgePixel = max(length(vec2(dFdx(rr), dFdy(rr))), 1e-4);
+      float edgeHalf = max(0.02, edgePixel);
+      float edge = 1.0 - smoothstep(edgeHalf, edgeHalf + edgePixel, abs(rr - uWall));
+      float lines = max(radial * inside * fade * (1.0 + glow * 1.6), edge * 0.45 * step(1.0, uWall));
 
       // A mirror under a tinted glaze: glossier at grazing angles, faint
       // looking straight down. The rough patches take some of the shine off.
@@ -999,7 +1002,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       } else if (ghost) {
         ghost.shimmer(time);
       }
-      // Keep the finite floor under the player. The grid is drawn in world
+      // Keep the finite floor under the player. The inlay is drawn in world
       // space, so moving the plane does not move the lines.
       mirror.position.set(Math.round(x / 10) * 10, 0, Math.round(z / 10) * 10);
       placeChatBubble();
@@ -2027,6 +2030,10 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     buildCity(outer);
     world.refreshColliders();
   }
+    // In front of everything standing on the wall's foot (its ribs reach
+    // outer + 0.4, the gate frames outer + 0.45, the outside doors outer +
+    // 0.46), so nothing breaks the line and it runs straight across the gates.
+    floorUniforms.uWall.value = outer + 0.55;
 
   /**
    * A ring of doors round the wall of each gallery.
