@@ -48,6 +48,7 @@ const skyFragment = /* glsl */ `
   uniform float uCurve;
   uniform float uTime;
   uniform float uAurora;
+  uniform float uDaylight;
   varying vec3 vDirection;
 
   float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -62,13 +63,29 @@ const skyFragment = /* glsl */ `
     return noise(vec2(cos(azimuth), sin(azimuth)) * frequency + drift);
   }
 
-  // Curtains of vertical rays rising from a wavy hem above the horizon: soft teal at the
-  // hem, fading into periwinkle and dusty rose. The hem melts into the sky rather than
-  // ending on a line, and the straight curtains sway and pulse as they drift round.
-  vec3 aurora(vec3 direction) {
+  // The colours run across the sky, not up it: teal, sky blue, periwinkle, dusty rose
+  // and back, twice round, drifting slowly.
+  vec3 auroraPalette(float x) {
+    float t = fract(x) * 4.0;
+    float f = smoothstep(0.0, 1.0, fract(t));
+    vec3 teal = vec3(0.25, 0.8, 0.7);
+    vec3 blue = vec3(0.3, 0.68, 0.95);
+    vec3 periwinkle = vec3(0.5, 0.48, 0.95);
+    vec3 rose = vec3(0.85, 0.5, 0.78);
+    if (t < 1.0) return mix(teal, blue, f);
+    if (t < 2.0) return mix(blue, periwinkle, f);
+    if (t < 3.0) return mix(periwinkle, rose, f);
+    return mix(rose, teal, f);
+  }
+
+  // Curtains of broad vertical rays rising from a wavy hem above the horizon. The hem
+  // melts into the sky rather than ending on a line, and the straight curtains sway and
+  // pulse as they drift round. Returns the colour and, in alpha, how much aurora there is.
+  vec4 aurora(vec3 direction) {
     float h = direction.y;
     float azimuth = atan(direction.z, direction.x);
-    vec3 sum = vec3(0.0);
+    vec3 color = vec3(0.0);
+    float amount = 0.0;
     for (int i = 0; i < 3; i++) {
       float fi = float(i);
       // Swaying side to side as a whole, so the rays stay straight as they move.
@@ -80,17 +97,17 @@ const skyFragment = /* glsl */ `
       // A soft fall-off below the hem and a long fade above it, so no edge shows.
       float below = min(above, 0.0) / 0.07;
       float body = exp(-below * below) * exp(-max(above, 0.0) / (0.1 + 0.04 * fi));
-      float rays = ring(a + fi * 2.0, 45.0 + 15.0 * fi, uTime * 0.2 + fi * 3.0);
-      rays = 0.2 + 0.8 * rays * rays * rays;
+      float rays = ring(a + fi * 2.0, 14.0 + 4.0 * fi, uTime * 0.12 + fi * 3.0);
+      rays = 0.25 + 0.75 * rays * rays;
       float curtain = smoothstep(0.4, 0.8, ring(a - fi, 2.0, uTime * 0.05 + fi * 11.0));
       float pulse = 0.8 + 0.2 * sin(uTime * 0.5 + fi * 2.1 + azimuth * 2.0);
-      float hue = ring(azimuth, 1.0, fi * 5.0 + uTime * 0.02);
-      vec3 hemColor = mix(vec3(0.25, 0.8, 0.7), vec3(0.3, 0.68, 0.95), hue);
-      vec3 crownColor = mix(vec3(0.5, 0.48, 0.95), vec3(0.85, 0.5, 0.78), hue);
-      sum += mix(hemColor, crownColor, smoothstep(0.0, 0.3, above)) * body * rays * curtain * pulse;
+      float strength = body * rays * curtain * pulse;
+      color += auroraPalette(azimuth / 3.14159265 + fi * 0.08 + uTime * 0.01) * strength;
+      amount += strength;
     }
     // Gone by the horizon, where the fog has to meet the sky's own colour.
-    return sum * smoothstep(0.0, 0.1, h);
+    float fade = smoothstep(0.0, 0.1, h);
+    return vec4(color * fade, amount * fade);
   }
 
   void main() {
@@ -99,9 +116,14 @@ const skyFragment = /* glsl */ `
     // Light: pale at the horizon, a clean saturated blue overhead.
     // Dark: a faint grey at the horizon, deepening to black overhead.
     vec3 color = mix(uHorizon, uTop, pow(smoothstep(0.0, 0.75, h), uCurve));
-    // Screened over the gradient, so it brightens without ever blowing out.
-    vec3 glow = clamp(aurora(direction) * uAurora, 0.0, 1.0);
-    color = 1.0 - (1.0 - color) * (1.0 - glow);
+    vec4 glow = aurora(direction);
+    // At night they glow, screened over the dark so they never blow out. By day a glow
+    // would vanish into the blue, so they tint it instead, in their own colours.
+    vec3 screened = 1.0 - (1.0 - color) * (1.0 - clamp(glow.rgb * uAurora, 0.0, 1.0));
+    vec3 tint = glow.rgb / max(glow.a, 0.0001);
+    // Deepened, so the pastel colours still stand apart from the blue.
+    vec3 tinted = mix(color, tint * tint * 1.2, clamp(glow.a * uAurora, 0.0, 0.65));
+    color = mix(screened, tinted, uDaylight);
     gl_FragColor = vec4(color, 1.0);
     #include <colorspace_fragment>
   }
@@ -115,8 +137,8 @@ export const SKY_HORIZON = 0xc4defb;
 export const SKY_TOP_DARK = 0x000000;
 export const SKY_HORIZON_DARK = 0x222429;
 
-/** How strongly the auroras show. The day's blue hides them more, so it gets the larger share; both stay faint. */
-const AURORA = 0.45;
+/** How strongly the auroras show: how much they tint the day's blue, and glow at night. */
+const AURORA = 1.3;
 const AURORA_DARK = 0.4;
 
 /** A gradient dome with faint auroras. Move it with the player so it never gets closer. */
@@ -132,6 +154,7 @@ export function createSky(): Mesh<SphereGeometry, ShaderMaterial> {
         uCurve: { value: 0.55 },
         uTime: { value: 0 },
         uAurora: { value: AURORA },
+        uDaylight: { value: 1 },
       },
       side: BackSide,
       depthWrite: false,
@@ -156,6 +179,7 @@ export function applySkyTheme(sky: Mesh<SphereGeometry, ShaderMaterial>, light: 
   // The dark sky darkens more gradually, so the grey reads as a glow along the horizon.
   uniforms.uCurve.value = light ? 0.55 : 0.8;
   uniforms.uAurora.value = light ? AURORA : AURORA_DARK;
+  uniforms.uDaylight.value = light ? 1 : 0;
 }
 
 /** Let the auroras drift; `time` in seconds. */
