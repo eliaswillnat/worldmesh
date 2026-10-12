@@ -62,13 +62,11 @@ import {
   GALLERY_LEVELS,
   MEDIA_BOTTOM,
   MEDIA_MAX_HEIGHT,
-  OCULUS_RADIUS,
+  buildBoardHanging,
   buildDome,
   buildGalleries,
   createAvenueSign,
   createDepartureBoard,
-  domeShape,
-  rod,
   type Flight,
 } from './rotunda';
 import { fetchBillboards } from '../ads/api';
@@ -2125,13 +2123,10 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     }
     hangGalleryDoors(radius, hallDoors);
 
-    // The departures board hangs from the oculus ring on four cables.
-    const { oculusY } = domeShape(radius);
-    for (const corner of departures.hangers) {
-      const anchor = corner.clone().setY(oculusY - 0.2);
-      anchor.multiplyScalar(OCULUS_RADIUS / Math.hypot(anchor.x, anchor.z)).setY(oculusY - 0.2);
-      glow.push(rod(corner, anchor, 0.02));
-    }
+    // The departures board hangs on straight cords from a ring under the dome, as wide as the board.
+    const hanging = buildBoardHanging(radius, departures.hangers);
+    solid.push(...hanging.solid);
+    glow.push(...hanging.glow);
 
     // Light bands: outside above the doors and under the crown, inside above
     // the doors (one unbroken line under the banners) and near the top.

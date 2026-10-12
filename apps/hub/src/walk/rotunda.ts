@@ -71,6 +71,8 @@ const BOARD_SWAP_S = 4;
 /** Seconds a cover takes to dissolve into the next one. */
 const BOARD_FADE_S = 1.6;
 const AMBER = '#ffc23d';
+/** Cords the board hangs from, straight down from a ring under the dome as wide as the board. */
+const HANGERS = 8;
 
 
 const matrix = new Matrix4();
@@ -153,6 +155,27 @@ export function buildDome(radius: number): { glass: BufferGeometry; solid: Buffe
   foot.translate(0, DRUM_HEIGHT + 0.1, 0);
   solid.push(flat(foot));
   return { glass, solid, glow };
+}
+
+/**
+ * The ring the departures board hangs from: under the dome, as wide as the
+ * board, so every cord drops straight down onto the board's top rim. Drawn
+ * like the oculus's own ring: a stout rim (solid) with a line of light
+ * under it (glow), and the cords themselves as lines of light.
+ */
+export function buildBoardHanging(radius: number, hangers: Vector3[]): { solid: BufferGeometry[]; glow: BufferGeometry[] } {
+  const { sphereRadius, centerY } = domeShape(radius);
+  const hangRadius = Math.hypot(hangers[0].x, hangers[0].z);
+  // Just under the dome's ribs, where they pass over the cords.
+  const ringY = centerY + Math.sqrt((sphereRadius - 0.12) ** 2 - hangRadius ** 2) - 0.7;
+  const rim = new TorusGeometry(hangRadius, 0.28, 8, 192);
+  rim.rotateX(Math.PI / 2);
+  rim.translate(0, ringY, 0);
+  const light = new TorusGeometry(hangRadius, 0.035, 6, 192);
+  light.rotateX(Math.PI / 2);
+  light.translate(0, ringY - 0.32, 0);
+  const cords = hangers.map((point) => rod(point, point.clone().setY(ringY - 0.28), 0.02));
+  return { solid: [flat(rim)], glow: [flat(light), ...cords] };
 }
 
 /**
@@ -347,8 +370,9 @@ export function createDepartureBoard(): {
   ring(BOARD_RADIUS + 0.38, BOARD_BOTTOM - 0.45, 0.03, edgeLight);
   ring(BOARD_RADIUS + 0.34, outerTop + 0.2, 0.025, edgeLight);
 
-  const hangers = Array.from({ length: 6 }, (_, i) => {
-    const angle = ((i + 0.5) / 6) * Math.PI * 2;
+  // Where the cords meet the board's top rim: one over each stretch of wall between two exits.
+  const hangers = Array.from({ length: HANGERS }, (_, i) => {
+    const angle = ((i + 0.5) / HANGERS) * Math.PI * 2;
     return new Vector3(Math.sin(angle) * (BOARD_RADIUS - 0.2), outerTop + 0.4, Math.cos(angle) * (BOARD_RADIUS - 0.2));
   });
 
