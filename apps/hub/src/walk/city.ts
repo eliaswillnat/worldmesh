@@ -64,16 +64,16 @@ const skyFragment = /* glsl */ `
 
   // Curtains of vertical rays rising from a wavy hem above the horizon: soft teal at the
   // hem, fading into periwinkle and dusty rose. The hem melts into the sky rather than
-  // ending on a line, and the curtains sway, ripple and pulse as they drift round.
+  // ending on a line, and the straight curtains sway and pulse as they drift round.
   vec3 aurora(vec3 direction) {
     float h = direction.y;
     float azimuth = atan(direction.z, direction.x);
     vec3 sum = vec3(0.0);
     for (int i = 0; i < 3; i++) {
       float fi = float(i);
-      // Swaying side to side, more higher up, so the curtains bend as they move.
+      // Swaying side to side as a whole, so the rays stay straight as they move.
       float sway = 0.03 * sin(uTime * 0.35 + azimuth * 4.0 + fi * 2.0)
-        + 0.015 * sin(uTime * 0.6 - azimuth * 7.0 + h * 6.0 + fi);
+        + 0.015 * sin(uTime * 0.6 - azimuth * 7.0 + fi);
       float a = azimuth + sway;
       float hem = 0.14 + 0.05 * fi + 0.12 * (ring(a + fi, 1.5, uTime * 0.08 + fi * 7.0) - 0.5);
       float above = h - hem;
