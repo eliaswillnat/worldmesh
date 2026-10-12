@@ -25,6 +25,7 @@ import { DOOR_VIEW_DEPTH_FAR } from '@worldmesh/runtime';
 import { drawEntries, measureEntries } from '../entries';
 import { addFrameEdgeGlow, doorFrameGeometry, GALLERY_CORNER, ROUNDED_TOP_GLSL } from './doorShape';
 import type { LoadedDoorView } from './doorViews';
+import { createSign } from './sign';
 import type { LoadedPortal } from './portalScene';
 
 export interface DoorWorld {
@@ -384,6 +385,8 @@ export class Door {
   /** The gate number over the name, for doors in the hall. */
   private gate: { number: number; mesh: Mesh<PlaneGeometry, MeshBasicMaterial>; draw: (light: boolean) => void } | null = null;
   private fullBanner: Mesh<PlaneGeometry, MeshBasicMaterial> | null = null;
+  /** In the city: the storefront's fascia sign, which takes the place of the name, chips and gate number. */
+  private sign: { mesh: Mesh<BufferGeometry, MeshBasicMaterial>; draw: () => void } | null = null;
   private cover: Texture | null = null;
   private view: LoadedDoorView | null = null;
   private viewEye = new Vector3();
@@ -551,6 +554,49 @@ export class Door {
     if (shown === this.entries) return;
     this.entries = shown;
     this.drawLabel(this.light);
+    this.sign?.draw();
+  }
+
+  /**
+   * Hang a storefront's fascia sign over this door (avenues.ts builds its
+   * face, in the door's own frame), in place of the name, chips and gate
+   * number on the wall; null takes it down and puts those back.
+   */
+  setSign(geometry: BufferGeometry | null, aspect = 1): void {
+    if (this.sign) {
+      this.sign.mesh.material.map?.dispose();
+      this.sign.mesh.material.dispose();
+      this.sign.mesh.geometry.dispose();
+      this.sign.mesh.removeFromParent();
+      this.sign = null;
+    }
+    const world = this.world;
+    const show = !geometry || !world || this.random;
+    this.label.visible = show;
+    if (this.chips) this.chips.mesh.visible = show;
+    if (this.gate) this.gate.mesh.visible = show;
+    if (show) {
+      geometry?.dispose();
+      return;
+    }
+    const { texture, draw } = createSign(
+      {
+        name: world.name,
+        creator: world.creator,
+        features: doorFeatures(world.tags),
+        entries: () => this.entries,
+        gate: () => this.gate?.number ?? null,
+        tint: () => this.tint,
+        cover: () => (this.cover?.image as CanvasImageSource | undefined) ?? null,
+      },
+      aspect,
+    );
+    // Just in front of the fascia: pulled forward in depth, so it never flickers into it from afar.
+    const material = new MeshBasicMaterial({ map: texture, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+    const mesh = new Mesh(geometry, material);
+    this.group.add(mesh);
+    this.sign = { mesh, draw };
+    draw();
   }
 
   /** The door view this door holds, shown or not. */
@@ -652,12 +698,17 @@ export class Door {
       this.gate.mesh.removeFromParent();
       this.gate = null;
     }
-    if (gate === null) return;
+    if (gate === null) {
+      this.sign?.draw();
+      return;
+    }
     const badge = createGateBadge(gate, this.light);
     badge.mesh.position.z = 0.26;
+    badge.mesh.visible = !this.sign;
     this.group.add(badge.mesh);
     this.gate = { number: gate, ...badge };
     this.stackLabel();
+    this.sign?.draw();
   }
 
   /**
@@ -818,6 +869,7 @@ export class Door {
     this.label.material.map?.dispose();
     this.label.geometry.dispose();
     this.label.material.dispose();
+    this.setSign(null);
     this.setGate(null);
     if (this.chips) {
       this.chips.mesh.material.map?.dispose();
@@ -858,6 +910,8 @@ export class Door {
       this.tint.copy(sampled);
       this.tintFrame();
     }
+    // The cover is the sign's logo.
+    this.sign?.draw();
   }
 }
 

@@ -65,6 +65,9 @@ export interface CitySlot {
   out: number;
   ring: number;
   sector: number;
+  /** Which of its block's walls the door is on (see blockFaces), and how far along it from the first corner. */
+  face: number;
+  along: number;
 }
 
 export interface CityPlan {
@@ -92,6 +95,73 @@ export function ringInner(hub: number, ring: number, config: AvenueConfig = AVEN
  */
 export function sideAngle(r: number, halfAvenue: number): number {
   return Math.asin(Math.min(1, halfAvenue / r));
+}
+
+/**
+ * One wall of a block, from corner to corner, for whatever stands along it:
+ * the doors here, the storefronts in avenues.ts. Positions are given as how
+ * far along the wall from its first corner, and how far out in front of it.
+ */
+export interface WallFace {
+  /** 0 the inner wall, 1 the outer wall, 2 the side on avenue `from`, 3 the side on avenue `to`. */
+  index: number;
+  /** Corner to corner, in metres along the wall. */
+  length: number;
+  /** Radius of a curved wall; 0 for a straight one. */
+  radius: number;
+  /** The inner wall curves round towards whoever stands in front of it. */
+  concave: boolean;
+  /** The point `along` metres from the first corner, `out` metres in front of the wall. */
+  at(along: number, out: number): [number, number];
+  /** The way out of the wall at `along`, as a unit vector. */
+  normal(along: number): [number, number];
+}
+
+/** A block's four walls: inner, outer, and the sides along the avenues either side. */
+export function blockFaces(block: CityBlock, halfAvenue: number): WallFace[] {
+  const faces: WallFace[] = [];
+  for (const [index, r, inward] of [[0, block.inner, true], [1, block.outer, false]] as const) {
+    const start = block.from + sideAngle(r, halfAvenue);
+    const end = block.to - sideAngle(r, halfAvenue);
+    const facing = inward ? -1 : 1;
+    faces.push({
+      index,
+      length: (end - start) * r,
+      radius: r,
+      concave: inward,
+      at: (along, out) => {
+        const angle = start + along / r;
+        const at = r + facing * out;
+        return [Math.sin(angle) * at, Math.cos(angle) * at];
+      },
+      normal: (along) => {
+        const angle = start + along / r;
+        return [Math.sin(angle) * facing, Math.cos(angle) * facing];
+      },
+    });
+  }
+  for (const [index, angle, side] of [[2, block.from, 1], [3, block.to, -1]] as const) {
+    // Along the avenue, and across it into the block.
+    const ux = Math.sin(angle);
+    const uz = Math.cos(angle);
+    const nx = Math.cos(angle) * side;
+    const nz = -Math.sin(angle) * side;
+    const t0 = Math.sqrt(block.inner * block.inner - halfAvenue * halfAvenue);
+    const t1 = Math.sqrt(block.outer * block.outer - halfAvenue * halfAvenue);
+    faces.push({
+      index,
+      length: t1 - t0,
+      radius: 0,
+      concave: false,
+      at: (along, out) => {
+        const t = t0 + along;
+        const across = halfAvenue - out;
+        return [ux * t + nx * across, uz * t + nz * across];
+      },
+      normal: () => [-nx, -nz],
+    });
+  }
+  return faces;
 }
 
 /** A stretch of wall that holds doors: where its k doors stand, evenly spread and centred. */
@@ -125,50 +195,25 @@ function planRing(hub: number, ring: number, spokes: number, slotWidth: number, 
   for (let sector = 0; sector < spokes; sector++) {
     const from = sector * step;
     const to = from + step;
-    blocks.push({ ring, sector, inner, outer, from, to });
-    const walls: Face[] = [];
-
-    // The inner and outer walls, facing the ring streets.
-    for (const [r, inward] of [[inner, true], [outer, false]] as const) {
-      const start = from + sideAngle(r, half);
-      const length = (to - sideAngle(r, half) - start) * r - config.cornerClear * 2;
-      const out = inward ? OUT_CONCAVE : OUT_FLAT;
-      const facing = inward ? -1 : 1;
-      walls.push({
+    const block: CityBlock = { ring, sector, inner, outer, from, to };
+    blocks.push(block);
+    // Every wall takes doors, the inner one (facing the rotunda) first.
+    const walls: Face[] = blockFaces(block, half).map((face) => {
+      const length = face.length - config.cornerClear * 2;
+      const out = face.concave ? OUT_CONCAVE : OUT_FLAT;
+      const [mx, mz] = face.at(face.length / 2, 0);
+      return {
         capacity: fits(length, slotWidth, config.doorGap),
-        order: r,
+        order: Math.hypot(mx, mz),
         place: (count) =>
-          spread(length, count).map((along) => {
-            const angle = start + (config.cornerClear + along) / r;
-            const sin = Math.sin(angle);
-            const cos = Math.cos(angle);
-            const at = r + facing * out;
-            return { x: sin * at, z: cos * at, facingX: sin * facing, facingZ: cos * facing, out, ring, sector };
+          spread(length, count).map((offset) => {
+            const along = config.cornerClear + offset;
+            const [x, z] = face.at(along, out);
+            const [facingX, facingZ] = face.normal(along);
+            return { x, z, facingX, facingZ, out, ring, sector, face: face.index, along };
           }),
-      });
-    }
-
-    // The side walls, facing the avenues either side.
-    for (const [angle, side] of [[from, 1], [to, -1]] as const) {
-      // Along the avenue, and across it into the block.
-      const ux = Math.sin(angle);
-      const uz = Math.cos(angle);
-      const nx = Math.cos(angle) * side;
-      const nz = -Math.sin(angle) * side;
-      const t0 = Math.sqrt(inner * inner - half * half);
-      const t1 = Math.sqrt(outer * outer - half * half);
-      const length = t1 - t0 - config.cornerClear * 2;
-      const across = half - OUT_FLAT;
-      walls.push({
-        capacity: fits(length, slotWidth, config.doorGap),
-        order: (t0 + t1) / 2,
-        place: (count) =>
-          spread(length, count).map((along) => {
-            const t = t0 + config.cornerClear + along;
-            return { x: ux * t + nx * across, z: uz * t + nz * across, facingX: -nx, facingZ: -nz, out: OUT_FLAT, ring, sector };
-          }),
-      });
-    }
+      };
+    });
     faces.push(walls.filter((wall) => wall.capacity > 0).sort((a, b) => a.order - b.order));
   }
   return { blocks, faces };

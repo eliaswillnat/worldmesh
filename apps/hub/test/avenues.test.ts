@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { AVENUES, planAvenues, ringInner } from '../src/walk/avenuePlan';
-import { blockOutline, prismRoof, prismWalls } from '../src/walk/avenues';
+import { AVENUES, blockFaces, planAvenues, ringInner } from '../src/walk/avenuePlan';
+import { blockOutline, buildAvenues, faceBox, prismRoof, prismWalls } from '../src/walk/avenues';
+import { STOREFRONT_WIDTH } from '../src/walk/facade';
 
 const HUB = 60.2;
 const SPOKES = 8;
@@ -148,5 +149,58 @@ describe('block geometry', () => {
     const roof = prismRoof(outline, 14);
     const normal = roof.getAttribute('normal');
     for (let i = 0; i < normal.count; i++) expect(normal.getY(i)).toBeCloseTo(1);
+  });
+});
+
+describe('storefront geometry', () => {
+  const plan = planAvenues(HUB, SPOKES, 30, STOREFRONT_WIDTH);
+  const block = plan.blocks.find((b) => b.ring === 0 && b.sector === 2)!;
+
+  it('meets each wall at its corners, and puts every door on its own wall', () => {
+    const [inner, outer, from, to] = blockFaces(block, plan.halfAvenue);
+    const near = (a: [number, number], b: [number, number]) => expect(Math.hypot(a[0] - b[0], a[1] - b[1])).toBeLessThan(1e-6);
+    near(inner.at(0, 0), from.at(0, 0));
+    near(inner.at(inner.length, 0), to.at(0, 0));
+    near(outer.at(0, 0), from.at(from.length, 0));
+    near(outer.at(outer.length, 0), to.at(to.length, 0));
+    for (const slot of plan.slots) {
+      const b = plan.blocks.find((other) => other.ring === slot.ring && other.sector === slot.sector)!;
+      const face = blockFaces(b, plan.halfAvenue)[slot.face];
+      const [x, z] = face.at(slot.along, slot.out);
+      expect(Math.hypot(x - slot.x, z - slot.z)).toBeLessThan(1e-6);
+    }
+  });
+
+  it('faces a pier out from its wall on curved and straight walls alike', () => {
+    for (const face of blockFaces(block, plan.halfAvenue)) {
+      const pier = faceBox(face, 5, 6, 0, 10, 0, 0.45);
+      const position = pier.getAttribute('position');
+      const [mx, mz] = face.at(5.5, 0.2);
+      for (let i = 0; i < position.count; i += 3) {
+        const a = [position.getX(i), position.getY(i), position.getZ(i)];
+        const b = [position.getX(i + 1), position.getY(i + 1), position.getZ(i + 1)];
+        const c = [position.getX(i + 2), position.getY(i + 2), position.getZ(i + 2)];
+        const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        const v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+        const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+        // Every face points away from the middle of the pier.
+        const centre = [(a[0] + b[0] + c[0]) / 3 - mx, (a[1] + b[1] + c[1]) / 3 - 5, (a[2] + b[2] + c[2]) / 3 - mz];
+        expect(n[0] * centre[0] + n[1] * centre[1] + n[2] * centre[2]).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('hangs a sign over every door, as wide as its storefront allows', () => {
+    const built = buildAvenues(plan, plan.slots.length);
+    expect(built.signs).toHaveLength(plan.slots.length);
+    for (const sign of built.signs) {
+      expect(sign.aspect).toBeGreaterThan(5);
+      expect(sign.geometry.getAttribute('uv')).toBeDefined();
+      // In the door's own frame: centred over the doorway, facing out.
+      sign.geometry.computeBoundingBox();
+      const box = sign.geometry.boundingBox!;
+      expect((box.min.x + box.max.x) / 2).toBeCloseTo(0, 1);
+      expect(box.min.z).toBeGreaterThan(-0.5);
+    }
   });
 });

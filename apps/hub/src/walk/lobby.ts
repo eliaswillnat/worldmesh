@@ -50,7 +50,8 @@ import { WalkThrough } from './walkThrough';
 import { doorFrameGeometry, frameOuterCorner, openingCorner } from './doorShape';
 import { describeBillboard } from './layout';
 import { planAvenues, type CityPlan } from './avenuePlan';
-import { PORCH_WIDTH, buildAvenues } from './avenues';
+import { buildAvenues } from './avenues';
+import { STOREFRONT_WIDTH } from './facade';
 import { playSendSound, playWarpSound, setPortalHum, stopPortalHum } from './sounds';
 import { chatRejection } from '../../../../workers/presence/src/chatFilter';
 import { fetchOccupancy } from './occupancy';
@@ -582,6 +583,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
   const wallMaterial = new MeshStandardMaterial({ side: DoubleSide, roughness: 0.7, metalness: 0 });
   const innerWallMaterial = new MeshBasicMaterial({ side: DoubleSide });
+  // The city's storefronts: piers, beams, fascias and panels, a shade off the walls.
+  const facadeMaterial = new MeshStandardMaterial({ side: DoubleSide, roughness: 0.7, metalness: 0 });
   const gateFrameMaterial = new MeshStandardMaterial({ roughness: 0.4, metalness: 0.05 });
   // The dome's glazing and the gallery rails.
   const glassMaterial = new MeshStandardMaterial({
@@ -779,8 +782,9 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   // Empty doors round the galleries. Rebuilt with the hall.
   const galleryDoors: Door[] = [];
   /** The avenues and ring streets round the citadel, and how many of their door places hold a world. */
-  let city: CityPlan = planAvenues(HALL_RADIUS + WALL_THICKNESS, GATE_COUNT, 0, PORCH_WIDTH);
-  let cityDoors = 0;
+  let city: CityPlan = planAvenues(HALL_RADIUS + WALL_THICKNESS, GATE_COUNT, 0, STOREFRONT_WIDTH);
+  /** The doors out in the city, in the order of the plan's slots: each gets its storefront's sign. */
+  let cityDoors: Door[] = [];
   /** The city's blocks (just for looks) and their walls, one collider per block. */
   const cityMeshes: Mesh[] = [];
   const cityColliders: Mesh[] = [];
@@ -1740,6 +1744,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     departures.setTheme(light);
     // Lift the shaded sides so white stays white, not grey.
     wallMaterial.emissive.set(light ? CITY_GLOW_WHITE : 0x000000);
+    facadeMaterial.color.set(light ? 0xdde1ea : 0x1f2026);
+    facadeMaterial.emissive.set(light ? 0x4f5460 : 0x000000);
     applyCityTheme(cityMaterials, light);
     billboards?.setTheme(light);
   }
@@ -1837,15 +1843,18 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     // Out in the city: along the avenues and ring streets, nearest ring first,
     // numbered after the hall's. The city grows a ring when it runs out of doors.
     const outer = radius + WALL_THICKNESS;
-    city = planAvenues(outer, GATE_COUNT, assigned.city.length, PORCH_WIDTH);
+    city = planAvenues(outer, GATE_COUNT, assigned.city.length, STOREFRONT_WIDTH);
     const cityUrls = assigned.city.slice(0, city.slots.length);
     const cityGate = total + 1;
-    cityUrls.forEach((url, i) => {
+    cityDoors = cityUrls.map((url, i) => {
       const slot = city.slots[i];
-      doorFor(url).place(slot.x, slot.z, slot.x + slot.facingX, slot.z + slot.facingZ);
-      doorFor(url).setGate(cityGate + i);
+      const door = doorFor(url);
+      door.place(slot.x, slot.z, slot.x + slot.facingX, slot.z + slot.facingZ);
+      door.setGate(cityGate + i);
+      return door;
     });
-    cityDoors = cityUrls.length;
+    // A world that moved into the hall takes its storefront sign down (buildCity hangs the rest).
+    for (const door of doors.values()) if (!cityDoors.includes(door)) door.setSign(null);
     // Worlds that no longer get a door take theirs down.
     const placed = new Set([...urls, ...cityUrls]);
     for (const [url, door] of doors) {
@@ -2242,9 +2251,9 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
   /**
    * The city round the citadel: an avenue straight out of every gate, ring
-   * streets crossing them, and plain blocks between, with the porches of the
-   * worlds' doors. One mesh for the walls and one for the light, like the
-   * citadel's trim.
+   * streets crossing them, and blocks between, dressed as storefronts round
+   * the worlds' doors. One mesh each for the walls, the storefronts' trim and
+   * the light, like the citadel's trim; each door carries its own sign.
    */
   function buildCity(outer: number): void {
     billboards?.setSlots(billboardSlots);
@@ -2254,8 +2263,13 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     }
     cityMeshes.length = 0;
     cityColliders.length = 0;
-    const blocks = buildAvenues(city, cityDoors);
-    for (const [geometries, material] of [[blocks.solid, wallMaterial], [blocks.glow, cityMaterials.glow]] as const) {
+    const blocks = buildAvenues(city, cityDoors.length);
+    // Each storefront's sign hangs from its door, so it comes and goes with the world.
+    cityDoors.forEach((door, i) => {
+      const sign = blocks.signs[i];
+      door.setSign(sign?.geometry ?? null, sign?.aspect);
+    });
+    for (const [geometries, material] of [[blocks.solid, wallMaterial], [blocks.trim, facadeMaterial], [blocks.glow, cityMaterials.glow]] as const) {
       const mesh = new Mesh(mergeGeometries(geometries), material);
       for (const geometry of geometries) geometry.dispose();
       scene.add(mesh);
