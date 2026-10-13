@@ -30,6 +30,6 @@ for world in "${WORLDS[@]}"; do
   mkdir -p "$public/doorway" "$public/.well-known"
   cp "$out/$world/portal.glb" "$public/doorway/scene.glb"
   cp "$out/$world/backdrop.webp" "$public/doorway/backdrop.webp"
-  printf '{ "doorway": 1, "scene": "/doorway/scene.glb", "embed": true, "characters": ["vrm", "glb"] }\n' >"$public/.well-known/doorway.json"
+  printf '{ "doorway": 1, "scene": "/doorway/scene.glb", "view": true, "embed": true, "characters": ["vrm", "glb"] }\n' >"$public/.well-known/doorway.json"
   echo "  $world: /.well-known/doorway.json"
 done

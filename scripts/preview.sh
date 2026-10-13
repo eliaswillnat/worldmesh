@@ -304,8 +304,9 @@ upload_apps() {
 # Door views and Doorway scenes of the five preview worlds, taken from the
 # fresh builds (workers/screenshot can't: its browser can't get past Access).
 # Each world publishes its own Doorway scene, like any Doorway destination
-# (docs/specs/doorway.md §2): doorway/scene.glb, its backdrop and
-# doorway/doorway.json, served as /.well-known/doorway.json (_redirects).
+# (docs/specs/doorway.md §2): doorway/scene.glb and its backdrop, named in
+# doorway.json, served as /.well-known/doorway.json (_redirects); it keeps
+# the world's live view ("view": true, from public/doorway.json).
 # Runs before upload_apps, so the files ship with the world.
 DOORWAY_OUT=""
 capture_doorways() {
@@ -319,7 +320,7 @@ capture_doorways() {
     mkdir -p "apps/$app/dist/doorway"
     cp "$DOORWAY_OUT/$app/portal.glb" "apps/$app/dist/doorway/scene.glb"
     cp "$DOORWAY_OUT/$app/backdrop.webp" "apps/$app/dist/doorway/backdrop.webp"
-    printf '{ "doorway": 1, "scene": "/doorway/scene.glb", "embed": true, "characters": ["vrm", "glb"] }\n' >"apps/$app/dist/doorway/doorway.json"
+    printf '{ "doorway": 1, "scene": "/doorway/scene.glb", "view": true, "embed": true, "characters": ["vrm", "glb"] }\n' >"apps/$app/dist/doorway.json"
     echo "  $app publishes its Doorway scene"
   done
 }

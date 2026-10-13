@@ -1001,7 +1001,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       // Last, with the camera where it will be drawn from: the worlds seen live through their doors.
       walkThrough?.step(camera, feet.set(x, y, z));
       doorViews.renderPortals(camera);
-      liveDoors.update(doors.values(), camera, feet, !renderer.xr.isPresenting);
+      liveDoors.update(doors.values(), camera, feet, !renderer.xr.isPresenting, walkThrough?.crossing ?? null);
     },
   });
   if (alias) ghost = makeGhost(world.avatar);

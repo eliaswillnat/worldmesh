@@ -118,6 +118,11 @@ export class WalkThrough {
     window.addEventListener('touchcancel', this.onTouches, { capture: true, passive: true });
   }
 
+  /** The door being walked through right now, if any: it shows its portal scene, with the visitor in it. */
+  get crossing(): Door | null {
+    return this.armed;
+  }
+
   /** Every frame, before `step`: keep the nearest walk door's world waiting behind the hall. */
   update(doors: Iterable<Door>, feet: Vector3): void {
     if (this.handover !== null || this.done) return;

@@ -25,8 +25,13 @@ const HIDE = 18;
 const UNLOAD = 30;
 /** A world that hasn't said it's ready by then keeps its cover for the visit. */
 const READY_TIMEOUT = 20;
-/** Pixels of margin round the doorway's part of the screen. */
-const RECT_MARGIN = 2;
+/**
+ * Margin round the doorway's part of the screen: pixels, plus a share of its
+ * size. The world draws a frame after the lobby, so while the visitor turns
+ * the doorway has moved on a little; the margin keeps its edge filled.
+ */
+const RECT_MARGIN = 4;
+const RECT_SLACK = 0.08;
 
 interface LiveWorld {
   door: Door;
@@ -76,9 +81,11 @@ export class LiveDoors {
   /**
    * Every frame, with the camera where it will be drawn from: keep the
    * nearest live door's world loaded, and send it the camera while it shows.
-   * `enabled` false (VR) closes every live doorway.
+   * `enabled` false (VR) closes every live doorway. The door being walked
+   * through (`crossing`, walkThrough) shows its portal scene instead, with
+   * the visitor drawn in it.
    */
-  update(doors: Iterable<Door>, camera: PerspectiveCamera, feet: Vector3, enabled: boolean): void {
+  update(doors: Iterable<Door>, camera: PerspectiveCamera, feet: Vector3, enabled: boolean, crossing: Door | null = null): void {
     let nearest: Door | null = null;
     let best = PRELOAD;
     if (enabled) {
@@ -98,7 +105,7 @@ export class LiveDoors {
     if (!live?.ready) return;
     const distance = this.distance(live.door, feet);
     this.showing = distance < (this.showing ? HIDE : SHOW);
-    const rect = this.showing ? this.screenRect(live.door, camera) : null;
+    const rect = this.showing && live.door !== crossing ? this.screenRect(live.door, camera) : null;
     if (!rect) {
       live.door.setLiveHole(false);
       return;
@@ -200,11 +207,12 @@ export class LiveDoors {
       top = Math.max(top, corner.y);
     }
     if (right < -1 || left > 1 || top < -1 || bottom > 1) return null;
+    const margin = RECT_MARGIN + RECT_SLACK * Math.max(((right - left) / 2) * width, ((top - bottom) / 2) * height);
     return [
-      Math.max(0, Math.floor(((left + 1) / 2) * width) - RECT_MARGIN),
-      Math.max(0, Math.floor(((1 - top) / 2) * height) - RECT_MARGIN),
-      Math.min(width, Math.ceil(((right + 1) / 2) * width) + RECT_MARGIN),
-      Math.min(height, Math.ceil(((1 - bottom) / 2) * height) + RECT_MARGIN),
+      Math.max(0, Math.floor(((left + 1) / 2) * width - margin)),
+      Math.max(0, Math.floor(((1 - top) / 2) * height - margin)),
+      Math.min(width, Math.ceil(((right + 1) / 2) * width + margin)),
+      Math.min(height, Math.ceil(((1 - bottom) / 2) * height + margin)),
     ];
   }
 

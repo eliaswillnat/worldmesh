@@ -361,6 +361,10 @@ page load (`location.href = url`), never to a stuck visitor:
     demo world's Doorway scene on the world itself;
   - live views (§3.1) for destinations whose Doorway file has `"view": true`,
     the nearest door within 15 m only (`apps/hub/src/walk/liveDoors.ts`);
+    `@worldmesh/runtime` draws them for any world built on it
+    (`DOORWAY_VIEW_PARAM`), with the spawn point 0.6 m beyond the doorway,
+    where the hub stands a Doorway scene; the five demo worlds publish
+    `"view": true`;
   - characters travel as `doorway:character` (§6), with the Avatar Wallet's
     descriptor and ticket under `worldmesh`; the pre-standard
     `worldmesh:avatar` is still understood;
