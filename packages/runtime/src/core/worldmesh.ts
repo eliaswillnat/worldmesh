@@ -1,4 +1,4 @@
-import { Euler, Group, PerspectiveCamera, Vector3 } from 'three';
+import { Euler, Group, PerspectiveCamera, Plane, Quaternion, Vector2, Vector3 } from 'three';
 import { resolveAbilities } from '../abilities/abilities.js';
 import { parseAvatarDescriptor, type AvatarDescriptor } from '../avatar/descriptor.js';
 import { resolveWorldMeshAvatar, setAvatarTicket, takeAvatarTicket } from '../avatar/handoff.js';
@@ -52,6 +52,20 @@ export const CAPTURE_PARAM = 'worldmesh-capture';
  * page around it is the host's.
  */
 export const EMBED_PARAM = 'doorway-embed';
+/**
+ * Set by a host that draws the world live in one of its doorways (Doorway,
+ * docs/specs/doorway.md §3.1). The world stays offline, shows no UI, takes no
+ * input, and draws only when the host sends a camera (`doorway:view`), from
+ * that camera carried through the doorway onto its spawn point.
+ */
+export const DOORWAY_VIEW_PARAM = 'doorway-view';
+/**
+ * Metres from the doorway back to the spawn point in a live view: where
+ * WorldMesh's hub stands a world's Doorway scene too, so the two line up.
+ */
+const VIEW_SPAWN_BEHIND = 0.6;
+/** Seconds a live view waits for the player to land at spawn before saying it is ready. */
+const VIEW_SETTLE = 2;
 /** The pre-Doorway names, still understood: `worldmesh-embed` and `worldmesh:*` messages. */
 const LEGACY_EMBED_PARAM = 'worldmesh-embed';
 const isDoorwayMessage = (data: unknown, name: string): boolean => {
@@ -76,6 +90,8 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   const spawn = new Vector3(...(options.spawn ?? [0, 2, 0]));
   const abilities = resolveAbilities(options.abilities);
 
+  // Before anything sizes the canvas: a live doorway view draws at 1×.
+  const viewing = isDoorwayViewRequest();
   const height = options.player?.height ?? 1.8;
   const radius = options.player?.radius ?? 0.35;
 
@@ -207,18 +223,25 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   if (options.autoStart !== false) start();
 
   const capturing = isCaptureRequest();
-  const embedded = !capturing && isEmbedRequest();
+  const embedded = !capturing && !viewing && isEmbedRequest();
   let network: WorldMeshOptions['network'];
   /** Embedded and not walked into yet. */
   let dormant = embedded;
   /** Easing the field of view back to the world's own, after a walk-in took over the hub's. */
   let fovReturn: { from: number; to: number; t: number } | null = null;
+  /** Live doorway view: said ready to the host, and drawn a view for it. */
+  let viewReady = false;
+  let viewFramed = false;
+  const viewStart = performance.now();
+  /** The host's latest view, not drawn yet. */
+  let pendingView: DoorwayView | null = null;
   if (capturing) exposeCapture();
-  if (embedded) awaitEntry();
+  if (viewing) serveDoorwayView();
+  else if (embedded) awaitEntry();
   else if (!capturing) goOnline();
 
-  startAvatar();
-  if (vrEnabled) void offerVr();
+  if (!viewing) startAvatar();
+  if (vrEnabled && !viewing) void offerVr();
 
   return handle;
 
@@ -237,6 +260,72 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     network?.attach(handle);
     const bodies = network?.bodies?.bind(network);
     if (bodies) controller.bodies = () => bodies();
+  }
+
+  /**
+   * Drawn live in a host's doorway (DOORWAY_VIEW_PARAM): offline, no overlay,
+   * no input, no body of its own (the visitor's is in the host). The world
+   * keeps running (water, animations) and draws, once a frame, the latest
+   * view the host sent; none sent, nothing drawn. Ready once the player has
+   * landed at spawn, so the first view doesn't sink.
+   */
+  function serveDoorwayView(): void {
+    overlay.dispose();
+    input.dispose();
+    if (player.root) player.root.visible = false;
+    window.addEventListener('message', (event: MessageEvent) => {
+      if (event.source !== window.parent || disposed || !viewReady) return;
+      const view = event.data as Partial<DoorwayView> & { type?: unknown };
+      // Only the latest counts: a world slower than the host never falls behind.
+      if (view?.type === 'doorway:view' && validDoorwayView(view)) pendingView = view;
+    });
+  }
+
+  /** In the loop, instead of drawing: say ready once settled at spawn, then draw the latest view. */
+  function stepDoorwayView(): void {
+    if (!viewReady && (controller.onGround || performance.now() - viewStart > VIEW_SETTLE * 1000)) {
+      viewReady = true;
+      window.parent.postMessage({ type: 'doorway:view-ready' }, '*');
+    }
+    const view = pendingView;
+    if (!view) return;
+    pendingView = null;
+    drawDoorwayView(view);
+    if (!viewFramed) {
+      viewFramed = true;
+      window.parent.postMessage({ type: 'doorway:view-frame' }, '*');
+    }
+  }
+
+  /**
+   * One view: the host's camera, in the door's frame (threshold at the
+   * origin, +Y up, −Z through the doorway), carried onto the spawn point
+   * VIEW_SPAWN_BEHIND metres beyond it, facing the way the player does.
+   * Only the doorway's part of the screen, and nothing on the host's side.
+   */
+  function drawDoorwayView(view: DoorwayView): void {
+    const { width, height: viewHeight } = view.viewport;
+    renderer.getSize(viewSize);
+    if (viewSize.x !== width || viewSize.y !== viewHeight) renderer.setSize(width, viewHeight);
+    if (camera instanceof PerspectiveCamera) {
+      camera.fov = view.camera.fov;
+      camera.aspect = width / viewHeight;
+      camera.updateProjectionMatrix();
+    }
+    viewTurn.setFromAxisAngle(UP, cameraRig.yaw);
+    viewThreshold.set(0, 0, VIEW_SPAWN_BEHIND).applyQuaternion(viewTurn).add(controller.position);
+    camera.position.fromArray(view.camera.position).applyQuaternion(viewTurn).add(viewThreshold);
+    camera.quaternion.copy(viewTurn).multiply(viewQuaternion.fromArray(view.camera.quaternion));
+    camera.updateMatrixWorld();
+    viewClip.setFromNormalAndCoplanarPoint(viewForward.set(0, 0, -1).applyQuaternion(viewTurn), viewThreshold);
+    const worldPlanes = renderer.clippingPlanes;
+    renderer.clippingPlanes = [...worldPlanes, viewClip];
+    const [left, top, right, bottom] = view.rect;
+    renderer.setScissorTest(true);
+    renderer.setScissor(left, viewHeight - bottom, right - left, bottom - top);
+    renderer.render(scene, camera);
+    renderer.setScissorTest(false);
+    renderer.clippingPlanes = worldPlanes;
   }
 
   /**
@@ -463,7 +552,14 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
       camera.updateProjectionMatrix();
       if (fovReturn.t >= 1) fovReturn = null;
     }
-    renderer.render(scene, camera);
+    // A live doorway view draws the host's latest camera instead (stepDoorwayView).
+    // Drawing is what places things otherwise, and colliders need them placed.
+    if (viewing) {
+      scene.updateMatrixWorld();
+      stepDoorwayView();
+    } else {
+      renderer.render(scene, camera);
+    }
   }
 
   async function offerVr(): Promise<void> {
@@ -723,6 +819,14 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     }
   }
 
+  function isDoorwayViewRequest(): boolean {
+    try {
+      return window.parent !== window && new URLSearchParams(window.location.search).has(DOORWAY_VIEW_PARAM);
+    } catch {
+      return false;
+    }
+  }
+
   function isCaptureRequest(): boolean {
     try {
       return new URLSearchParams(window.location.search).has(CAPTURE_PARAM);
@@ -747,7 +851,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     const viewHeight = window.innerHeight;
     // Pixel ratio first: setSize derives the drawing buffer from it, and it
     // must also update the canvas CSS size or the canvas overflows the window.
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(viewing ? 1 : Math.min(window.devicePixelRatio, 2));
     renderer.setSize(width, viewHeight);
     cameraRig.resize(width, viewHeight);
   }
@@ -784,3 +888,36 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     events.clear();
   }
 }
+
+/** What a host sends a live doorway view every frame (docs/specs/doorway.md §3.1). */
+interface DoorwayView {
+  camera: { position: Vec3Tuple; quaternion: [number, number, number, number]; fov: number };
+  viewport: { width: number; height: number };
+  /** The doorway on screen, [left, top, right, bottom] in CSS pixels: the only part seen. */
+  rect: [number, number, number, number];
+}
+
+function validDoorwayView(view: Partial<DoorwayView>): view is DoorwayView {
+  const numbers = (value: unknown, length: number) =>
+    Array.isArray(value) && value.length === length && value.every((n) => typeof n === 'number' && Number.isFinite(n));
+  const { camera, viewport } = view;
+  return (
+    !!camera &&
+    numbers(camera.position, 3) &&
+    numbers(camera.quaternion, 4) &&
+    typeof camera.fov === 'number' &&
+    camera.fov > 0 &&
+    !!viewport &&
+    viewport.width > 0 &&
+    viewport.height > 0 &&
+    numbers(view.rect, 4)
+  );
+}
+
+const UP = new Vector3(0, 1, 0);
+const viewSize = new Vector2();
+const viewTurn = new Quaternion();
+const viewQuaternion = new Quaternion();
+const viewThreshold = new Vector3();
+const viewForward = new Vector3();
+const viewClip = new Plane();

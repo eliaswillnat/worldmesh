@@ -81,6 +81,14 @@ meshes with standard, physical, basic, Lambert or Phong materials; other near
 things (custom shaders, points, sprites) are left out of both. Nothing moves
 in a portal scene yet.
 
+Best of all, a door can show your world itself, live, as seen from the
+visitor's own camera: water moving, everything as it is. Publish a Doorway
+file at `/.well-known/doorway.json` saying `{ "doorway": 1, "view": true }`
+and let hubs frame your page. The hub opens it with `?doorway-view` and sends
+its camera every frame; the runtime does the rest: offline, no UI, no input,
+drawing only the doorway's part of the screen from that camera, carried onto
+your spawn point (Doorway spec §3.1). Hubs keep the cover for worlds without it.
+
 ## What is exported
 
 | | |
@@ -96,6 +104,7 @@ in a portal scene yet.
 | `Presence`, `DEFAULT_PRESENCE_SERVER`, `NetworkAdapter` | multiplayer (`multiplayer: true`) and the seam for your own |
 | `captureDoorView`, `DOOR_VIEW_FACES`, `CAPTURE_PARAM` | the 360° colour + depth snapshot hub doors show of your world |
 | `exportPortal`, `PortalScene`, `PORTAL_SCENE_VERSION` | the scene around your spawn point that hub doors draw live |
+| `DOORWAY_VIEW_PARAM` | a hub drawing your world live in its doorway (`?doorway-view`), from the visitor's camera |
 | `EMBED_PARAM` | a hub keeping your world loaded behind its door (`?worldmesh-embed=1`): it waits offline, drawing rarely, until the visitor walks through; it then takes over from their exact pose in the hub, goes online without reloading, and asks the hub to open any other page |
 | `WORLDMESH_VERSION`, `WORLDMESH_PROTOCOL` | what your world is speaking |
 
