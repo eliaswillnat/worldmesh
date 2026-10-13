@@ -1,44 +1,45 @@
-import { Matrix4, Quaternion, Vector3, type PerspectiveCamera } from 'three';
-import type { Door } from './door';
+import { Matrix4, Quaternion, Scene, Vector3, type PerspectiveCamera } from 'three';
+import { CSS3DObject, CSS3DRenderer } from 'three/examples/jsm/renderers/CSS3DRenderer.js';
+import { DOOR_HEIGHT, DOOR_WIDTH, type Door } from './door';
 import { DOORWAY_CORNERS } from './doorViews';
 
 /**
- * Live doors: a world whose Doorway file says `"view": true` is drawn in its
- * doorway live, by the world itself, from the visitor's own camera
- * (docs/specs/doorway.md §5). The world runs in a frame under the lobby's
- * canvas and the door leaves its opening clear (Door.setLiveHole), so the
- * world shows through it while anything standing in front of the door still
- * covers it. Every frame the world is sent the camera, relative to the door.
+ * Live doors: a world whose Doorway file says `"view": true` is shown live in
+ * its doorway (docs/specs/doorway.md §3.1). Its page runs in a frame, laid
+ * flat in the doorway with CSS 3D under the lobby's canvas, and the door
+ * leaves its opening clear (Door.setLiveHole), so the page shows through it
+ * while anything standing in front of the door still covers it. The world
+ * just runs as it always does: nothing is sent to it, nothing asked of it.
  *
  * A second world running costs about as much as the lobby, so only the
- * nearest live door gets one, it draws only while close and on screen, and
- * only the doorway's part of the screen.
+ * nearest live door gets one, shown only while close and on screen.
  */
 
 const VIEW_PARAM = 'doorway-view';
 /** Load the world this close to its doorway, in metres. */
 const PRELOAD = 24;
-/** Draw it live this close, and stop again past HIDE. */
+/** Show it this close, and hide it again past HIDE. */
 const SHOW = 15;
 const HIDE = 18;
 /** Unload it past this, with no other live door nearer. */
 const UNLOAD = 30;
-/** A world that hasn't said it's ready by then keeps its cover for the visit. */
-const READY_TIMEOUT = 20;
-/** Pixels of margin round the doorway's part of the screen. */
-const RECT_MARGIN = 2;
+/** The frame's size in CSS pixels: the doorway's proportions, so the world fills it. */
+const FRAME_HEIGHT = 640;
+const FRAME_WIDTH = Math.round(FRAME_HEIGHT * (DOOR_WIDTH / DOOR_HEIGHT));
+/** A little past the doorway's edges, so no seam shows round the opening. */
+const BLEED = 1.02;
+/** After the page loads, time for the world to draw before the doorway opens onto it. */
+const SETTLE = 1500;
 
 interface LiveWorld {
   door: Door;
-  frame: HTMLIFrameElement;
-  origin: string;
-  ready: boolean;
-  /** The world has drawn its first frame: the doorway can open onto it. */
+  object: CSS3DObject;
+  /** The world has had time to draw: the doorway can open onto it. */
   framed: boolean;
   timeout: number;
 }
 
-/** Whether the world at `url` draws live doorway views: its Doorway file's `view`. */
+/** Whether the world at `url` can be shown live: its Doorway file's `view`. */
 async function discoverView(url: string): Promise<boolean> {
   try {
     const response = await fetch(new URL('/.well-known/doorway.json', url), { headers: { Accept: 'application/json' } });
@@ -52,16 +53,19 @@ async function discoverView(url: string): Promise<boolean> {
 
 export class LiveDoors {
   private layer: HTMLDivElement;
+  private renderer = new CSS3DRenderer();
+  private scene = new Scene();
   private live: LiveWorld | null = null;
-  /** Per world URL: whether it draws live views, once known. */
+  /** Per world URL: whether it can be shown live, once known. */
   private known = new Map<string, boolean>();
   private asked = new Set<string>();
-  private failed = new Set<string>();
   private showing = false;
-  private relative = new Matrix4();
-  private position = new Vector3();
-  private quaternion = new Quaternion();
-  private scale = new Vector3();
+  /** The frame's place in its door's own frame: centred in the doorway, pixels to metres. */
+  private placement = new Matrix4().compose(
+    new Vector3(0, DOOR_HEIGHT / 2, -0.02),
+    new Quaternion(),
+    new Vector3().setScalar((DOOR_WIDTH / FRAME_WIDTH) * BLEED),
+  );
   private corner = new Vector3();
 
   constructor(private canvas: HTMLCanvasElement) {
@@ -69,21 +73,22 @@ export class LiveDoors {
     this.layer = document.createElement('div');
     this.layer.className = 'door-live';
     this.layer.setAttribute('aria-hidden', 'true');
+    this.layer.style.visibility = 'hidden';
+    this.layer.append(this.renderer.domElement);
     canvas.before(this.layer);
-    window.addEventListener('message', this.onMessage);
   }
 
   /**
    * Every frame, with the camera where it will be drawn from: keep the
-   * nearest live door's world loaded, and send it the camera while it shows.
-   * `enabled` false (VR) closes every live doorway.
+   * nearest live door's world loaded, and lay it in its doorway while it
+   * shows. `enabled` false (VR) closes every live doorway.
    */
   update(doors: Iterable<Door>, camera: PerspectiveCamera, feet: Vector3, enabled: boolean): void {
     let nearest: Door | null = null;
     let best = PRELOAD;
     if (enabled) {
       for (const door of doors) {
-        if (!door.world || door.random || door.empty || this.failed.has(door.world.url)) continue;
+        if (!door.world || door.random || door.empty) continue;
         if (Math.abs(feet.y - door.group.position.y) > 1) continue;
         const distance = this.distance(door, feet);
         if (distance >= best || !this.isLive(door.world.url)) continue;
@@ -95,25 +100,29 @@ export class LiveDoors {
     if (!this.live && nearest) this.load(nearest);
 
     const live = this.live;
-    if (!live?.ready) return;
+    if (!live) return;
     const distance = this.distance(live.door, feet);
-    this.showing = distance < (this.showing ? HIDE : SHOW);
-    const rect = this.showing ? this.screenRect(live.door, camera) : null;
-    if (!rect) {
-      live.door.setLiveHole(false);
-      return;
-    }
-    this.send(live, camera, rect);
-    live.door.setLiveHole(live.framed);
+    this.showing = distance < (this.showing ? HIDE : SHOW) && this.onScreen(live.door, camera);
+    const shown = this.showing && live.framed;
+    live.door.setLiveHole(shown);
+    this.layer.style.visibility = shown ? 'visible' : 'hidden';
+
+    // Placed even while hidden: rendering is what puts the frame in the page, so it loads.
+    const width = this.canvas.clientWidth;
+    const height = this.canvas.clientHeight;
+    const size = this.renderer.getSize();
+    if (size.width !== width || size.height !== height) this.renderer.setSize(width, height);
+    live.door.group.updateWorldMatrix(true, false);
+    live.object.matrix.multiplyMatrices(live.door.group.matrixWorld, this.placement);
+    this.renderer.render(this.scene, camera);
   }
 
   dispose(): void {
     this.drop();
-    window.removeEventListener('message', this.onMessage);
     this.layer.remove();
   }
 
-  /** Known to draw live views; asks the world the first time it comes near. */
+  /** Known to be shown live; asks the world the first time it comes near. */
   private isLive(url: string): boolean {
     const known = this.known.get(url);
     if (known !== undefined) return known;
@@ -141,13 +150,16 @@ export class LiveDoors {
     frame.src = src.toString();
     frame.title = door.world!.name;
     frame.tabIndex = -1;
-    const live: LiveWorld = { door, frame, origin: src.origin, ready: false, framed: false, timeout: 0 };
-    live.timeout = window.setTimeout(() => {
-      if (live.ready || this.live !== live) return;
-      this.failed.add(door.world!.url);
-      this.drop();
-    }, READY_TIMEOUT * 1000);
-    this.layer.append(frame);
+    frame.style.width = `${FRAME_WIDTH}px`;
+    frame.style.height = `${FRAME_HEIGHT}px`;
+    const object = new CSS3DObject(frame);
+    frame.style.pointerEvents = 'none';
+    object.matrixAutoUpdate = false;
+    const live: LiveWorld = { door, object, framed: false, timeout: 0 };
+    frame.addEventListener('load', () => {
+      live.timeout = window.setTimeout(() => (live.framed = true), SETTLE);
+    }, { once: true });
+    this.scene.add(object);
     this.live = live;
     this.showing = false;
   }
@@ -157,66 +169,29 @@ export class LiveDoors {
     if (!live) return;
     window.clearTimeout(live.timeout);
     live.door.setLiveHole(false);
-    live.frame.remove();
+    // Removing the object takes its frame out of the page (CSS3DObject).
+    this.scene.remove(live.object);
+    this.layer.style.visibility = 'hidden';
     this.live = null;
   }
 
-  /** The camera relative to the doorway (feet at its middle, −Z through it), and where the doorway is on screen. */
-  private send(live: LiveWorld, camera: PerspectiveCamera, rect: [number, number, number, number]): void {
+  /** Whether any of the doorway is on screen; true when part of it is behind the camera. */
+  private onScreen(door: Door, camera: PerspectiveCamera): boolean {
     camera.updateMatrixWorld();
-    live.door.group.updateWorldMatrix(true, false);
-    this.relative.copy(live.door.group.matrixWorld).invert().multiply(camera.matrixWorld);
-    this.relative.decompose(this.position, this.quaternion, this.scale);
-    live.frame.contentWindow?.postMessage(
-      {
-        type: 'doorway:view',
-        camera: { position: this.position.toArray(), quaternion: this.quaternion.toArray(), fov: camera.fov },
-        viewport: { width: this.canvas.clientWidth, height: this.canvas.clientHeight },
-        rect,
-      },
-      live.origin,
-    );
-  }
-
-  /**
-   * Where the doorway is on screen, as [left, top, right, bottom] in CSS
-   * pixels from the top left; null if it is off screen. The whole screen if
-   * part of it is behind the camera.
-   */
-  private screenRect(door: Door, camera: PerspectiveCamera): [number, number, number, number] | null {
-    const width = this.canvas.clientWidth;
-    const height = this.canvas.clientHeight;
+    door.group.updateWorldMatrix(true, false);
     let left = Infinity;
     let bottom = Infinity;
     let right = -Infinity;
     let top = -Infinity;
     for (const [x, y] of DOORWAY_CORNERS) {
       const corner = this.corner.set(x, y, 0).applyMatrix4(door.group.matrixWorld).applyMatrix4(camera.matrixWorldInverse);
-      if (corner.z > -camera.near) return [0, 0, width, height];
+      if (corner.z > -camera.near) return true;
       corner.applyMatrix4(camera.projectionMatrix);
       left = Math.min(left, corner.x);
       right = Math.max(right, corner.x);
       bottom = Math.min(bottom, corner.y);
       top = Math.max(top, corner.y);
     }
-    if (right < -1 || left > 1 || top < -1 || bottom > 1) return null;
-    return [
-      Math.max(0, Math.floor(((left + 1) / 2) * width) - RECT_MARGIN),
-      Math.max(0, Math.floor(((1 - top) / 2) * height) - RECT_MARGIN),
-      Math.min(width, Math.ceil(((right + 1) / 2) * width) + RECT_MARGIN),
-      Math.min(height, Math.ceil(((1 - bottom) / 2) * height) + RECT_MARGIN),
-    ];
+    return !(right < -1 || left > 1 || top < -1 || bottom > 1);
   }
-
-  private onMessage = (event: MessageEvent): void => {
-    const live = this.live;
-    if (!live || event.source !== live.frame.contentWindow) return;
-    const type = (event.data as { type?: unknown } | null)?.type;
-    if (type === 'doorway:view-ready') {
-      live.ready = true;
-      window.clearTimeout(live.timeout);
-    } else if (type === 'doorway:view-frame') {
-      live.framed = true;
-    }
-  };
 }

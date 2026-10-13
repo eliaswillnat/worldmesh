@@ -53,7 +53,7 @@ Non-goals:
 | Level | Destination provides | Visitor experience |
 | --- | --- | --- |
 | 0 · Link | A URL | The host shows a cover image; walking in loads the page |
-| 1 · Window | A doorway scene (§3), or a live view (§3.1) | The doorway shows the destination in 3D, from wherever the visitor stands; walking in loads the page |
+| 1 · Window | A doorway scene (§3), or a live view (§3.1) | The doorway shows the destination: in 3D from wherever the visitor stands (a scene), or the page itself, live (a view); walking in loads the page |
 | 2 · Walk-through | Level 1 + the handoff (§4) | Walking in continues straight into the real destination, no load |
 | 3 · Character | Level 2 + character handoff (§6) | The visitor arrives as their own character |
 
@@ -164,42 +164,25 @@ the doorway, over the backdrop. The transform it used is the **placement**
 ### 3.1 Live view
 
 A destination whose look can't be carried in a glTF file (custom shaders,
-live simulation, other people) MAY draw the doorway itself instead. The
-host loads it in an iframe with the query parameter `doorway-view`, under its
-own canvas, and leaves the doorway's pixels transparent so the frame shows
-through them; anything in front of the door still covers it.
+live simulation, other people) MAY ask to be shown live instead, with
+`"view": true`. Nothing else is asked of it: no messages, no code.
 
-The destination then posts `{ "type": "doorway:view-ready" }` to its parent.
-Every frame the host posts:
+The host loads the page in an iframe with the query parameter `doorway-view`,
+at a fixed size with the doorway's proportions, and lays the frame flat in
+the doorway (CSS 3D) under its own canvas. It leaves the doorway's pixels
+transparent so the frame shows through them; anything in front of the door
+still covers it. The page runs as it always does and is seen as it draws
+itself, at its own arrival view; the host keeps its cover until the page has
+loaded.
 
-```json
-{
-  "type": "doorway:view",
-  "camera": { "position": [0.4, 2.6, 5.1], "quaternion": [0, 0, 0, 1], "fov": 70 },
-  "viewport": { "width": 1280, "height": 800 },
-  "rect": [512, 180, 768, 470]
-}
-```
-
-| Field | Meaning |
-| --- | --- |
-| `camera.position`, `camera.quaternion` | The host camera in the **door frame**: metres, the doorway's threshold at the origin, +Y up, −Z through the doorway. |
-| `camera.fov` | Vertical field of view, degrees. The aspect is the viewport's. |
-| `viewport` | The frame's size in CSS pixels; it covers the host's canvas exactly. |
-| `rect` | Where the doorway is, `[left, top, right, bottom]` CSS pixels: the only part seen. |
-
-The destination maps the door frame onto a place of its choosing (its own
-arrival view, at its own scale), draws from that camera, and posts
-`{ "type": "doorway:view-frame" }` after the first frame, before which the
-host keeps its cover. It SHOULD draw only `rect`, only when a view arrives,
-and nothing on the host's side of the doorway plane. A live view shows no UI,
-takes no input and joins no session.
+Under `doorway-view` the destination SHOULD show no UI, take no input and join
+no session; it is seen, never used. Its server MUST allow that page to be
+framed by the hosts it accepts (`Content-Security-Policy: frame-ancestors`),
+and SHOULD allow no other page.
 
 It costs the host a second running page, so a host SHOULD run at most one,
-for the nearest door, only while it is close and on screen, and MAY keep the
-cover on devices that can't afford it. The destination's server MUST allow
-the `doorway-view` page to be framed by the hosts it accepts
-(`Content-Security-Policy: frame-ancestors`), and SHOULD allow no other page.
+for the nearest door, only while it is close, and MAY keep the cover on
+devices that can't afford it.
 
 ## 4. The handoff
 
@@ -360,7 +343,8 @@ page load (`location.href = url`), never to a stuck visitor:
     falls back to WorldMesh's capture service; preview deploys publish each
     demo world's Doorway scene on the world itself;
   - live views (§3.1) for destinations whose Doorway file has `"view": true`,
-    the nearest door within 15 m only (`apps/hub/src/walk/liveDoors.ts`);
+    the nearest door within 15 m only, laid in the doorway with CSS 3D
+    (`apps/hub/src/walk/liveDoors.ts`);
   - characters travel as `doorway:character` (§6), with the Avatar Wallet's
     descriptor and ticket under `worldmesh`; the pre-standard
     `worldmesh:avatar` is still understood;
