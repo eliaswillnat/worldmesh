@@ -68,12 +68,8 @@ export const FRAME = 0.45;
 const DEPTH = 0.32;
 /** How long the surface ripples after someone goes through, in seconds. */
 const WARP_SECONDS = 1.3;
-/** How fast the warp's rings travel out from the middle: doorway heights a second. */
-const WARP_FRONT_SPEED = 0.8;
-/** A live view opens this far behind the front, so the crest still ripples on the cover. */
-const REVEAL_BEHIND = 0.04;
-/** uHoleFront for a doorway cleared all over. */
-const HOLE_OPEN = 10;
+/** Seconds the cover takes to fade into a live view, or back, while the warp ripples it. */
+const LIVE_FADE_SECONDS = 1.1;
 /** Step this close to the doorway to go through. */
 const THRESHOLD = 0.1;
 /**
@@ -148,8 +144,7 @@ const portalFragment = /* glsl */ `
   uniform sampler2D uPortalColor;
   uniform vec2 uDrawSize;
   uniform vec3 uViewOrigin;
-  uniform float uHole;
-  uniform float uHoleFront;
+  uniform float uLive;
   varying vec2 vUv;
   ${ROUNDED_TOP_GLSL}
 
@@ -230,7 +225,7 @@ const portalFragment = /* glsl */ `
     float r = length(d);
     vec2 dir = r > 0.0001 ? d / r : vec2(0.0);
     // The rings travel outward with the front, which reaches the corners as the warp ends.
-    float front = uWarpT * ${WARP_FRONT_SPEED.toFixed(2)};
+    float front = uWarpT * 0.8;
     float wave = sin(20.0 * r - uWarpT * 16.0) * exp(-6.0 * abs(r - front));
     vec2 bent = d + dir * wave * 0.055 * uWarp;
     return vec3(bent / aspect, wave * uWarp);
@@ -297,11 +292,9 @@ const portalFragment = /* glsl */ `
     vec2 split = length(outward) > 0.0001 ? normalize(outward) * abs(bent.z) * 0.018 : vec2(0.0);
     float rim = roundedTopEdge(vUv, ${GALLERY_CORNER.toFixed(6)}, ${(DOOR_WIDTH / DOOR_HEIGHT).toFixed(6)});
     if (rim > 1.0) discard;
-    // A live view (liveDoors): leave the doorway clear, so the world drawn
-    // behind the lobby's canvas shows through. Opaque, so nothing blends.
-    // Opening, it clears behind the warp's front as the rings wash the cover
-    // away from the middle; the cover still ripples beyond it.
-    if (uHole > 0.5 && length((vUv - 0.5) * vec2(${(DOOR_WIDTH / DOOR_HEIGHT).toFixed(4)}, 1.0)) < uHoleFront) {
+    // A live view (liveDoors): the doorway clear, so the world drawn behind
+    // the lobby's canvas shows through. Fading in or out, see the end.
+    if (uLive > 0.999) {
       gl_FragColor = vec4(0.0);
       return;
     }
@@ -368,6 +361,10 @@ const portalFragment = /* glsl */ `
 
     gl_FragColor = vec4(min(color, vec3(1.0)), 1.0);
     #include <colorspace_fragment>
+    // A live view fading in or out: the cover goes see-through (premultiplied,
+    // as the canvas is), the world behind it showing more and more.
+    float cover = 1.0 - uLive;
+    gl_FragColor = vec4(gl_FragColor.rgb * cover, cover);
   }
 `;
 
@@ -419,9 +416,12 @@ export class Door {
   private full = false;
   private disposed = false;
   private warpStart = -1;
-  /** Showing a live view (setLiveHole), and whether it is still washing the cover away. */
+  /** Showing a live view (setLiveHole), or only paused from it. */
   private live = false;
-  private revealing = false;
+  private livePaused = false;
+  /** The fade to or from the live view: lobby clock at its start (Infinity: next update), and how live it began. */
+  private liveStart = -1;
+  private liveFrom = 0;
 
   constructor(world: DoorWorld | null, light: boolean, random = false) {
     this.world = world;
@@ -500,8 +500,7 @@ export class Door {
           uPortalColor: { value: null },
           uDrawSize: { value: new Vector2(1, 1) },
           uViewFlat: { value: 0 },
-          uHole: { value: 0 },
-          uHoleFront: { value: HOLE_OPEN },
+          uLive: { value: 0 },
         },
         side: DoubleSide,
       }),
@@ -661,25 +660,42 @@ export class Door {
 
   /**
    * Clear the doorway, so a live view drawn behind the lobby shows through it
-   * (liveDoors); false puts back the cover or door view. Coming in, the live
-   * view is revealed by the warp, its rings washing the cover away from the
-   * middle; going, the cover ripples back. `paused` closes it for now
-   * without that (off screen, or walked through), so it comes back as it was.
+   * (liveDoors); false puts back the cover or door view. Either way the cover
+   * fades, see-through, while the warp ripples it. `paused` puts the cover
+   * back at once (off screen, or being walked through), and the live view
+   * comes back as it was, with no fade.
    */
   setLiveHole(hole: boolean, paused = false): void {
-    const uniforms = this.portal.material.uniforms;
-    uniforms.uHole.value = hole ? 1 : 0;
-    if (hole && !this.live) {
-      this.live = true;
-      this.revealing = true;
-      uniforms.uHoleFront.value = -1;
-      this.warp();
-    } else if (!hole && !paused && this.live) {
-      this.live = false;
-      this.revealing = false;
-      uniforms.uHoleFront.value = HOLE_OPEN;
-      this.warp();
-    }
+    this.livePaused = !hole && paused;
+    if (hole === this.live || (!hole && paused)) return;
+    this.liveFrom = this.liveAmount(this.portal.material.uniforms.uTime.value);
+    this.live = hole;
+    this.liveStart = Infinity;
+    this.warp();
+  }
+
+  /** Still showing some of a live view: fully, or fading out. */
+  get liveShowing(): boolean {
+    return this.portal.material.uniforms.uLive.value > 0;
+  }
+
+  /** The live view is gone for good: the cover back at once, no fade, rippling. */
+  dropLive(): void {
+    if (!this.live && !this.liveShowing) return;
+    this.live = false;
+    this.livePaused = false;
+    this.liveStart = -1;
+    this.portal.material.uniforms.uLive.value = 0;
+    this.warp();
+  }
+
+  /** How far the doorway shows the live view, 0 (cover) to 1, at lobby time `time`. */
+  private liveAmount(time: number): number {
+    const to = this.live ? 1 : 0;
+    if (this.liveStart < 0) return to;
+    const t = Math.min(1, Math.max(0, (time - this.liveStart) / LIVE_FADE_SECONDS));
+    const eased = t * t * (3 - 2 * t);
+    return this.liveFrom + (to - this.liveFrom) * eased;
   }
 
   /** Show the door view as a flat 360° window, without its depth. */
@@ -830,11 +846,8 @@ export class Door {
     uniforms.uWarpT.value = since;
     // Swells in fast, then calms like water settling.
     uniforms.uWarp.value = since < WARP_SECONDS ? Math.min(1, since / 0.12) * (1 - since / WARP_SECONDS) ** 1.5 : 0;
-    if (this.revealing) {
-      const done = since >= WARP_SECONDS;
-      uniforms.uHoleFront.value = done ? HOLE_OPEN : since * WARP_FRONT_SPEED - REVEAL_BEHIND;
-      if (done) this.revealing = false;
-    }
+    if (this.liveStart > time) this.liveStart = time;
+    uniforms.uLive.value = this.livePaused ? 0 : this.liveAmount(time);
     this.glowFrame(time);
   }
 

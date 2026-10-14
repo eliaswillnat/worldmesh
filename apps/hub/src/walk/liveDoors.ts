@@ -105,14 +105,16 @@ export class LiveDoors {
     if (!live?.ready) return;
     const distance = this.distance(live.door, feet);
     this.showing = distance < (this.showing ? HIDE : SHOW);
-    const rect = this.showing && live.door !== crossing ? this.screenRect(live.door, camera) : null;
+    // Walked away, the world keeps drawing while the cover fades back over it.
+    const drawn = this.showing || live.door.liveShowing;
+    const rect = drawn && live.door !== crossing ? this.screenRect(live.door, camera) : null;
     if (!rect) {
-      // Walked away: the cover ripples back. Off screen or walked through: only paused.
+      // Walked away: the cover fades back. Off screen or walked through: only paused.
       live.door.setLiveHole(false, this.showing);
       return;
     }
     this.send(live, camera, rect);
-    live.door.setLiveHole(live.framed);
+    live.door.setLiveHole(this.showing && live.framed);
   }
 
   dispose(): void {
@@ -164,7 +166,7 @@ export class LiveDoors {
     const live = this.live;
     if (!live) return;
     window.clearTimeout(live.timeout);
-    live.door.setLiveHole(false);
+    live.door.dropLive();
     live.frame.remove();
     this.live = null;
   }
