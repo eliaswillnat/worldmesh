@@ -1,6 +1,4 @@
-import { queueDoorView, type DoorViewEnv } from '../../lib/doorViews';
-
-interface Env extends DoorViewEnv {
+interface Env {
   APPROVE_SECRET?: string;
   WORLDS: KVNamespace;
 }
@@ -92,7 +90,6 @@ export async function onRequestPost(context: {
   };
 
   await env.WORLDS.put(`approved:${id}`, JSON.stringify(entry));
-  await queueDoorView(env, body.url);
 
   return jsonResponse({
     success: true,

@@ -1,14 +1,4 @@
-export { CAPTURE_PARAM, DOORWAY_VIEW_PARAM, EMBED_PARAM, createWorldMesh } from './core/worldmesh.js';
-export {
-  DOOR_VIEW_DEPTH_FAR,
-  DOOR_VIEW_DEPTH_NEAR,
-  DOOR_VIEW_FACES,
-  DOOR_VIEW_VERSION,
-  captureDoorView,
-} from './capture/doorView.js';
-export type { DoorView, DoorViewOptions, DoorViewTarget } from './capture/doorView.js';
-export { PORTAL_BACKDROP_FILE, PORTAL_SCENE_VERSION, exportPortal } from './capture/portalScene.js';
-export type { PortalScene, PortalSceneAmbient, PortalSceneExtras, PortalSceneOptions, PortalSceneShadow, PortalSceneTarget } from './capture/portalScene.js';
+export { DOORWAY_VIEW_PARAM, createWorldMesh } from './core/worldmesh.js';
 export { Emitter } from './core/events.js';
 export { Input } from './controls/input.js';
 export { TouchControls, isTouchDevice } from './controls/touch.js';

@@ -85,14 +85,12 @@ implementation from `apps/hub/functions/`. The approval flow:
 2. The link (`/api/approve`) opens a confirmation page; its button approves.
    Opening the link alone changes nothing, because mail link scanners open links on
    their own. The admin dashboard's "Save and approve" posts to the same link.
-3. Approving moves the entry to `approved:<id>`, emails the creator, and queues
-   the world's door view in `workers/screenshot`.
+3. Approving moves the entry to `approved:<id>` and emails the creator.
 4. The hub lists approved worlds from `/api/worlds`, next to
    `apps/hub/src/community.json` (whose entries win for the same URL).
 
-The `worldmesh-hub` Pages project needs the `WORLDS` KV binding, `RESEND_API_KEY`,
-`SCREENSHOT_SECRET` (to queue door views) and, for `/api/admin/submit`,
-`APPROVE_SECRET`. Without the KV binding, submissions are only emailed.
+The `worldmesh-hub` Pages project needs the `WORLDS` KV binding, `RESEND_API_KEY`
+and, for `/api/admin/submit`, `APPROVE_SECRET`. Without the KV binding, submissions are only emailed.
 
 ### Setup in 2 Minutes:
 

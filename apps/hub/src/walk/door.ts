@@ -6,12 +6,8 @@ import {
   DoubleSide,
   Group,
   LinearFilter,
-  Matrix4,
   Mesh,
   MeshStandardMaterial,
-  NearestFilter,
-  NoColorSpace,
-  Object3D,
   PlaneGeometry,
   SRGBColorSpace,
   ShaderMaterial,
@@ -21,12 +17,9 @@ import {
   Vector2,
   Vector3,
 } from 'three';
-import { DOOR_VIEW_DEPTH_FAR } from '@worldmesh/runtime';
 import { drawEntries, measureEntries } from '../entries';
 import { addFrameEdgeGlow, doorFrameGeometry, GALLERY_CORNER, ROUNDED_TOP_GLSL } from './doorShape';
-import type { LoadedDoorView } from './doorViews';
 import { createSign } from './sign';
-import type { LoadedPortal } from './portalScene';
 
 export interface DoorWorld {
   name: string;
@@ -36,8 +29,6 @@ export interface DoorWorld {
   creator?: string;
   /** Listing tags; the ones in DOOR_FEATURES show as chips under the name. */
   tags?: string[];
-  /** False keeps the cover up close instead of the world's door view. */
-  doorView?: boolean;
 }
 
 /** Tags worth calling out above a door, in the order they are shown. */
@@ -87,25 +78,6 @@ export const DOOR_HALF_SPAN = DOOR_WIDTH / 2 + FRAME;
 export const DOOR_TOP = DOOR_HEIGHT + FRAME;
 /** Widest a name above a door may get, so neighbouring labels never touch. */
 const MAX_LABEL_WIDTH = 4;
-/** Seconds for a door view to fade in over the cover, or back out. */
-const VIEW_FADE = 0.7;
-/** How far behind the doorway the world's spawn point sits. */
-const VIEW_SPAWN_BEHIND = 0.6;
-/** Door views are drawn with the world's own sizes; this eye height is used if the snapshot lacks one. */
-const VIEW_EYE_HEIGHT = 1.6;
-/** How much of the eye's offset from the spawn the door view follows (see viewSample). */
-const VIEW_PARALLAX = 0.8;
-/**
- * Full depth this close to the spawn point (metres), none from VIEW_FLAT on:
- * the further from where the snapshot was taken, the more of what it never
- * saw would show, so from further back the view stays a flat 360° window.
- */
-const VIEW_DEPTH_FULL = 2;
-const VIEW_FLAT = 7;
-/** Steps along each view ray, out to the snapshot's far limit, to find its surface. */
-const VIEW_STEPS = 24;
-/** Halvings to settle onto the surface once a step has crossed it. */
-const VIEW_REFINE = 5;
 const portalVertex = /* glsl */ `
   varying vec2 vUv;
   void main() {
@@ -130,90 +102,9 @@ const portalFragment = /* glsl */ `
   uniform float uWarp;
   uniform float uWarpT;
   uniform vec2 uBreath;
-  // Door view: the world's 360° colour + depth snapshot from its spawn point.
-  uniform float uView;
-  uniform samplerCube uViewColor;
-  uniform samplerCube uViewDepth;
-  uniform vec3 uViewEye;
-  uniform vec3 uViewFeet;
-  // Portal scene: the world's own meshes, drawn live from this camera into
-  // uPortalColor (premultiplied alpha), over a backdrop in uViewColor.
-  uniform float uPortal;
-  uniform float uPortalLive;
-  uniform float uViewFlat;
-  uniform sampler2D uPortalColor;
-  uniform vec2 uDrawSize;
-  uniform vec3 uViewOrigin;
   uniform float uLive;
   varying vec2 vUv;
   ${ROUNDED_TOP_GLSL}
-
-  // Distance from the spawn point to whatever it saw in direction d.
-  float viewDepth(vec3 d) {
-    return textureCube(uViewDepth, d).r;
-  }
-
-  // The world seen through point p of the doorway. Rays run in the camera's
-  // own directions, so the view turns like a window as the camera moves, but
-  // start from the visitor's eyes: a third-person camera floats metres above
-  // the eye height the snapshot was taken at, and seen from up there the
-  // snapshot would be mostly gaps. The start moves only part of the way from
-  // the spawn point to the eyes (VIEW_PARALLAX), and none of it from
-  // VIEW_FLAT away, as the gaps behind near things grow with that distance.
-  //
-  // Each ray marches outward in growing steps until it crosses the snapshot's
-  // surface, then halves its way onto it. A step that ends behind something
-  // much nearer than where the ray just was is passing behind it, not into
-  // it, so the march goes on and the gap shows what lies beyond instead of a
-  // smear of the near thing.
-  vec3 viewSample(vec2 p) {
-    vec3 camera = uViewEye - uViewOrigin;
-    vec3 onDoor = vec3(p.x * ${DOOR_WIDTH.toFixed(4)}, (p.y + 0.5) * ${DOOR_HEIGHT.toFixed(4)}, -0.02) - uViewOrigin;
-    vec3 r = normalize(onDoor - camera);
-    // A plain 360° window: everything as if infinitely far away.
-    if (uViewFlat > 0.5) return textureCube(uViewColor, r).rgb;
-    vec3 eyes = uViewFeet + vec3(0.0, uViewOrigin.y, 0.0) - uViewOrigin;
-    float k = ${VIEW_PARALLAX.toFixed(3)} * (1.0 - smoothstep(${VIEW_DEPTH_FULL.toFixed(1)}, ${VIEW_FLAT.toFixed(1)}, length(eyes)));
-    vec3 o = eyes * k;
-    // From the doorway on: never anything on this side of it.
-    float t = max((onDoor.z - o.z) / min(r.z, -0.0001), 0.0) + 0.05;
-    float grow = pow(${DOOR_VIEW_DEPTH_FAR.toFixed(1)} / t, ${(1 / VIEW_STEPS).toFixed(6)});
-    float before = length(o + r * t);
-    float lo = t;
-    float hi = -1.0;
-    for (int i = 0; i < ${VIEW_STEPS}; i++) {
-      float next = t * grow;
-      vec3 q = o + r * next;
-      float surface = viewDepth(normalize(q));
-      float here = length(q);
-      if (here >= surface && before <= surface + max(0.2, surface * 0.05)) {
-        lo = t;
-        hi = next;
-        break;
-      }
-      t = next;
-      before = here;
-    }
-    if (hi < 0.0) return textureCube(uViewColor, r).rgb;
-    for (int i = 0; i < ${VIEW_REFINE}; i++) {
-      float mid = 0.5 * (lo + hi);
-      vec3 q = o + r * mid;
-      if (length(q) >= viewDepth(normalize(q))) hi = mid;
-      else lo = mid;
-    }
-    return textureCube(uViewColor, normalize(o + r * hi)).rgb;
-  }
-
-  // The portal scene at point p of the doorway: what this frame drew of the
-  // world, over its backdrop seen in the same direction. The backdrop alone
-  // where the scene isn't drawn (in the floor's mirror, in VR).
-  vec3 portalSample(vec2 p) {
-    vec3 onDoor = vec3(p.x * ${DOOR_WIDTH.toFixed(4)}, (p.y + 0.5) * ${DOOR_HEIGHT.toFixed(4)}, -0.02);
-    vec3 backdrop = textureCube(uViewColor, normalize(onDoor - uViewEye)).rgb;
-    if (uPortalLive < 0.5) return backdrop;
-    vec4 near = texture2D(uPortalColor, gl_FragCoord.xy / uDrawSize);
-    return near.rgb + backdrop * (1.0 - near.a);
-  }
 
   // Someone going through: rings of rippling water spread out from the
   // middle of the doorway to its edges. Returns the bent point, and the
@@ -345,12 +236,6 @@ const portalFragment = /* glsl */ `
     vec3 corridor = mix(uTint * 0.12, uTint, bands * (1.0 - depth * 0.6));
 
     vec3 color = mix(corridor, far, uHasMap);
-    // Up close, the world itself replaces the cover (not while the room is full).
-    float view = uView * (1.0 - uFull);
-    if (view > 0.0) {
-      if (uPortal > 0.5) color = mix(color, portalSample(p), view);
-      else color = mix(color, viewSample(p), view);
-    }
     // Light spilling in around the edges of the opening.
     float edge = rim;
     color = mix(color, uTint * 0.55, smoothstep(0.88, 1.0, edge) * 0.22 * uOpen);
@@ -401,12 +286,6 @@ export class Door {
   /** In the city: the storefront's fascia sign, which takes the place of the name, chips and gate number. */
   private sign: { mesh: Mesh<BufferGeometry, MeshBasicMaterial>; draw: () => void } | null = null;
   private cover: Texture | null = null;
-  private view: LoadedDoorView | null = null;
-  private viewEye = new Vector3();
-  /** Whether this frame drew the portal scene for the doorway (setPortalFrame). */
-  private portalFrame = false;
-  /** Where the door stood when its portal scene was last placed behind it. */
-  private portalPlacedAt = new Matrix4().makeScale(0, 0, 0);
   private placeholder: Texture;
   private halo: Mesh<PlaneGeometry, MeshBasicMaterial> | null = null;
   /** The world's colour (sampled from its cover once loaded), for the frame's glow. */
@@ -488,18 +367,6 @@ export class Door {
           uMap: { value: this.placeholder },
           uHasMap: { value: 0 },
           uFit: { value: new Vector2(1, 1) },
-          uView: { value: 0 },
-          // Cube maps; three binds an empty one while there is none.
-          uViewColor: { value: null },
-          uViewDepth: { value: null },
-          uViewEye: { value: new Vector3() },
-          uViewFeet: { value: new Vector3() },
-          uViewOrigin: { value: new Vector3(0, VIEW_EYE_HEIGHT, -VIEW_SPAWN_BEHIND) },
-          uPortal: { value: 0 },
-          uPortalLive: { value: 0 },
-          uPortalColor: { value: null },
-          uDrawSize: { value: new Vector2(1, 1) },
-          uViewFlat: { value: 0 },
           uLive: { value: 0 },
         },
         side: DoubleSide,
@@ -507,13 +374,6 @@ export class Door {
     );
     this.portal.position.set(0, DOOR_HEIGHT / 2, -0.02);
     this.group.add(this.portal);
-    // The portal frame is drawn for the screen; the floor's mirror (its own
-    // render target) and VR get the backdrop alone.
-    this.portal.onBeforeRender = (renderer) => {
-      this.portal.material.uniforms.uPortalLive.value =
-        this.portalFrame && renderer.getRenderTarget() === null && !renderer.xr.isPresenting ? 1 : 0;
-    };
-
     if (random) {
       // A soft blue glow spilling around the frame.
       this.halo = createHalo();
@@ -622,45 +482,9 @@ export class Door {
     draw();
   }
 
-  /** The door view this door holds, shown or not. */
-  get doorView(): LoadedDoorView | null {
-    return this.view;
-  }
-
-  /** True while any of the door view is on screen. */
-  get viewVisible(): boolean {
-    return this.portal.material.uniforms.uView.value > 0;
-  }
-
-  /**
-   * Hand this door a door view to show when asked, or null to drop the one it
-   * has. A dropped view's textures are freed.
-   */
-  setDoorView(view: LoadedDoorView | null): void {
-    if (view === this.view) return;
-    const old = this.view;
-    this.view = view;
-    const uniforms = this.portal.material.uniforms;
-    this.portalPlacedAt.makeScale(0, 0, 0);
-    this.setPortalFrame(null, 1, 1);
-    if (view && !this.disposed) {
-      uniforms.uViewColor.value = view.color;
-      uniforms.uViewDepth.value = view.depth;
-      uniforms.uViewOrigin.value.set(0, view.eyeHeight ?? VIEW_EYE_HEIGHT, -VIEW_SPAWN_BEHIND);
-      uniforms.uPortal.value = view.portal ? 1 : 0;
-    } else {
-      uniforms.uView.value = 0;
-      uniforms.uViewColor.value = null;
-      uniforms.uViewDepth.value = null;
-      uniforms.uPortal.value = 0;
-    }
-    old?.dispose();
-    if (view && this.disposed) view.dispose();
-  }
-
   /**
    * Clear the doorway, so a live view drawn behind the lobby shows through it
-   * (liveDoors); false puts back the cover or door view. Either way the cover
+   * (liveDoors); false puts back the cover. Either way the cover
    * fades, see-through, while the warp ripples it. `paused` puts the cover
    * back at once (off screen, or being walked through), and the live view
    * comes back as it was, with no fade.
@@ -698,11 +522,6 @@ export class Door {
     return this.liveFrom + (to - this.liveFrom) * eased;
   }
 
-  /** Show the door view as a flat 360° window, without its depth. */
-  setViewFlat(flat: boolean): void {
-    this.portal.material.uniforms.uViewFlat.value = flat ? 1 : 0;
-  }
-
   /**
    * Let visitors walk on through the doorway, into the world drawn behind it
    * (walkThrough), instead of the backstop stopping them just inside it.
@@ -710,45 +529,6 @@ export class Door {
   setPassable(passable: boolean): void {
     this.backstop.position.z = passable ? -PASSABLE_BACKSTOP : -(REACH + 0.08);
     this.backstop.updateMatrixWorld();
-  }
-
-  /** This door's portal scene, standing behind its doorway; null without one. */
-  placedPortal(): LoadedPortal | null {
-    const portal = this.view?.portal ?? null;
-    if (!portal) return null;
-    this.group.updateWorldMatrix(true, false);
-    if (!this.portalPlacedAt.equals(this.group.matrixWorld)) {
-      this.portalPlacedAt.copy(this.group.matrixWorld);
-      portal.place(this.group.matrixWorld, VIEW_SPAWN_BEHIND);
-    }
-    return portal;
-  }
-
-  /**
-   * What this frame drew of the portal scene, in a target the size of the
-   * drawing buffer; null where it wasn't drawn (the doorway shows the backdrop).
-   */
-  setPortalFrame(frame: Texture | null, width: number, height: number): void {
-    const uniforms = this.portal.material.uniforms;
-    this.portalFrame = frame !== null;
-    uniforms.uPortalColor.value = frame;
-    uniforms.uDrawSize.value.set(width, height);
-  }
-
-  /** Fade the door view in (show) or out, seen by `camera` with parallax from a visitor standing at `feet`. */
-  stepView(dt: number, camera: Object3D, feet: Vector3, show: boolean): void {
-    const uniforms = this.portal.material.uniforms;
-    const target = show && this.view !== null ? 1 : 0;
-    const current = uniforms.uView.value as number;
-    if (current === target && target === 0) return;
-    // Fully shown stays put; stepping it would dip it every other frame, a flicker.
-    if (current !== target) {
-      uniforms.uView.value = target > current ? Math.min(1, current + dt / VIEW_FADE) : Math.max(0, current - dt / VIEW_FADE);
-    }
-    // The shader works in the door's own frame.
-    camera.getWorldPosition(this.viewEye);
-    uniforms.uViewEye.value.copy(this.group.worldToLocal(this.viewEye));
-    uniforms.uViewFeet.value.copy(this.group.worldToLocal(this.viewEye.copy(feet)));
   }
 
   /** Show this door's gate number above its name; null takes it down. */
@@ -947,7 +727,6 @@ export class Door {
       this.fullBanner.material.dispose();
     }
     this.cover?.dispose();
-    this.setDoorView(null);
     this.placeholder.dispose();
     this.group.removeFromParent();
   }
@@ -1025,7 +804,7 @@ function colorFromCover(image: unknown): Color | null {
  * same-origin cover proxy first, then the image directly. If neither works
  * the door shows a procedural corridor instead.
  */
-export async function loadCoverTexture(src: string, data = false): Promise<Texture | null> {
+export async function loadCoverTexture(src: string): Promise<Texture | null> {
   const candidates: string[] = [];
   if (src.startsWith('data:')) {
     candidates.push(src);
@@ -1044,10 +823,8 @@ export async function loadCoverTexture(src: string, data = false): Promise<Textu
   for (const candidate of candidates) {
     try {
       const texture = await loader.loadAsync(candidate);
-      // Data images (door-view depth) are read as exact numbers: no colour conversion, no blending.
-      texture.colorSpace = data ? NoColorSpace : SRGBColorSpace;
-      texture.minFilter = data ? NearestFilter : LinearFilter;
-      if (data) texture.magFilter = NearestFilter;
+      texture.colorSpace = SRGBColorSpace;
+      texture.minFilter = LinearFilter;
       texture.generateMipmaps = false;
       return texture;
     } catch {

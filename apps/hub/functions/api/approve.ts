@@ -1,6 +1,4 @@
-import { queueDoorView, type DoorViewEnv } from '../lib/doorViews';
-
-interface Env extends DoorViewEnv {
+interface Env {
   RESEND_API_KEY?: string;
   FROM_EMAIL?: string;
   WORLDS: KVNamespace;
@@ -94,7 +92,6 @@ async function handle(context: Context, approve: boolean): Promise<Response> {
 
   await env.WORLDS.put(`approved:${id}`, JSON.stringify(approvedEntry));
   await env.WORLDS.delete(`pending:${id}`);
-  await queueDoorView(env, entry.url);
 
   if (entry.email && env.RESEND_API_KEY) {
     const fromEmail = env.FROM_EMAIL || 'WorldMesh <accounts@worldmesh.net>';

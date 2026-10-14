@@ -1029,14 +1029,11 @@
         box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
       }
       .walk-root canvas { display: block; position: relative; transition: filter .45s ease-out; }
-      /* A walk door's world, waiting under the canvas; on top once walked into, then the lobby goes. */
-      .walk-root .door-world { position: absolute; inset: 0; pointer-events: none; }
-      .walk-root .door-world iframe { display: block; width: 100%; height: 100%; border: 0; background: #000; }
-      .walk-root .door-world.entered { z-index: 2; pointer-events: auto; }
-      /* A live door's world, under the canvas: seen only through its doorway, which the lobby leaves clear. */
+      /* A live door's world, under the canvas: seen only through its doorway, which the lobby leaves clear. On top once walked into, then the lobby goes. */
       .walk-root .door-live { position: absolute; inset: 0; pointer-events: none; }
       .walk-root .door-live iframe { display: block; width: 100%; height: 100%; border: 0; }
-      html.world-entered body > :not(.walk-root), html.world-entered .walk-root > :not(.door-world) { display: none !important; }
+      .walk-root .door-live.entered { z-index: 2; pointer-events: auto; }
+      html.world-entered body > :not(.walk-root), html.world-entered .walk-root > :not(.door-live) { display: none !important; }
       /* Through a portal: the view softens and saturates as the lens pulls wide, and clears coming out. */
       .walk-root canvas.lensing { filter: blur(3px) saturate(1.5); transition: filter .45s ease-in; }
       .walk-flash {

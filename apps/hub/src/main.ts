@@ -23,8 +23,6 @@ interface WorldEntry {
   /** Short muted loop(s) shown on the world's door in walk mode. */
   preview?: string | string[];
   featured?: boolean;
-  /** False keeps the cover on the world's walk-mode door up close, instead of its door view. */
-  doorView?: boolean;
   source?: 'admin' | 'submitted' | 'demo' | 'discovered';
 }
 
@@ -82,10 +80,6 @@ const NOTIFY_WEBHOOK = import.meta.env.VITE_NOTIFY_WEBHOOK as string | undefined
 const PRESENCE_ENDPOINT =
   (import.meta.env.VITE_PRESENCE_ENDPOINT as string | undefined) ||
   (import.meta.env.DEV ? 'ws://localhost:8787' : 'wss://relay.worldmesh.net');
-const SCREENSHOT_ENDPOINT =
-  (import.meta.env.VITE_SCREENSHOT_ENDPOINT as string | undefined) ||
-  'https://worldmesh-screenshot.elias-willnat.workers.dev';
-
 function getDemoWorldUrl(envKey: string, localPort: number, defaultSubdomain: string): string {
   const envVal = import.meta.env[envKey] as string | undefined;
   if (envVal) return envVal;
@@ -122,7 +116,6 @@ const DEMO_WORLDS: WorldEntry[] = [
     portfolio: 'https://x.com/eliaswillnat',
     categories: ['space'],
     tags: ['multiplayer', 'vr'],
-    doorView: false,
     source: 'demo',
   },
   {
@@ -455,8 +448,6 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
       start,
       light: walkIsLight(),
       presenceEndpoint: PRESENCE_ENDPOINT,
-      doorViewEndpoint: SCREENSHOT_ENDPOINT,
-      doorCompare: import.meta.env.VITE_DOOR_COMPARE === 'on',
       playerName: getUsername,
       private: loadWalkPrivate(),
       color,

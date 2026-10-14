@@ -1,7 +1,9 @@
 import { MAX_UPLOAD_BODY, allowedOrigin, identify, type AccessEnv } from './access';
-import { consumeDoorViews, getDoorViewStatus, requestDoorView, type DoorViewEnv, type DoorViewJob } from './doorViews';
 
-interface Env extends DoorViewEnv, AccessEnv {}
+interface Env extends AccessEnv {
+  SCREENSHOTS: R2Bucket;
+  R2_PUBLIC_URL?: string;
+}
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -16,10 +18,6 @@ export default {
     headers.append('Vary', 'Origin');
     return new Response(response.body, { status: response.status, headers });
   },
-
-  async queue(batch: MessageBatch<DoorViewJob>, env: Env): Promise<void> {
-    await consumeDoorViews(batch, env);
-  },
 };
 
 async function handle(request: Request, env: Env): Promise<Response> {
@@ -27,14 +25,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
     return new Response(null, { status: 204 });
   }
 
-  const url = new URL(request.url);
-
   if (request.method === 'GET') {
-    const doorView = url.pathname.match(/^\/door-views\/([a-z0-9-]+)$/);
-    if (doorView) {
-      const status = await getDoorViewStatus(doorView[1], env);
-      return status ? json(status) : json({ error: 'No door view requested for this world' }, 404);
-    }
     return json({ error: 'Not found' }, 404);
   }
 
@@ -42,21 +33,11 @@ async function handle(request: Request, env: Env): Promise<Response> {
     return json({ error: 'Method not allowed' }, 405);
   }
 
-  // Every POST is for WorldMesh's own servers: door views and cover uploads.
+  // Every POST is for WorldMesh's own servers: cover uploads.
   if (!(await identify(request, env))) {
     return json({ error: 'Unauthorized' }, 401);
   }
 
-  if (url.pathname === '/door-views') {
-    let doorViewBody: { url?: string };
-    try {
-      doorViewBody = await request.json();
-    } catch {
-      return json({ error: 'Invalid JSON' }, 400);
-    }
-    const result = await requestDoorView(doorViewBody.url, env);
-    return json(result.body, result.status);
-  }
 
   // A cover upload: { url, image } with the image as a data URL or base64.
   let body: { url?: string; image?: string };

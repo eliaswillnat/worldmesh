@@ -223,6 +223,12 @@ The destination MUST allow being framed by hosts it is willing to receive
 visitors from (`Content-Security-Policy: frame-ancestors …`). A destination
 that does not want to be framed simply isn't Level 2.
 
+**From a live view.** A destination already drawn live in the doorway (§3.1)
+is already loaded, offline, in a frame: a host MAY hand the visitor to that
+same frame instead of loading a second one. Its `doorway:view-ready` stands
+for `doorway:ready`. While it waits it keeps drawing the host's views; once
+entered it draws on its own, its UI back.
+
 ### 4.2 Crossing
 
 The host lets the visitor walk into the doorway (the door is no longer a
@@ -248,7 +254,9 @@ posts:
 ```
 
 All positions and directions are in **destination space**: the host maps its
-own values through `P⁻¹`.
+own values through `P⁻¹`. Handing over a live view, they are instead in the
+**door frame** its views came in (§3.1), and the destination maps them the
+same way it maps the views, so the visitor lands where it drew them.
 
 | Field | Meaning |
 | --- | --- |
@@ -351,25 +359,21 @@ page load (`location.href = url`), never to a stuck visitor:
 - **`OMI_link`** (OMI, archived) described a link on a node. Doorway covers
   what happens when that link is *walked through*; a scene MAY still mark its
   own outgoing doors with `OMI_link`.
-- **WorldMesh** implements Doorway in its hub and `@worldmesh/runtime` (MIT):
-  - doorway scenes are written and read as §3 describes (`OMI_spawn_point`,
-    `KHR_lights_punctual`, `extras`);
-  - the handoff uses the `doorway:*` messages and `doorway-embed`; the
-    pre-standard `worldmesh:*` names and `worldmesh-embed` are still accepted;
-  - the hub reads a destination's own `/.well-known/doorway.json` first, and
-    falls back to WorldMesh's capture service; preview deploys publish each
-    demo world's Doorway scene on the world itself;
-  - live views (§3.1) for destinations whose Doorway file has `"view": true`,
-    the nearest door within 15 m only (`apps/hub/src/walk/liveDoors.ts`);
-    `@worldmesh/runtime` draws them for any world built on it
-    (`DOORWAY_VIEW_PARAM`), with the spawn point 0.6 m beyond the doorway,
-    where the hub stands a Doorway scene; the five demo worlds publish
-    `"view": true`;
+- **WorldMesh** implements Doorway in its hub and `@worldmesh/runtime` (MIT),
+  with live views rather than doorway scenes:
+  - a door shows the destination's cover; for a destination whose Doorway
+    file has `"view": true`, the nearest door within 15 m fades into its live
+    view (§3.1, `apps/hub/src/walk/liveDoors.ts`);
+  - with `"embed": true` too, that live view can be walked into (§4.1, from a
+    live view; `apps/hub/src/walk/walkThrough.ts`), the pose in the door frame;
+  - `@worldmesh/runtime` does both for any world built on it
+    (`DOORWAY_VIEW_PARAM`), with the spawn point 0.6 m beyond the doorway;
+    the five demo worlds publish `"view": true, "embed": true`;
   - characters travel as `doorway:character` (§6), with the Avatar Wallet's
     descriptor and ticket under `worldmesh`; the pre-standard
     `worldmesh:avatar` is still understood;
-  - doorway scenes pass the Khronos glTF Validator with no errors or
-    warnings (it reports `OMI_spawn_point` as an extension it doesn't know).
+  - doorway scenes (§3) and hidden `doorway-embed` frames are not
+    implemented: a host may still use them.
 
 ## 10. Open questions
 

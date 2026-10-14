@@ -45,7 +45,6 @@ Access). The login lasts 24 hours across all the preview addresses.
 | D1 `worldmesh` | D1 `worldmesh-preview` |
 | KV `WORLDS`, `VIEWS` | KV `worldmesh-preview-WORLDS`, `worldmesh-preview-VIEWS` |
 | R2 `worldmesh-screenshots` | R2 `worldmesh-screenshots-preview` |
-| Queue `worldmesh-door-views` | Queue `worldmesh-door-views-preview` |
 | `SCREENSHOT_SECRET`, `APPROVE_SECRET` | Separate random values, made by the workflow |
 | Workers `worldmesh-presence`, `-auth`, `-admin`, `-views`, `-screenshot` | The same names with `-preview`, from the `[env.preview]` block in each `workers/*/wrangler.toml` |
 | Presence rooms (Durable Objects of `worldmesh-presence`) | Rooms of `worldmesh-presence-preview`, so preview visitors never meet production ones |
@@ -209,39 +208,20 @@ database: the first deploy, or after "Tear down the preview completely".
   the preview completely" deletes it, so set it again afterwards:
   `npx wrangler secret put AVATAR_SECRET --config workers/auth/wrangler.toml --env preview`
   (`openssl rand -base64 32`).
-- **The screenshot Worker can't see preview worlds.** It loads pages in
-  Cloudflare's browser, which has no Access login. Door views of
-  external world URLs work. So each deploy takes the door views of the five
-  preview worlds itself (`scripts/preview-door-views`: the fresh builds, served
-  locally to headless Chrome on the runner). Each world then publishes its own
-  Doorway scene (`docs/specs/doorway.md`): `doorway/scene.glb`, its backdrop,
-  and `/.well-known/doorway.json`, uploaded with the world. A copy goes in the
-  preview bucket too, because Access keeps the hub from reading the worlds'
-  own files; the hub tries the world first and falls back to the bucket. To
-  let it read the worlds directly, add one Access application covering the
-  paths `/.well-known/doorway.json` and `/doorway/` on each `preview-*`
-  world host, with a **Bypass** policy (Include: Everyone). Those files are
-  only the 3D snapshot of the arrival area, the same as the bucket copy.
-- **Demo doors can be walked straight through.** The preview hub is built with
-  `VITE_DOOR_COMPARE=on`: each demo world's door draws it live in 3D, and the
-  real world waits loaded behind the hall (the nearest one only), taking over
-  from the exact same view as the camera comes through the doorway, with no
-  reload (Back returns to the door). Other door styles can be tried per world
-  in `COMPARE_STYLES` (`apps/hub/src/walk/doorViews.ts`). A world needs an
-  Access login for its own address first, as the login can't be shown in a
-  frame: walk in once (it travels the usual way and logs you in), and from
-  then on, for 24 hours, that door is seamless. A character picked in the
-  Avatar Wallet shows in the lobby too and comes along: its model file is
-  downloaded once, by the hub, and handed to the waiting world, so it is
-  already on screen when you walk in. Outside the preview, any door whose
-  world publishes a Doorway scene can be walked through the same way;
-  production's demo worlds don't publish one yet (their scenes are made by
-  the preview deploy, not by the Pages build), so production doors still
-  travel as before. Community worlds get door views
-  only if they use a runtime that can take them, the same as in production.
-  To try it all on localhost, see `scripts/local-door-views.sh`.
+- **Demo doors need Access to let the hub read their Doorway files.** A demo
+  door fades into its live world, and can be walked straight into, only once
+  the hub has read that world's `/.well-known/doorway.json`, which Access
+  answers with its login page instead. To try live doors and walk-in on the
+  preview, add one Access application covering the paths
+  `/.well-known/doorway.json` and `/doorway.json` on each `preview-*` world
+  host, with a **Bypass** policy (Include: Everyone): those files only say
+  what the world can do in a doorway. Each world also needs an Access login
+  for its own address before it can load in a frame, as the login can't be
+  shown there: open it once (walking in through its door travels there the
+  usual way), and for 24 hours that door is live. Leniverse needs neither:
+  it's public. On worldmesh.net the demo worlds are public too.
 - **The views and screenshot Workers are public on `workers.dev`.** They hold only
-  preview view counts, covers and door views.
+  preview view counts and covers.
 - **Production builds the same commit with production settings.** Endpoints are
   baked in at build time, so production isn't the byte-identical bundle, but it is
   the identical source.

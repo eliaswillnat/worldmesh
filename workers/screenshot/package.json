@@ -10,7 +10,5 @@
   "author": "",
   "license": "ISC",
   "type": "commonjs",
-  "dependencies": {
-    "@cloudflare/puppeteer": "^1.4.0"
-  }
+  "dependencies": {}
 }

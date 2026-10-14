@@ -1,6 +1,5 @@
 import { Matrix4, Quaternion, Vector3, type PerspectiveCamera } from 'three';
-import type { Door } from './door';
-import { DOORWAY_CORNERS } from './doorViews';
+import { DOOR_HEIGHT, DOOR_WIDTH, type Door } from './door';
 
 /**
  * Live doors: a world whose Doorway file says `"view": true` is drawn in its
@@ -13,6 +12,9 @@ import { DOORWAY_CORNERS } from './doorViews';
  * A second world running costs about as much as the lobby, so only the
  * nearest live door gets one, it draws only while close and on screen, and
  * only the doorway's part of the screen.
+ *
+ * A world whose Doorway file also says `"embed": true` can be walked into:
+ * the same frame takes over the page (walkThrough, §4).
  */
 
 const VIEW_PARAM = 'doorway-view';
@@ -33,33 +35,45 @@ const READY_TIMEOUT = 20;
 const RECT_MARGIN = 4;
 const RECT_SLACK = 0.08;
 
-interface LiveWorld {
+/** The doorway's corners in its door's own frame, for finding it on screen. */
+const DOORWAY_CORNERS: ReadonlyArray<[number, number]> = [
+  [-DOOR_WIDTH / 2, 0],
+  [DOOR_WIDTH / 2, 0],
+  [-DOOR_WIDTH / 2, DOOR_HEIGHT],
+  [DOOR_WIDTH / 2, DOOR_HEIGHT],
+];
+
+export interface LiveWorld {
   door: Door;
   frame: HTMLIFrameElement;
   origin: string;
   ready: boolean;
   /** The world has drawn its first frame: the doorway can open onto it. */
   framed: boolean;
+  /** It can be walked into (its Doorway file's `embed`). */
+  enterable: boolean;
   timeout: number;
 }
 
-/** Whether the world at `url` draws live doorway views: its Doorway file's `view`. */
-async function discoverView(url: string): Promise<boolean> {
+/** What the world at `url` can do in a doorway: drawn live (`view`), and walked into (`embed`); null for neither. */
+async function discoverView(url: string): Promise<{ enterable: boolean } | null> {
   try {
     const response = await fetch(new URL('/.well-known/doorway.json', url), { headers: { Accept: 'application/json' } });
-    if (!response.ok) return false;
-    const doorway = (await response.json()) as { doorway?: unknown; view?: unknown };
-    return doorway.doorway === 1 && doorway.view === true;
+    if (!response.ok) return null;
+    const doorway = (await response.json()) as { doorway?: unknown; view?: unknown; embed?: unknown };
+    return doorway.doorway === 1 && doorway.view === true ? { enterable: doorway.embed === true } : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
 export class LiveDoors {
   private layer: HTMLDivElement;
   private live: LiveWorld | null = null;
-  /** Per world URL: whether it draws live views, once known. */
-  private known = new Map<string, boolean>();
+  /** Per world URL, once known: what it can do in a doorway, null if not drawn live. */
+  private known = new Map<string, { enterable: boolean } | null>();
+  /** Being walked into (walkThrough): keep this world whatever else happens. */
+  private held = false;
   private asked = new Set<string>();
   private failed = new Set<string>();
   private showing = false;
@@ -81,11 +95,15 @@ export class LiveDoors {
   /**
    * Every frame, with the camera where it will be drawn from: keep the
    * nearest live door's world loaded, and send it the camera while it shows.
-   * `enabled` false (VR) closes every live doorway. The door being walked
-   * through (`crossing`, walkThrough) shows its portal scene instead, with
-   * the visitor drawn in it.
+   * `enabled` false (VR) closes every live doorway. While held (walked
+   * into), its world stays, whatever is nearer.
    */
-  update(doors: Iterable<Door>, camera: PerspectiveCamera, feet: Vector3, enabled: boolean, crossing: Door | null = null): void {
+  update(doors: Iterable<Door>, camera: PerspectiveCamera, feet: Vector3, enabled: boolean): void {
+    if (this.held && this.live) {
+      const rect = this.screenRect(this.live.door, camera);
+      if (rect) this.send(this.live, camera, rect);
+      return;
+    }
     let nearest: Door | null = null;
     let best = PRELOAD;
     if (enabled) {
@@ -107,14 +125,40 @@ export class LiveDoors {
     this.showing = distance < (this.showing ? HIDE : SHOW);
     // Walked away, the world keeps drawing while the cover fades back over it.
     const drawn = this.showing || live.door.liveShowing;
-    const rect = drawn && live.door !== crossing ? this.screenRect(live.door, camera) : null;
+    const rect = drawn ? this.screenRect(live.door, camera) : null;
     if (!rect) {
-      // Walked away: the cover fades back. Off screen or walked through: only paused.
+      // Walked away: the cover fades back. Off screen: only paused.
       live.door.setLiveHole(false, this.showing);
       return;
     }
     this.send(live, camera, rect);
     live.door.setLiveHole(this.showing && live.framed);
+  }
+
+  /** The live world loaded now, if any. */
+  get world(): LiveWorld | null {
+    return this.live;
+  }
+
+  /** The door's live world is showing, ready, and can be walked into. */
+  walkable(door: Door): boolean {
+    const live = this.live;
+    return !!live && live.door === door && live.ready && live.framed && live.enterable && door.liveShowing;
+  }
+
+  /** Keep the live world while it is walked into (or let it go again). */
+  hold(held: boolean): void {
+    this.held = held;
+  }
+
+  /** It took over: the world's frame, in front of everything, is the page now. */
+  takeOver(): void {
+    const live = this.live;
+    if (!live) return;
+    this.layer.classList.add('entered');
+    this.layer.removeAttribute('aria-hidden');
+    live.frame.tabIndex = 0;
+    live.frame.focus();
   }
 
   dispose(): void {
@@ -126,7 +170,7 @@ export class LiveDoors {
   /** Known to draw live views; asks the world the first time it comes near. */
   private isLive(url: string): boolean {
     const known = this.known.get(url);
-    if (known !== undefined) return known;
+    if (known !== undefined) return known !== null;
     if (!this.asked.has(url)) {
       this.asked.add(url);
       void discoverView(url).then((live) => this.known.set(url, live));
@@ -151,7 +195,10 @@ export class LiveDoors {
     frame.src = src.toString();
     frame.title = door.world!.name;
     frame.tabIndex = -1;
-    const live: LiveWorld = { door, frame, origin: src.origin, ready: false, framed: false, timeout: 0 };
+    // Once walked into, it is the world: its own controls, sound and VR.
+    frame.setAttribute('allow', 'autoplay; fullscreen; xr-spatial-tracking; gamepad');
+    const enterable = this.known.get(door.world!.url)?.enterable === true;
+    const live: LiveWorld = { door, frame, origin: src.origin, ready: false, framed: false, enterable, timeout: 0 };
     live.timeout = window.setTimeout(() => {
       if (live.ready || this.live !== live) return;
       this.failed.add(door.world!.url);
