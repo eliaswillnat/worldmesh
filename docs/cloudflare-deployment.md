@@ -146,14 +146,15 @@ If the presence Worker is unreachable, walk mode still works single-player.
 
 **Screenshot Worker (`workers/screenshot`).** It stores cover uploads in R2.
 It used to also take door views through the `worldmesh-door-views` queue; that
-is gone, and Cloudflare refuses to deploy a Worker a queue still lists as its
-consumer. Once, before the next deploy, remove the consumer and the queue:
+is gone. Cloudflare refuses to deploy a Worker a queue still lists as its
+consumer, and to delete a queue a deployed Worker still binds, so the next
+deploy goes in this order, once:
 
 ```bash
 cd workers/screenshot
 npx wrangler queues consumer remove worldmesh-door-views worldmesh-screenshot
-npx wrangler queues delete worldmesh-door-views
 npx wrangler deploy
+npx wrangler queues delete worldmesh-door-views
 ```
 
 Walk-mode doors show each world's cover image inside WebGL, which needs CORS. The

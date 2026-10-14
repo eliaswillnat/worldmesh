@@ -24,8 +24,10 @@ KV_WORLDS="worldmesh-preview-WORLDS"
 KV_VIEWS="worldmesh-preview-VIEWS"
 R2_BUCKET="worldmesh-screenshots-preview"
 # Door views used to be captured through this queue, which the screenshot
-# Worker consumed. It no longer does, and Cloudflare refuses a Worker that a
-# queue still lists as consumer without a queue handler: deploy deletes it.
+# Worker fed and consumed. It no longer does. Cloudflare refuses a Worker
+# that a queue lists as consumer without a queue handler, and a queue that a
+# deployed Worker still binds: deploy unhooks the consumer first, and deletes
+# the queue once the new Worker is up.
 QUEUE="worldmesh-door-views-preview"
 # Order matters: admin binds presence's Durable Object; auth owns the migrations.
 WORKERS=(presence views screenshot auth admin)
@@ -105,12 +107,18 @@ ensure_r2() {
   set_r2_expiry 7
 }
 
+unhook_queue() {
+  [[ -n $(queue_id) ]] || return 0
+  assert_preview "$QUEUE"
+  log "Unhooking the screenshot Worker from the old queue $QUEUE"
+  wrangler queues consumer remove "$QUEUE" worldmesh-screenshot-preview >/dev/null 2>&1 || true
+}
+
 retire_queue() {
   local queue; queue=$(queue_id)
   [[ -n $queue ]] || return 0
   assert_preview "$QUEUE"
-  log "Deleting the old door-view queue $QUEUE"
-  wrangler queues consumer remove "$QUEUE" worldmesh-screenshot-preview >/dev/null 2>&1 || true
+  log "Deleting the old queue $QUEUE"
   cf DELETE "/accounts/$ACCOUNT/queues/$queue" >/dev/null
 }
 
@@ -193,7 +201,7 @@ ensure_all() {
   ensure_kv "$KV_WORLDS"
   ensure_kv "$KV_VIEWS"
   ensure_r2
-  retire_queue
+  unhook_queue
   for app in "${APPS[@]}"; do ensure_pages_project "$app"; ensure_pages_domain "$app"; done
 }
 
@@ -320,6 +328,7 @@ cmd_deploy() {
   require_access
   SCREENSHOT_SECRET=$(openssl rand -hex 32)
   deploy_workers
+  retire_queue
   configure_hub_project
   build_apps
   upload_apps "$sha"
