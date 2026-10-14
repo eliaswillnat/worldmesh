@@ -107,7 +107,8 @@ export class LiveDoors {
     this.showing = distance < (this.showing ? HIDE : SHOW);
     const rect = this.showing && live.door !== crossing ? this.screenRect(live.door, camera) : null;
     if (!rect) {
-      live.door.setLiveHole(false);
+      // Walked away: the cover ripples back. Off screen or walked through: only paused.
+      live.door.setLiveHole(false, this.showing);
       return;
     }
     this.send(live, camera, rect);
