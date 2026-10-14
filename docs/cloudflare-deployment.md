@@ -85,14 +85,12 @@ implementation from `apps/hub/functions/`. The approval flow:
 2. The link (`/api/approve`) opens a confirmation page; its button approves.
    Opening the link alone changes nothing, because mail link scanners open links on
    their own. The admin dashboard's "Save and approve" posts to the same link.
-3. Approving moves the entry to `approved:<id>`, emails the creator, and queues
-   the world's door view in `workers/screenshot`.
+3. Approving moves the entry to `approved:<id>` and emails the creator.
 4. The hub lists approved worlds from `/api/worlds`, next to
    `apps/hub/src/community.json` (whose entries win for the same URL).
 
-The `worldmesh-hub` Pages project needs the `WORLDS` KV binding, `RESEND_API_KEY`,
-`SCREENSHOT_SECRET` (to queue door views) and, for `/api/admin/submit`,
-`APPROVE_SECRET`. Without the KV binding, submissions are only emailed.
+The `worldmesh-hub` Pages project needs the `WORLDS` KV binding, `RESEND_API_KEY`
+and, for `/api/admin/submit`, `APPROVE_SECRET`. Without the KV binding, submissions are only emailed.
 
 ### Setup in 2 Minutes:
 
@@ -145,6 +143,19 @@ default server (`DEFAULT_PRESENCE_SERVER`) points at this Worker.
    built in, so worlds still on that version lose multiplayer without it.
 
 If the presence Worker is unreachable, walk mode still works single-player.
+
+**Screenshot Worker (`workers/screenshot`).** It stores cover uploads in R2.
+It used to also take door views through the `worldmesh-door-views` queue; that
+is gone. Cloudflare refuses to deploy a Worker a queue still lists as its
+consumer, and to delete a queue a deployed Worker still binds, so the next
+deploy goes in this order, once:
+
+```bash
+cd workers/screenshot
+npx wrangler queues consumer remove worldmesh-door-views worldmesh-screenshot
+npx wrangler deploy
+npx wrangler queues delete worldmesh-door-views
+```
 
 Walk-mode doors show each world's cover image inside WebGL, which needs CORS. The
 R2 bucket does not send CORS headers, so the hub relays covers through the

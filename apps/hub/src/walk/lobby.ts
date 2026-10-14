@@ -45,7 +45,6 @@ import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { CITY_GLOW_WHITE, applyCityTheme, applySkyTheme, createCityMaterials, createSky, createSpawnPads, flipInside, skyHorizon, updateSky, type BillboardSlot } from './city';
 import { DOOR_HALF_SPAN, DOOR_HEIGHT, DOOR_TOP, DOOR_WIDTH, FRAME, Door, worldIsFull, type DoorWorld } from './door';
-import { DoorViewManager } from './doorViews';
 import { LiveDoors } from './liveDoors';
 import { WalkThrough } from './walkThrough';
 import { doorFrameGeometry, frameOuterCorner, openingCorner } from './doorShape';
@@ -95,10 +94,6 @@ export interface LobbyOptions {
   light?: boolean;
   /** WebSocket base URL of the presence server. Leave empty for single-player. */
   presenceEndpoint?: string;
-  /** workers/screenshot, for door views: up close, doors show the world itself. Leave empty for covers only. */
-  doorViewEndpoint?: string;
-  /** Preview only: give each demo world's door a different style, to compare them (see doorViews). */
-  doorCompare?: boolean;
   /** Name shown above this visitor for everyone else; null shows them as a guest. */
   playerName?: () => string | null;
   /** Start in private mode (see `Lobby.setPrivate`). */
@@ -737,40 +732,35 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
   const known = new Map<string, DoorWorld>();
   const doors = new Map<string, Door>();
-  const doorViews = new DoorViewManager(options.doorViewEndpoint || null, renderer, options.doorCompare ?? false);
-  // Doors whose world can wait behind the hall, to be walked straight into (doorViews.walkable).
-  const walkThrough = doorViews.enabled
-    ? new WalkThrough(renderer.domElement, {
-        views: doorViews,
-        avatar: () => world.avatar,
-        state: () => world.getState(),
-        travelUrl: (url) => travelUrl(url),
-        viewMode: () => world.getViewMode(),
-        color: () => (alias ? null : color),
-        character: () => (alias ? null : character),
-        characterTicket: () => characterTicket(),
-        cameraDistance: { get: () => world.getCameraDistance(), set: (distance) => world.setCameraDistance(distance) },
-        freeze: () => {
-          warping = true;
-          world.stop();
-        },
-        entered: (door) => {
-          presence?.detach();
-          stopPortalHum();
-          const out = door.inFront(RETURN_STEP * door.group.scale.x);
-          returnTo = { position: [out.x, door.group.position.y, out.z], yaw: out.yaw };
-          if (door.world) options.onEnterWorld?.(door.world, returnTo);
-        },
-      })
-    : null;
-  // After walkThrough's layer, so a live doorway shows this world over a waiting one.
+  // Worlds drawn live in their doorways, the ones that can be walked straight into (walkThrough).
   const liveDoors = new LiveDoors(renderer.domElement);
+  const walkThrough = new WalkThrough({
+    live: liveDoors,
+    state: () => world.getState(),
+    travelUrl: (url) => travelUrl(url),
+    viewMode: () => world.getViewMode(),
+    color: () => (alias ? null : color),
+    character: () => (alias ? null : character),
+    characterTicket: () => characterTicket(),
+    cameraDistance: { get: () => world.getCameraDistance(), set: (distance) => world.setCameraDistance(distance) },
+    freeze: () => {
+      warping = true;
+      world.stop();
+    },
+    entered: (door) => {
+      presence?.detach();
+      stopPortalHum();
+      const out = door.inFront(RETURN_STEP * door.group.scale.x);
+      returnTo = { position: [out.x, door.group.position.y, out.z], yaw: out.yaw };
+      if (door.world) options.onEnterWorld?.(door.world, returnTo);
+    },
+  });
   const feet = new Vector3();
   /**
    * The visitor's character (Avatar Wallet), shown in the lobby as well, so
    * the figure walking through a door is already the one the world shows.
-   * Its model file is downloaded once here and handed on to walk-through
-   * worlds (walkThrough).
+   * Its model file is downloaded once here and handed on to worlds that can
+   * be walked into (walkThrough).
    */
   let character: { descriptor: AvatarDescriptor; data: ArrayBuffer } | null = null;
   let characterTurn = 0;
@@ -789,7 +779,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     if ((await world.loadAvatar(descriptor, data)) && turn === characterTurn && !alias) character = { descriptor, data };
   }
   const onCharacterChange = () => void loadCharacter();
-  if (walkThrough) window.addEventListener(CHARACTER_CHANGE_EVENT, onCharacterChange);
+  window.addEventListener(CHARACTER_CHANGE_EVENT, onCharacterChange);
   // Doors with no world behind them yet. Re-laid out with every list change.
   const emptyDoors: Door[] = [];
   // Empty doors round the galleries. Rebuilt with the hall.
@@ -956,8 +946,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         }
       }
       updatePortalHum(humDoor, humDistance);
-      doorViews.update(dt, doors.values(), x, y, z, camera);
-      walkThrough?.update(doors.values(), feet.set(x, y, z));
+      walkThrough.update();
       let near: Door | null = null;
       let nearest = EMPTY_DOOR_REACH;
       for (const door of [...emptyDoors, ...galleryDoors]) {
@@ -999,13 +988,12 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       mirror.position.set(Math.round(x / 10) * 10, 0, Math.round(z / 10) * 10);
       placeChatBubble();
       // Last, with the camera where it will be drawn from: the worlds seen live through their doors.
-      walkThrough?.step(camera, feet.set(x, y, z));
-      doorViews.renderPortals(camera);
-      liveDoors.update(doors.values(), camera, feet, !renderer.xr.isPresenting, walkThrough?.crossing ?? null);
+      walkThrough.step(camera, feet.set(x, y, z));
+      liveDoors.update(doors.values(), camera, feet, !renderer.xr.isPresenting);
     },
   });
   if (alias) ghost = makeGhost(world.avatar);
-  if (walkThrough) void loadCharacter();
+  void loadCharacter();
 
   // Chat is a bubble over your head. Enter opens it, Enter sends it, then it
   // follows you around until it fades. There is no transcript.
@@ -1178,8 +1166,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
   /** Walking through a lobby door: flash, then travel to the world's own URL. */
   function enter(door: Door): void {
-    // A door whose world waits behind the hall: walk on through instead.
-    if (walkThrough?.enter(door)) return;
+    // A door whose live world can be walked into: walk on through instead.
+    if (walkThrough.enter(door)) return;
     const target = door.world;
     if (!target) return;
     door.surge();
@@ -1715,7 +1703,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       world.clearAvatar();
       ghost?.restore();
       ghost = alias ? makeGhost(world.avatar) : null;
-      if (walkThrough) void loadCharacter();
+      void loadCharacter();
       spawnPad = Math.floor(Math.random() * spawnPads.pads.length);
       world.teleport(padSpawn(), padYaw());
       triggerSpawnFx();
@@ -2345,9 +2333,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
   function dispose(): void {
     window.removeEventListener(CHARACTER_CHANGE_EVENT, onCharacterChange);
-    walkThrough?.dispose();
+    walkThrough.dispose();
     liveDoors.dispose();
-    doorViews.dispose();
     disposed = true;
     stopPortalHum();
     window.clearTimeout(warpTimer);

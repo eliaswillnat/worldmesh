@@ -1,12 +1,11 @@
 /**
- * Who may use this worker. Every capture starts a headless browser on our
- * Cloudflare bill, so nothing runs for strangers.
+ * Who may use this worker: cover uploads go into our R2 bucket, so nothing
+ * runs for strangers.
  *
- * - server: WorldMesh's own backends (the hub's admin functions, the admin
- *   worker). They send `Authorization: Bearer <SCREENSHOT_SECRET>` and are
- *   the only ones who may POST: door views and cover uploads.
- * - The hub page itself, recognised by its Origin, may only read door-view
- *   statuses (GET), which carry nothing private.
+ * - server: WorldMesh's own backends (the admin worker). They send
+ *   `Authorization: Bearer <SCREENSHOT_SECRET>` and are the only ones who
+ *   may POST.
+ * - The hub page itself, recognised by its Origin, may read responses.
  */
 
 export type Caller = 'server' | null;

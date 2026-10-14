@@ -1,1 +1,1 @@
-{ "doorway": 1, "view": true }
+{ "doorway": 1, "view": true, "embed": true, "characters": ["vrm", "glb"] }

@@ -15,7 +15,6 @@
     "dev:city": "npm run build:runtime && npm run dev --workspace=apps/city",
     "dev:medieval": "npm run build:runtime && npm run dev --workspace=apps/medieval",
     "dev:space": "npm run build:runtime && npm run dev --workspace=apps/space",
-    "door-views:local": "bash scripts/local-door-views.sh",
     "dev:runtime": "npm run watch --workspace=packages/runtime",
     "dev:presence": "wrangler dev --config workers/presence/wrangler.toml --port 8787",
     "dev:auth": "npm run dev --prefix workers/auth",

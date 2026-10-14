@@ -24,8 +24,6 @@ import { Overlay } from '../ui/overlay.js';
 import { isTouchDevice } from '../controls/touch.js';
 import { immersiveVrSupported, requestImmersiveVr } from '../xr/session.js';
 import { Emitter } from './events.js';
-import { captureDoorView, type DoorViewOptions } from '../capture/doorView.js';
-import { exportPortal, type PortalSceneOptions } from '../capture/portalScene.js';
 import { DEFAULT_PRESENCE_SERVER, Presence } from '../net/presence.js';
 import { roomFullLabel } from '../net/roomFull.js';
 
@@ -34,40 +32,22 @@ const MAX_STEP = 1 / 60;
 /** Never simulate more than this per frame, so a backgrounded tab does not catch up violently. */
 const MAX_FRAME = 0.1;
 const DEFAULT_HUB = 'https://worldmesh.net/';
-/** An embedded world waiting to be walked into draws this rarely: enough to stay warm, little enough to leave the hub its frames. */
-const DORMANT_FRAME_MS = 250;
 /** Seconds to ease the field of view back to the world's own after taking over the hub's camera. */
 const FOV_RETURN = 1.5;
-/**
- * Set by WorldMesh's capture service when it opens a world to take its door
- * view. The world then stays offline, so other visitors stay out of the shot.
- */
-export const CAPTURE_PARAM = 'worldmesh-capture';
-/**
- * Set by a host that shows the world live in one of its doors (Doorway,
- * docs/specs/doorway.md §4). The world waits offline until the host posts
- * `{ type: 'doorway:enter' }` (the visitor walked through the door), then
- * goes online without reloading. While embedded, it asks the host to take
- * the visitor anywhere else (`{ type: 'doorway:navigate', url }`), as the
- * page around it is the host's.
- */
-export const EMBED_PARAM = 'doorway-embed';
 /**
  * Set by a host that draws the world live in one of its doorways (Doorway,
  * docs/specs/doorway.md §3.1). The world stays offline, shows no UI, takes no
  * input, and draws only when the host sends a camera (`doorway:view`), from
- * that camera carried through the doorway onto its spawn point.
+ * that camera carried through the doorway onto its spawn point. When the
+ * visitor walks through (`doorway:enter`), it takes over from their pose
+ * and goes online, without reloading (§4).
  */
 export const DOORWAY_VIEW_PARAM = 'doorway-view';
-/**
- * Metres from the doorway back to the spawn point in a live view: where
- * WorldMesh's hub stands a world's Doorway scene too, so the two line up.
- */
+/** Metres from the doorway back to the spawn point in a live view, and where a walk-in lands. */
 const VIEW_SPAWN_BEHIND = 0.6;
 /** Seconds a live view waits for the player to land at spawn before saying it is ready. */
 const VIEW_SETTLE = 2;
-/** The pre-Doorway names, still understood: `worldmesh-embed` and `worldmesh:*` messages. */
-const LEGACY_EMBED_PARAM = 'worldmesh-embed';
+/** The pre-Doorway names, still understood: `worldmesh:*` messages. */
 const isDoorwayMessage = (data: unknown, name: string): boolean => {
   const type = (data as { type?: unknown } | null)?.type;
   return type === `doorway:${name}` || type === `worldmesh:${name}`;
@@ -91,7 +71,10 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   const abilities = resolveAbilities(options.abilities);
 
   // Before anything sizes the canvas: a live doorway view draws at 1×.
-  const viewing = isDoorwayViewRequest();
+  /** Drawn live in a host's doorway, not walked into yet. */
+  let viewing = isDoorwayViewRequest();
+  /** Inside a host's page (in its doorway, or walked into from it): other pages open through the host. */
+  const inHost = viewing;
   const height = options.player?.height ?? 1.8;
   const radius = options.player?.radius ?? 0.35;
 
@@ -211,8 +194,6 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     exitVR,
     isVR: () => renderer.xr.isPresenting,
 
-    captureDoorView: doCaptureDoorView,
-    exportPortal: doExportPortal,
   };
 
   applyViewVisibility();
@@ -222,11 +203,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
 
   if (options.autoStart !== false) start();
 
-  const capturing = isCaptureRequest();
-  const embedded = !capturing && !viewing && isEmbedRequest();
   let network: WorldMeshOptions['network'];
-  /** Embedded and not walked into yet. */
-  let dormant = embedded;
   /** Easing the field of view back to the world's own, after a walk-in took over the hub's. */
   let fovReturn: { from: number; to: number; t: number } | null = null;
   /** Live doorway view: said ready to the host, and drawn a view for it. */
@@ -235,10 +212,8 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   const viewStart = performance.now();
   /** The host's latest view, not drawn yet. */
   let pendingView: DoorwayView | null = null;
-  if (capturing) exposeCapture();
   if (viewing) serveDoorwayView();
-  else if (embedded) awaitEntry();
-  else if (!capturing) goOnline();
+  else goOnline();
 
   if (!viewing) startAvatar();
   if (vrEnabled && !viewing) void offerVr();
@@ -270,15 +245,69 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
    * landed at spawn, so the first view doesn't sink.
    */
   function serveDoorwayView(): void {
-    overlay.dispose();
-    input.dispose();
-    if (player.root) player.root.visible = false;
-    window.addEventListener('message', (event: MessageEvent) => {
+    // Kept, out of sight: walked into, the world shows them again.
+    injectDoorwayViewStyle();
+    document.documentElement.classList.add(DOORWAY_VIEW_CLASS);
+    applyViewVisibility();
+    const onMessage = (event: MessageEvent) => {
       if (event.source !== window.parent || disposed || !viewReady) return;
       const view = event.data as Partial<DoorwayView> & { type?: unknown };
       // Only the latest counts: a world slower than the host never falls behind.
       if (view?.type === 'doorway:view' && validDoorwayView(view)) pendingView = view;
-    });
+      else if (isDoorwayMessage(event.data, 'enter')) {
+        window.removeEventListener('message', onMessage);
+        enterFromView(event.data);
+      }
+    };
+    window.addEventListener('message', onMessage);
+    awaitCharacter();
+  }
+
+  /**
+   * Walked into from the doorway: the pose comes in the door's frame, like
+   * the views, and lands the same way, on the spawn point beyond it. Then the
+   * world is itself again: drawing on its own, its UI and the visitor's body
+   * back, online. The host hears `doorway:entered` once a frame from there
+   * is drawn.
+   */
+  function enterFromView(message: { url?: unknown; pose?: unknown }): void {
+    const url = typeof message.url === 'string' ? message.url : null;
+    try {
+      if (url && new URL(url).origin === window.location.origin) window.history.replaceState(null, '', url);
+    } catch {
+      // Keep the view address.
+    }
+    if (disposed) return;
+    takePose(poseFromDoor(message.pose));
+    viewing = false;
+    pendingView = null;
+    document.documentElement.classList.remove(DOORWAY_VIEW_CLASS);
+    handleResize();
+    applyViewVisibility();
+    input.requestPointerLock(isTouchDevice());
+    window.addEventListener('message', onCarry);
+    goOnline();
+    requestAnimationFrame(() => requestAnimationFrame(() => window.parent.postMessage({ type: 'doorway:entered' }, '*')));
+  }
+
+  /** A pose in the door's frame (doorway:enter from a live view), in this world's coordinates; null if malformed. */
+  function poseFromDoor(pose: unknown): unknown {
+    const p = pose as Record<string, unknown> | null;
+    const vec = (v: unknown): v is Vec3Tuple => Array.isArray(v) && v.length === 3 && v.every((n) => typeof n === 'number' && Number.isFinite(n));
+    if (!p || !vec(p.position)) return null;
+    const spawnYaw = cameraRig.yaw;
+    viewTurn.setFromAxisAngle(UP, spawnYaw);
+    viewThreshold.set(0, 0, VIEW_SPAWN_BEHIND).applyQuaternion(viewTurn).add(controller.position);
+    const place = (v: Vec3Tuple) => new Vector3(...v).applyQuaternion(viewTurn).add(viewThreshold).toArray();
+    const turn = (n: unknown) => (typeof n === 'number' && Number.isFinite(n) ? n + spawnYaw : n);
+    return {
+      ...p,
+      position: place(p.position),
+      velocity: vec(p.velocity) ? new Vector3(...p.velocity).applyQuaternion(viewTurn).toArray() : p.velocity,
+      camera: vec(p.camera) ? place(p.camera) : p.camera,
+      yaw: turn(p.yaw),
+      facing: turn(p.facing),
+    };
   }
 
   /** In the loop, instead of drawing: say ready once settled at spawn, then draw the latest view. */
@@ -328,48 +357,15 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     renderer.clippingPlanes = worldPlanes;
   }
 
-  /**
-   * Shown live in a hub's door: stay offline, drawing only now and then,
-   * until the visitor walks through it. The hub's travel URL (its `from`, for
-   * the way back) replaces this page's own address, as if they had arrived
-   * through it. A `pose` (in this world's coordinates) puts the player and
-   * camera exactly where the hub had them, so the hand-over can't be seen;
-   * the hub hears `doorway:entered` once a frame from there is drawn.
-   */
-  function awaitEntry(): void {
-    const onMessage = (event: MessageEvent) => {
-      if (event.source !== window.parent || !isDoorwayMessage(event.data, 'enter')) return;
-      window.removeEventListener('message', onMessage);
-      const url = typeof event.data.url === 'string' ? event.data.url : null;
-      try {
-        if (url && new URL(url).origin === window.location.origin) window.history.replaceState(null, '', url);
-      } catch {
-        // Keep the embed address.
-      }
-      if (disposed) return;
-      takePose(event.data.pose);
-      dormant = false;
-      // Walked in: playing at once, no "click to play" in between (the cursor still needs a click to look around).
-      input.requestPointerLock(isTouchDevice());
-      window.addEventListener('message', onCarry);
-      goOnline();
-      // Two frames on, the first one from the new pose has been drawn.
-      requestAnimationFrame(() => requestAnimationFrame(() => window.parent.postMessage({ type: 'doorway:entered' }, '*')));
-    };
-    // The hub's joystick, still held as the visitor walked in, keeps them walking until it is let go.
-    const onCarry = (event: MessageEvent) => {
-      if (event.source !== window.parent || !isDoorwayMessage(event.data, 'carry')) return;
-      input.carry(Number(event.data.x) || 0, Number(event.data.z) || 0);
-      if (!event.data.x && !event.data.z) window.removeEventListener('message', onCarry);
-    };
-    window.addEventListener('message', onMessage);
-    awaitCharacter();
-    // Nothing secret: only tells the hub this world can be walked into.
-    window.parent.postMessage({ type: 'doorway:ready' }, '*');
+  /** The hub's joystick, still held as the visitor walked in, keeps them walking until it is let go. */
+  function onCarry(event: MessageEvent): void {
+    if (event.source !== window.parent || !isDoorwayMessage(event.data, 'carry')) return;
+    input.carry(Number(event.data.x) || 0, Number(event.data.z) || 0);
+    if (!event.data.x && !event.data.z) window.removeEventListener('message', onCarry);
   }
 
   /**
-   * Embedded: the host hands over the visitor's character while the world
+   * In a doorway: the host hands over the visitor's character while the world
    * still waits, so it is on screen from the first frame they walk in
    * (Doorway §6): `{ type: 'doorway:character', format, name, data }`, the
    * model file itself (nothing is fetched twice), or `data: null` for the
@@ -464,9 +460,9 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     }
   }
 
-  /** Leave for another page; an embedded world asks its hub to go there instead. */
+  /** Leave for another page; a world inside a host's page asks the host to go there instead. */
   function leaveFor(url: string): void {
-    if (embedded) window.parent.postMessage({ type: 'doorway:navigate', url }, '*');
+    if (inHost) window.parent.postMessage({ type: 'doorway:navigate', url }, '*');
     else window.location.href = url;
   }
 
@@ -540,7 +536,6 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
 
   function frame(now: number): void {
     if (!running) return;
-    if (dormant && now - lastTime < DORMANT_FRAME_MS) return;
     const dt = Math.min((now - lastTime) / 1000, MAX_FRAME);
     lastTime = now;
     update(dt);
@@ -728,7 +723,8 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
 
   /** In first person the avatar would fill the screen. */
   function applyViewVisibility(): void {
-    player.setVisible(cameraRig.mode === 'third' || renderer.xr.isPresenting);
+    // In a doorway the visitor's own body is the host's: none here.
+    player.setVisible(!viewing && (cameraRig.mode === 'third' || renderer.xr.isPresenting));
   }
 
   function getState(): PlayerState {
@@ -773,76 +769,12 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     leaveFor(buildTravelUrl(url));
   }
 
-  /** Where captures for hub doors are taken from: the player's eyes, the way they face. */
-  function captureTarget() {
-    return {
-      scene,
-      renderer,
-      camera: camera as { near: number; far: number },
-      eye: controller.position.clone().setY(controller.position.y + player.eyeHeight * (controller.height / height)),
-      yaw: cameraRig.yaw,
-      hide: [player.root],
-    };
-  }
-
-  /** Captures resize the canvas and draw on their own, so the world's loop pauses meanwhile. */
-  async function whilePaused<T>(what: string, run: () => Promise<T>): Promise<T> {
-    if (disposed) throw new Error('This world has been disposed.');
-    if (renderer.xr.isPresenting) throw new Error(`Cannot ${what} during VR.`);
-    const wasRunning = running;
-    stop();
-    try {
-      return await run();
-    } finally {
-      if (wasRunning) start();
-    }
-  }
-
-  /** Snapshot the view from where the player stands, the way they face, for hub doors. */
-  function doCaptureDoorView(captureOptions?: DoorViewOptions) {
-    return whilePaused('capture a door view', () => captureDoorView(captureTarget(), captureOptions));
-  }
-
-  /** The scene around where the player stands, for hub doors to draw live. */
-  function doExportPortal(portalOptions?: PortalSceneOptions) {
-    return whilePaused('export a portal scene', () =>
-      exportPortal({ ...captureTarget(), feet: controller.position.clone() }, portalOptions),
-    );
-  }
-
-  function isEmbedRequest(): boolean {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      return window.parent !== window && (params.has(EMBED_PARAM) || params.has(LEGACY_EMBED_PARAM));
-    } catch {
-      return false;
-    }
-  }
-
   function isDoorwayViewRequest(): boolean {
     try {
       return window.parent !== window && new URLSearchParams(window.location.search).has(DOORWAY_VIEW_PARAM);
     } catch {
       return false;
     }
-  }
-
-  function isCaptureRequest(): boolean {
-    try {
-      return new URLSearchParams(window.location.search).has(CAPTURE_PARAM);
-    } catch {
-      return false;
-    }
-  }
-
-  /** The capture service drives the page from outside, so give it one global to call. */
-  function exposeCapture(): void {
-    const hooks = window as unknown as {
-      __worldmeshCaptureDoorView?: typeof doCaptureDoorView;
-      __worldmeshExportPortal?: typeof doExportPortal;
-    };
-    hooks.__worldmeshCaptureDoorView = doCaptureDoorView;
-    hooks.__worldmeshExportPortal = doExportPortal;
   }
 
   function handleResize(): void {
@@ -921,3 +853,14 @@ const viewQuaternion = new Quaternion();
 const viewThreshold = new Vector3();
 const viewForward = new Vector3();
 const viewClip = new Plane();
+
+/** On the page while it is drawn in a host's doorway: its overlay and touch controls are kept, unseen. */
+const DOORWAY_VIEW_CLASS = 'wm-doorway-view';
+
+function injectDoorwayViewStyle(): void {
+  if (document.getElementById(DOORWAY_VIEW_CLASS)) return;
+  const style = document.createElement('style');
+  style.id = DOORWAY_VIEW_CLASS;
+  style.textContent = `html.${DOORWAY_VIEW_CLASS} .wm-overlay, html.${DOORWAY_VIEW_CLASS} .wm-touch-root { display: none !important; }`;
+  document.head.appendChild(style);
+}

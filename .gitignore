@@ -9,7 +9,3 @@ dist/
 *.local
 .dev.vars
 .preview-wrangler.toml
-
-# Doorway scenes the demo worlds publish locally (npm run door-views:local)
-apps/*/public/doorway/
-apps/*/public/.well-known/doorway.json

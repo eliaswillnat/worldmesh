@@ -64,30 +64,21 @@ or call `world.loadAvatar(descriptor)` / `world.clearAvatar()` at any time.
 `avatar:load` and `avatar:error` events report the outcome. The VRM and glTF
 loaders (`@pixiv/three-vrm`) are only downloaded when an avatar is shown.
 
-## Door views
+## Live doors
 
-Hub doors can show a 360° snapshot of your world, with depth, so near things
-shift against far ones as visitors walk past. WorldMesh takes it for you: its
-capture service opens your world with `?worldmesh-capture=1` and calls
-`world.captureDoorView()`, which snapshots the view from the spawn point, the
-way the player faces. In that mode the world stays offline, so no other
-visitors end up in the picture. Nothing to do on your side.
-
-Better still, doors can draw your world live, from wherever the visitor
-stands: `world.exportPortal()` writes the meshes within 60 m of the spawn
-point as glTF (in world coordinates, with their lights and fog alongside), and
-photographs everything else (sky, far scenery) as a 360° backdrop. It keeps
-meshes with standard, physical, basic, Lambert or Phong materials; other near
-things (custom shaders, points, sprites) are left out of both. Nothing moves
-in a portal scene yet.
-
-Best of all, a door can show your world itself, live, as seen from the
-visitor's own camera: water moving, everything as it is. Publish a Doorway
-file at `/.well-known/doorway.json` saying `{ "doorway": 1, "view": true }`
-and let hubs frame your page. The hub opens it with `?doorway-view` and sends
-its camera every frame; the runtime does the rest: offline, no UI, no input,
+A hub door can show your world itself, live, as seen from the visitor's own
+camera: water moving, everything as it is. Publish a Doorway file at
+`/.well-known/doorway.json` saying `{ "doorway": 1, "view": true }` and let
+hubs frame your page. The hub opens it with `?doorway-view` and sends its
+camera every frame; the runtime does the rest: offline, no UI, no input,
 drawing only the doorway's part of the screen from that camera, carried onto
 your spawn point (Doorway spec §3.1). Hubs keep the cover for worlds without it.
+
+Add `"embed": true` (and `"characters": ["vrm", "glb"]` if you show
+visitors' avatars) and visitors can walk straight in: as they cross the
+doorway the hub hands over their pose, and the same page takes over the
+screen, online, with no reload (§4). While inside, `travelTo` asks the hub to
+open other pages, as the page around your world is the hub's.
 
 ## What is exported
 
@@ -102,10 +93,7 @@ your spawn point (Doorway spec §3.1). Hubs keep the cover for worlds without it
 | `Overlay`, `Emitter` | the shared overlay, a tiny typed emitter |
 | `immersiveVrSupported`, `requestImmersiveVr` | the shared WebXR enter-VR path |
 | `Presence`, `DEFAULT_PRESENCE_SERVER`, `NetworkAdapter` | multiplayer (`multiplayer: true`) and the seam for your own |
-| `captureDoorView`, `DOOR_VIEW_FACES`, `CAPTURE_PARAM` | the 360° colour + depth snapshot hub doors show of your world |
-| `exportPortal`, `PortalScene`, `PORTAL_SCENE_VERSION` | the scene around your spawn point that hub doors draw live |
-| `DOORWAY_VIEW_PARAM` | a hub drawing your world live in its doorway (`?doorway-view`), from the visitor's camera |
-| `EMBED_PARAM` | a hub keeping your world loaded behind its door (`?worldmesh-embed=1`): it waits offline, drawing rarely, until the visitor walks through; it then takes over from their exact pose in the hub, goes online without reloading, and asks the hub to open any other page |
+| `DOORWAY_VIEW_PARAM` | a hub drawing your world live in its doorway (`?doorway-view`), from the visitor's camera; walked into, it takes over from their exact pose, goes online without reloading, and asks the hub to open any other page |
 | `WORLDMESH_VERSION`, `WORLDMESH_PROTOCOL` | what your world is speaking |
 
 Full option, handle and event reference:

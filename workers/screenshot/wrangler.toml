@@ -3,9 +3,6 @@ main = "src/index.ts"
 compatibility_date = "2024-01-01"
 compatibility_flags = ["nodejs_compat"]
 
-[browser]
-binding = "BROWSER"
-
 [[r2_buckets]]
 binding = "SCREENSHOTS"
 bucket_name = "worldmesh-screenshots"
@@ -15,37 +12,21 @@ bucket_name = "worldmesh-screenshots"
 # e.g. https://screenshots.worldmesh.net
 R2_PUBLIC_URL = "https://pub-b622cf770b414a1c9869157e73dab3c1.r2.dev"
 
-# Origins whose pages may read door-view statuses from a browser. Everything
-# else (door views, cover uploads) needs SCREENSHOT_SECRET.
+# Origins whose pages may read responses from a browser. Cover uploads need
+# SCREENSHOT_SECRET.
 ALLOWED_ORIGINS = "https://worldmesh.net,https://www.worldmesh.net"
 
-# Required. Server callers (hub admin functions, workers/admin) send it as
-# Authorization: Bearer <secret>. Set the same value in all three places:
+# Required. Server callers (workers/admin) send it as
+# Authorization: Bearer <secret>. Set the same value in both places:
 #   npx wrangler secret put SCREENSHOT_SECRET                       (here)
 #   npx wrangler secret put SCREENSHOT_SECRET --config ../admin/wrangler.toml
-#   hub Pages project → Settings → Variables and Secrets → SCREENSHOT_SECRET
-
-# Door views for hub doors: requests queue a capture, this worker takes it.
-# Create the queue once before deploying: npx wrangler queues create worldmesh-door-views
-[[queues.producers]]
-binding = "DOOR_VIEWS"
-queue = "worldmesh-door-views"
-
-[[queues.consumers]]
-queue = "worldmesh-door-views"
-max_batch_size = 1
-max_concurrency = 2
-max_retries = 0
 
 # ── Preview (docs/previews.md) ─────────────────────────────────────────────
-# Screenshots and door views for the preview hub, in their own bucket and
-# queue. Deployed by scripts/preview.sh, which passes R2_PUBLIC_URL (the
-# bucket's r2.dev URL) and sets SCREENSHOT_SECRET.
+# Covers for the preview hub, in their own bucket. Deployed by
+# scripts/preview.sh, which passes R2_PUBLIC_URL (the bucket's r2.dev URL)
+# and sets SCREENSHOT_SECRET.
 [env.preview]
 name = "worldmesh-screenshot-preview"
-
-[env.preview.browser]
-binding = "BROWSER"
 
 [[env.preview.r2_buckets]]
 binding = "SCREENSHOTS"
@@ -55,12 +36,3 @@ bucket_name = "worldmesh-screenshots-preview"
 R2_PUBLIC_URL = ""
 ALLOWED_ORIGINS = "https://preview.worldmesh.net"
 
-[[env.preview.queues.producers]]
-binding = "DOOR_VIEWS"
-queue = "worldmesh-door-views-preview"
-
-[[env.preview.queues.consumers]]
-queue = "worldmesh-door-views-preview"
-max_batch_size = 1
-max_concurrency = 2
-max_retries = 0
