@@ -23,7 +23,9 @@ D1_NAME="worldmesh-preview"
 KV_WORLDS="worldmesh-preview-WORLDS"
 KV_VIEWS="worldmesh-preview-VIEWS"
 R2_BUCKET="worldmesh-screenshots-preview"
-# Door views used to be captured through this queue; teardown still deletes it.
+# Door views used to be captured through this queue, which the screenshot
+# Worker consumed. It no longer does, and Cloudflare refuses a Worker that a
+# queue still lists as consumer without a queue handler: deploy deletes it.
 QUEUE="worldmesh-door-views-preview"
 # Order matters: admin binds presence's Durable Object; auth owns the migrations.
 WORKERS=(presence views screenshot auth admin)
@@ -101,6 +103,15 @@ ensure_r2() {
   fi
   cf PUT "/accounts/$ACCOUNT/r2/buckets/$R2_BUCKET/domains/managed" '{"enabled":true}' >/dev/null
   set_r2_expiry 7
+}
+
+retire_queue() {
+  local queue; queue=$(queue_id)
+  [[ -n $queue ]] || return 0
+  assert_preview "$QUEUE"
+  log "Deleting the old door-view queue $QUEUE"
+  wrangler queues consumer remove "$QUEUE" worldmesh-screenshot-preview >/dev/null 2>&1 || true
+  cf DELETE "/accounts/$ACCOUNT/queues/$queue" >/dev/null
 }
 
 ensure_pages_project() {
@@ -182,6 +193,7 @@ ensure_all() {
   ensure_kv "$KV_WORLDS"
   ensure_kv "$KV_VIEWS"
   ensure_r2
+  retire_queue
   for app in "${APPS[@]}"; do ensure_pages_project "$app"; ensure_pages_domain "$app"; done
 }
 
