@@ -40,7 +40,8 @@ export { Overlay } from './ui/overlay.js';
 export { immersiveVrSupported, requestImmersiveVr, IMMERSIVE_VR } from './xr/session.js';
 export { deserializePlayerState, serializePlayerState } from './net/adapter.js';
 export { DEFAULT_PRESENCE_SERVER, Presence } from './net/presence.js';
-export type { PresenceOptions } from './net/presence.js';
+export type { PresenceOptions, SharedAvatar } from './net/presence.js';
+export { SharedAvatarLink, shareableAvatar } from './avatar/share.js';
 export { isRoomFullSignal, occupancyIsFull, occupancyProbeUrl, probeRoomFull, roomFullLabel } from './net/roomFull.js';
 
 export const WORLDMESH_VERSION = '0.2.1';

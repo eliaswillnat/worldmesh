@@ -111,7 +111,8 @@ animations: the runtime plays clips named like `idle` and `walk`/`run`.
 - **VRoid Hub, other players.** A download license is for the user who issued
   it. Showing someone's VRoid avatar to *other* players (multiplayer) requires
   VRoid's "Multiplay" approval and `POST /api/download_licenses/multiplay`.
-  Worlds today render only the local player, so this is not needed yet.
+  Until WorldMesh has it, VRoid avatars are shown to their owner only; other
+  players see the default body (`packages/runtime/src/avatar/share.ts`).
 - **VRoid Hub, unapproved apps** may load only the user's own models (and
   models their authors allow downloading), are rate-limited per app, and show
   users an "unapproved application" warning. Approval (hub.vroid.com/apps) also
@@ -158,6 +159,23 @@ A ticket resolves to *whatever is selected now*: picking "Continue without
 character" or disconnecting a platform stops every outstanding ticket at once.
 It can reveal the chosen avatar's descriptor to whoever holds it, and nothing
 else: no session, no account details, no platform tokens, no WorldMesh user id.
+
+## Other players
+
+Everyone else in the room sees the visitor's character too. The presence
+relay carries only the model link (`{ t: 'v', u, f, i }`: URL, format and a
+short hashed id); each player's browser downloads the model from the platform
+itself, one at a time, and keeps the default body if that fails. The relay
+remembers the link for whoever joins later and forgets it when the visitor
+leaves.
+
+- Links that expire (Sketchfab's, ~5 minutes) are renewed by the owner's page
+  through `/resolve` shortly before they run out, so late joiners get a working
+  one. Players who already loaded the model keep it.
+- VRoid avatars are never sent (see "Limits" below).
+- Private mode sends no character, like no colour.
+- A player's browser fetches whatever https link another player sends, so the
+  model host sees their IP address. Only https, at most 40 MB, 60 s per download.
 
 ## Endpoints (`/api/account/avatar`, routed with `/api/account/*`)
 
