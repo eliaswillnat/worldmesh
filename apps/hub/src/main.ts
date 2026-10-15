@@ -76,13 +76,17 @@ try {
  * serverless function. Leave unset to skip notifications.
  */
 const NOTIFY_WEBHOOK = import.meta.env.VITE_NOTIFY_WEBHOOK as string | undefined;
-/** WebSocket base of workers/lobby, the lobby's own relay. Walk mode is single-player without it. */
+/**
+ * WebSocket base of workers/lobby, the lobby's own relay. Walk mode is
+ * single-player without it. Its own variable: VITE_PRESENCE_ENDPOINT, set on
+ * the Pages project, still means the free relay, as it does for the worlds.
+ */
 const PRESENCE_ENDPOINT =
-  (import.meta.env.VITE_PRESENCE_ENDPOINT as string | undefined) ||
+  (import.meta.env.VITE_LOBBY_RELAY_ENDPOINT as string | undefined) ||
   (import.meta.env.DEV ? 'ws://localhost:8787' : 'wss://lobby-relay.worldmesh.net');
 /** WebSocket base of workers/presence, the free relay the worlds behind the doors use: asked how full each one is. */
 const WORLD_RELAY_ENDPOINT =
-  (import.meta.env.VITE_WORLD_RELAY_ENDPOINT as string | undefined) ||
+  (import.meta.env.VITE_PRESENCE_ENDPOINT as string | undefined) ||
   (import.meta.env.DEV ? 'ws://localhost:8787' : 'wss://relay.worldmesh.net');
 function getDemoWorldUrl(envKey: string, localPort: number, defaultSubdomain: string): string {
   const envVal = import.meta.env[envKey] as string | undefined;

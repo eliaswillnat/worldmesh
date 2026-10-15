@@ -261,8 +261,8 @@ build_apps() {
   npm run build:runtime
 
   log "Building hub (preview settings)"
-  env VITE_PRESENCE_ENDPOINT="$lobby_relay" \
-      VITE_WORLD_RELAY_ENDPOINT="$relay" \
+  env VITE_LOBBY_RELAY_ENDPOINT="$lobby_relay" \
+      VITE_PRESENCE_ENDPOINT="$relay" \
       VITE_VIEWS_ENDPOINT="$views" \
       VITE_ADS_ENABLED=false \
       VITE_WORLD_FOREST_URL="https://$(host_of forest)/" \

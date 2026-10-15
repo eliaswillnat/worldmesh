@@ -145,9 +145,10 @@ today. The same code (`workers/presence/src`) runs as two Workers:
    dashboard (Worker → Settings → Domains & Routes). To point the hub
    somewhere else, set on **`worldmesh-hub`**:
    ```env
-   VITE_PRESENCE_ENDPOINT=wss://lobby-relay.example.com
-   VITE_WORLD_RELAY_ENDPOINT=wss://relay.example.com
+   VITE_LOBBY_RELAY_ENDPOINT=wss://lobby-relay.example.com
+   VITE_PRESENCE_ENDPOINT=wss://relay.example.com
    ```
+   `VITE_PRESENCE_ENDPOINT` is the free relay, as in the world apps.
 2. Keep `worldmesh-presence`'s `workers.dev` address switched on.
    `@worldmesh/runtime@0.2.0` has `wss://worldmesh-presence.elias-willnat.workers.dev`
    built in, so worlds still on that version lose multiplayer without it.
