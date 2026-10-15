@@ -51,6 +51,7 @@ const communityWorldsStatic = devWorldUrls(communityWorldsJson as WorldEntry[]);
 import { AD_CONFIG } from './ads/config';
 import { entryIconSvg, formatEntries, hasEntries } from './entries';
 import { HUB_VISIT_KEY, shouldCountHubVisit } from './hubVisit';
+import { claimStaleBuildReload } from './staleBuild';
 
 const VIEWS_ENDPOINT = (import.meta.env.VITE_VIEWS_ENDPOINT as string | undefined)
   || (import.meta.env.DEV ? 'https://worldmesh-views.elias-willnat.workers.dev' : '/api/views');
@@ -453,8 +454,10 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
   walkLoading = true;
   walkAbandoned = false;
   walkToggle.disabled = true;
+  let imported = false;
   try {
     const { createLobby } = await import('./walk/lobby');
+    imported = true;
     if (walkAbandoned) return;
     walkRoot = document.createElement('div');
     walkRoot.className = 'walk-root';
@@ -524,12 +527,33 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
     }));
   } catch (error) {
     console.error('Walk mode failed to start', error);
+    // The lobby's code would not load: most likely a deploy since this tab
+    // opened took the old chunks away. Reload once into the new build.
+    if (!imported && !walkAbandoned && reloadIntoWalk()) return;
     // Walk mode is unlisted for now: fail quietly back to the list.
     exitWalkMode();
   } finally {
     walkLoading = false;
     walkToggle.disabled = false;
   }
+}
+
+/**
+ * Reloads straight back into walk mode, unless this tab already did so a
+ * moment ago (the chunk is failing for some other reason) or it is offline,
+ * where a reload would only swap the list for the browser's offline page.
+ */
+function reloadIntoWalk(): boolean {
+  if (!navigator.onLine) return false;
+  try {
+    if (!claimStaleBuildReload(sessionStorage, Date.now())) return false;
+  } catch {
+    // Storage blocked: without the guard, no reload.
+    return false;
+  }
+  history.replaceState(null, '', `${window.location.pathname}${window.location.search}#walk`);
+  window.location.reload();
+  return true;
 }
 
 /** "3 online", plus the hub's all-time visits once they have loaded. */
