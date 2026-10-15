@@ -126,11 +126,15 @@ nothing.
   - **Rate limits per IP address** on joining and on occupancy reads.
   - WorldMesh can block a world that misuses the relay, and may change these
     limits ([terms](https://worldmesh.net/terms)).
-- **Your own relay.** Busy worlds, and independent cities, run their own:
-  deploy `workers/presence` to your own Cloudflare account (set
-  `WORLD_DAILY_MINUTES = "0"` for no daily limit) and pass
-  `multiplayer: { server: 'wss://your-relay.example' }`. The traffic and cost
-  are then yours, and you can raise the limits.
+- **Your own relay.** Busy worlds, and independent cities, run their own.
+  [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/eliaswillnat/worldmesh/tree/main/templates/relay)
+  puts [`templates/relay`](../templates/relay) on your own Cloudflare account
+  in one click: the same code, with no daily limit, and every limit a var
+  (`MAX_WORLD_PEERS`, `WORLD_DAILY_MINUTES`, …). Then pass
+  `multiplayer: { server: 'wss://worldmesh-relay.<your-subdomain>.workers.dev' }`.
+  The traffic and cost are then yours. Without the button:
+  `npm create cloudflare@latest my-relay -- --template eliaswillnat/worldmesh/templates/relay`,
+  then `npx wrangler deploy` in `my-relay`.
 - **Offline is fine.** If the relay cannot be reached the world stays
   single-player.
 

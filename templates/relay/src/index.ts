@@ -37,11 +37,13 @@ import { chatRejection } from './chatFilter';
  * back to the sender too gives every client the same order of writes, so two
  * people pressing at once still end up agreeing.
  *
- * The same code runs as two Workers: workers/lobby (the hub's own lobby,
- * named rooms only) and workers/presence (relay.worldmesh.net, the free relay
- * for independent worlds, world rooms only). The vars below say which. On the
- * free relay each world has a daily allowance of active minutes; past it, new
- * visitors get 429 and stay single-player until the next UTC day.
+ * This directory (templates/relay) is also the one-click template anyone can
+ * deploy as their own relay (README.md). WorldMesh runs the same code as two
+ * Workers: workers/lobby (the hub's own lobby, named rooms only) and
+ * workers/presence (relay.worldmesh.net, the free relay for independent
+ * worlds, world rooms only). The vars below say which, and set the room caps.
+ * On the free relay each world has a daily allowance of active minutes; past
+ * it, new visitors get 429 and stay single-player until the next UTC day.
  */
 
 interface Env {
@@ -59,6 +61,10 @@ interface Env {
   OWN_ORIGINS?: string;
   /** Secret (wrangler secret put BLOCKED_ORIGINS): origins refused outright, comma-separated. */
   BLOCKED_ORIGINS?: string;
+  /** People at once in one world's room. Unset or not a positive whole number: 16. */
+  MAX_WORLD_PEERS?: string;
+  /** People at once in one named room, such as the hub lobby. Unset or not a positive whole number: 64. */
+  MAX_ROOM_PEERS?: string;
   /** Per-IP limits on WebSocket joins and on plain reads (occupancy, full probes). */
   JOIN_LIMIT?: RateLimit;
   READ_LIMIT?: RateLimit;
@@ -122,10 +128,10 @@ interface Shared {
   at: number;
 }
 
-/** Named rooms such as the hub lobby. */
-const MAX_ROOM_PEERS = 64;
-/** A world's room. Lower, because every creator's world draws on the same free plan. */
-const MAX_WORLD_PEERS = 16;
+/** Named rooms such as the hub lobby, unless MAX_ROOM_PEERS says otherwise. */
+const DEFAULT_ROOM_PEERS = 64;
+/** A world's room, unless MAX_WORLD_PEERS says otherwise. Lower, because every creator's world draws on the same free plan. */
+const DEFAULT_WORLD_PEERS = 16;
 /** Set by this Worker on the request it hands to a room; clients cannot choose it. */
 const ROOM_HEADER = 'X-WorldMesh-Room';
 const MAX_MESSAGE_BYTES = 256;
@@ -244,6 +250,12 @@ function list(value: string | undefined): string[] {
   return (value ?? '').split(',').map((part) => part.trim().toLowerCase()).filter(Boolean);
 }
 
+/** How many people one room of this kind takes at once on this relay. */
+function capFor(isWorld: boolean, env: Env): number {
+  const value = Number(isWorld ? env.MAX_WORLD_PEERS : env.MAX_ROOM_PEERS);
+  return Number.isInteger(value) && value > 0 ? value : isWorld ? DEFAULT_WORLD_PEERS : DEFAULT_ROOM_PEERS;
+}
+
 /** This world's daily allowance in minutes on this relay; 0 for none (no limit set, or one of WorldMesh's own). */
 function allowanceFor(origin: string, env: Env): number {
   const minutes = Number(env.WORLD_DAILY_MINUTES);
@@ -349,12 +361,12 @@ async function occupancy(url: URL, env: Env, ctx: ExecutionContext): Promise<Res
     ...origins.map(async (origin) => {
       const stub = env.ROOMS.get(env.ROOMS.idFromName(`world:${origin}`));
       const { count } = await stub.occupancy();
-      rooms[origin] = { count, cap: MAX_WORLD_PEERS };
+      rooms[origin] = { count, cap: capFor(true, env) };
     }),
     ...named.map(async (name) => {
       const stub = env.ROOMS.get(env.ROOMS.idFromName(name));
       const { count } = await stub.occupancy();
-      rooms[`room:${name}`] = { count, cap: MAX_ROOM_PEERS };
+      rooms[`room:${name}`] = { count, cap: capFor(false, env) };
     }),
   ]);
   const response = new Response(JSON.stringify(rooms), {
@@ -398,7 +410,7 @@ export class Room extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
     const isWorld = request.headers.get(ROOM_HEADER) === 'world';
     const sockets = this.ctx.getWebSockets();
-    if (sockets.length >= (isWorld ? MAX_WORLD_PEERS : MAX_ROOM_PEERS)) {
+    if (sockets.length >= capFor(isWorld, this.env)) {
       return new Response('Room is full', { status: 503, headers: CORS });
     }
     // People already here stay; only new joins are turned away.
@@ -516,7 +528,7 @@ export class Room extends DurableObject<Env> {
 
   /** Plain GET to /room/… or /world — browsers use this after a silent failed upgrade. */
   async occupancyHttp(isWorld: boolean, allowance = 0): Promise<Response> {
-    const cap = isWorld ? MAX_WORLD_PEERS : MAX_ROOM_PEERS;
+    const cap = capFor(isWorld, this.env);
     const count = this.ctx.getWebSockets().length;
     const full = count >= cap;
     if (!full && allowance > 0 && (await this.activeMsToday()) >= allowance * 60_000) return overAllowance();

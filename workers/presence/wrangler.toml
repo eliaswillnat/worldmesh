@@ -2,8 +2,10 @@
 # runtime's DEFAULT_PRESENCE_SERVER. World rooms only. The hub's own lobby runs
 # on workers/lobby (same code), so nothing here can use up or take down
 # WorldMesh's city. Limits: docs/compatibility.md#multiplayer.
+# The code is templates/relay, the template anyone deploys as their own relay;
+# the vars below are what make this one WorldMesh's.
 name = "worldmesh-presence"
-main = "src/index.ts"
+main = "../../templates/relay/src/index.ts"
 compatibility_date = "2025-06-01"
 
 [vars]

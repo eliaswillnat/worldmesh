@@ -55,7 +55,7 @@ import { planAvenues, type CityPlan } from './avenuePlan';
 import { buildAvenues, dressHall } from './avenues';
 import { STOREFRONT_WIDTH } from './facade';
 import { playSendSound, playWarpSound } from './sounds';
-import { chatRejection } from '../../../../workers/presence/src/chatFilter';
+import { chatRejection } from '../../../../templates/relay/src/chatFilter';
 import { fetchOccupancy } from './occupancy';
 import { Arrival } from './arrival';
 import { FLOOR_NAMES, Lifts, buildShafts, createColliderMaterial, mergeInto, planLifts } from './elevators';

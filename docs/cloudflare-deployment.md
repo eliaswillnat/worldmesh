@@ -124,7 +124,9 @@ The hub's walk mode shows everyone else who is in the lobby, and any world
 created with `multiplayer: true` shows everyone else in that world. Positions
 are relayed by a small Worker with one Durable Object per room. It stores
 nothing but the last state of shared objects and each room's active minutes
-today. The same code (`workers/presence/src`) runs as two Workers:
+today. The code lives in [`templates/relay`](../templates/relay), the
+one-click template creators and cities deploy as their own relay (below), and
+runs here as two Workers whose `main` points at it:
 
 | Worker | Address | Serves |
 | :--- | :--- | :--- |
@@ -154,7 +156,9 @@ today. The same code (`workers/presence/src`) runs as two Workers:
    built in, so worlds still on that version lose multiplayer without it.
 3. Limits on the free relay are vars in `workers/presence/wrangler.toml`:
    `WORLD_DAILY_MINUTES` (per world, per UTC day), `OWN_ORIGINS` (WorldMesh's
-   own worlds, no daily limit), and the per-IP `ratelimits`. To refuse a world
+   own worlds, no daily limit), and the per-IP `ratelimits`. Room caps are
+   `MAX_WORLD_PEERS` and `MAX_ROOM_PEERS`; unset, as on both WorldMesh Workers,
+   they are 16 per world and 64 per named room. To refuse a world
    outright, set a secret, which survives deploys:
    ```bash
    npx wrangler secret put BLOCKED_ORIGINS --config workers/presence/wrangler.toml
@@ -169,6 +173,20 @@ today. The same code (`workers/presence/src`) runs as two Workers:
    email rather than an invoice.
 
 If a relay is unreachable, walk mode and worlds still work single-player.
+
+**Someone else's relay.** A creator or city that outgrows the free relay runs
+the same code on their own account:
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/eliaswillnat/worldmesh/tree/main/templates/relay)
+The button copies only `templates/relay` into a new repository of theirs and
+deploys it as `worldmesh-relay` (world rooms, no daily limit, no named rooms;
+`MAX_WORLD_PEERS` and `MAX_ROOM_PEERS` set the room caps). Without the button:
+```bash
+npm create cloudflare@latest my-relay -- --template eliaswillnat/worldmesh/templates/relay
+```
+then `npx wrangler deploy` in `my-relay`. Its own settings are in
+[`templates/relay/README.md`](../templates/relay/README.md). A change to
+`templates/relay/src` redeploys both WorldMesh Workers above; a change to
+`templates/relay/wrangler.toml` touches neither.
 
 **Screenshot Worker (`workers/screenshot`).** It stores cover uploads in R2.
 It used to also take 360° door views through the `worldmesh-door-views` queue

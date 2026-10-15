@@ -163,10 +163,13 @@ reviewed before they appear on the hub.
   240 active minutes per world per day (UTC; only time when someone is moving
   counts). Past the daily allowance, new visitors are single-player until
   00:00 UTC and the browser console says why. Creators who need more run
-  their own relay: deploy `workers/presence` from
-  https://github.com/eliaswillnat/worldmesh and pass
-  `multiplayer: { server: 'wss://their-relay.example' }`. Tell the creator
-  about these limits when you turn multiplayer on.
+  their own relay, in one click on their own Cloudflare account:
+  https://deploy.workers.cloudflare.com/?url=https://github.com/eliaswillnat/worldmesh/tree/main/templates/relay
+  (or `npm create cloudflare@latest my-relay -- --template eliaswillnat/worldmesh/templates/relay`,
+  then `npx wrangler deploy`). It has no daily limit, and `MAX_WORLD_PEERS`
+  sets how many people fit in a world. Then pass
+  `multiplayer: { server: 'wss://worldmesh-relay.<their-subdomain>.workers.dev' }`.
+  Tell the creator about these limits when you turn multiplayer on.
 - Using WorldMesh means agreeing to https://worldmesh.net/terms. The
   privacy policy at https://worldmesh.net/privacy explains what
   multiplayer shares between visitors.
