@@ -25,6 +25,10 @@ import { chatRejection } from './chatFilter';
  *   client → server  { t: 'o', k, v }          shared state of something in the room (a lift, a door)
  *   server → client  { t: 'o', id, k, v }      that state, for everyone including the sender, in the order the room took it
  *   server → client  welcome also carries `objects: [{ k, v, ms }]`, the last state of each key and its age
+ *   client → server  { t: 'v', u, f, i, x, s } this peer's avatar: model URL (https), format, short stable id, expiry, hub signature; no u = default body
+ *   server → client  { t: 'v', id, u?, f?, i?, x?, s? } another peer's avatar changed (sent only once they are seen)
+ *   server → client  welcome peers also carry `v: { u, f, i, x, s }` when they wear one, so late joiners see it too
+ *   The relay does not check the signature: every client checks it against the hub's key before downloading anything.
  *
  * Shared state is the one thing the room remembers: the latest value per key,
  * so someone walking in sees the lift where everyone else does. Sending it
@@ -64,6 +68,21 @@ interface Peer {
   notify: boolean;
   /** Last time this peer changed shared state. */
   sharedAt?: number;
+  /** Last time this peer changed its avatar. */
+  avatarAt?: number;
+  /** Wears an avatar, kept in storage under `v:<id>` (too long for the socket attachment). */
+  avatar?: boolean;
+}
+
+/** A peer's avatar as the room remembers it. */
+interface PeerAvatar {
+  u: string;
+  f: string;
+  i: string;
+  /** Unix seconds the signature lasts until. */
+  x: number;
+  /** The hub's Ed25519 signature, base64url. */
+  s: string;
 }
 
 /** The latest value of one key of shared state, and when it was set. */
@@ -79,6 +98,14 @@ const MAX_WORLD_PEERS = 16;
 /** Set by this Worker on the request it hands to a room; clients cannot choose it. */
 const ROOM_HEADER = 'X-WorldMesh-Room';
 const MAX_MESSAGE_BYTES = 256;
+/** Avatar messages carry a model URL, often a long presigned one. */
+const MAX_AVATAR_MESSAGE_BYTES = 2048;
+const MAX_AVATAR_URL = 1800;
+const AVATAR_FORMAT = /^(vrm|glb|gltf)$/;
+const AVATAR_ID = /^[a-z0-9]{1,16}$/;
+const AVATAR_SIGNATURE = /^[A-Za-z0-9_-]{86}$/;
+/** Shortest gap between two avatar changes from one peer. */
+const AVATAR_MIN_MS = 1000;
 /** Anything further than this from the origin is nonsense, not a position. */
 const MAX_COORD = 10_000;
 const EXPRESSION = /^[a-z]{1,16}$/;
@@ -233,10 +260,14 @@ export class Room extends DurableObject<Env> {
     this.ctx.acceptWebSocket(server);
     server.serializeAttachment(peer);
 
-    const peers = sockets
+    const seen = sockets
       .map((ws) => ws.deserializeAttachment() as Peer | null)
-      .filter((other): other is Peer => !!other?.seen)
-      .map(({ id, p, r, e, n, a, g, k }) => ({ id, p, r, e, n: n ?? '', a: a ?? '', g, k: k ?? '' }));
+      .filter((other): other is Peer => !!other?.seen);
+    const avatars = await this.avatarsOf(seen);
+    const peers = seen.map(({ id, p, r, e, n, a, g, k }) => {
+      const v = avatars.get(id);
+      return { id, p, r, e, n: n ?? '', a: a ?? '', g, k: k ?? '', ...(v ? { v } : {}) };
+    });
     const now = Date.now();
     const objects = [...this.shared].map(([k, { v, at }]) => ({ k, v, ms: Math.max(0, now - at) }));
     server.send(JSON.stringify({ t: 'welcome', id: peer.id, peers, objects }));
@@ -245,14 +276,20 @@ export class Room extends DurableObject<Env> {
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
-    if (typeof message !== 'string' || message.length > MAX_MESSAGE_BYTES) return;
+    if (typeof message !== 'string' || message.length > MAX_AVATAR_MESSAGE_BYTES) return;
 
-    let data: { t?: unknown; p?: unknown; r?: unknown; e?: unknown; n?: unknown; a?: unknown; g?: unknown; k?: unknown; m?: unknown };
+    let data: { t?: unknown; p?: unknown; r?: unknown; e?: unknown; n?: unknown; a?: unknown; g?: unknown; k?: unknown; m?: unknown; u?: unknown; f?: unknown; i?: unknown; x?: unknown; s?: unknown };
     try {
       data = JSON.parse(message);
     } catch {
       return;
     }
+    if (data?.t === 'v') {
+      await this.relayAvatar(ws, data);
+      return;
+    }
+    // Only avatar messages may be long.
+    if (message.length > MAX_MESSAGE_BYTES) return;
     if (data?.t === 'c') {
       this.relayChat(ws, data.m);
       return;
@@ -401,8 +438,57 @@ export class Room extends DurableObject<Env> {
     }
   }
 
+  /**
+   * Remember which avatar a peer wears and tell everyone else. Only a signed
+   * model link: the room never fetches or stores the model. An empty URL goes
+   * back to the default body.
+   */
+  private async relayAvatar(ws: WebSocket, data: { u?: unknown; f?: unknown; i?: unknown; x?: unknown; s?: unknown }): Promise<void> {
+    const { u: url, f: format, i: id, x: expires, s: signature } = data;
+    const peer = ws.deserializeAttachment() as Peer | null;
+    if (!peer?.seen) return;
+    const now = Date.now();
+    if (now - (peer.avatarAt ?? 0) < AVATAR_MIN_MS) return;
+
+    let avatar: PeerAvatar | null = null;
+    if (typeof url === 'string' && url) {
+      if (url.length > MAX_AVATAR_URL || !isHttpsUrl(url)) return;
+      if (typeof format !== 'string' || !AVATAR_FORMAT.test(format)) return;
+      if (typeof id !== 'string' || !AVATAR_ID.test(id)) return;
+      if (typeof expires !== 'number' || !Number.isInteger(expires) || expires <= 0 || expires > 1e11) return;
+      if (typeof signature !== 'string' || !AVATAR_SIGNATURE.test(signature)) return;
+      avatar = { u: url, f: format, i: id, x: expires, s: signature };
+    }
+    if (!avatar && !peer.avatar) return;
+
+    peer.avatarAt = now;
+    peer.avatar = !!avatar;
+    ws.serializeAttachment(peer);
+    if (avatar) await this.ctx.storage.put(`v:${peer.id}`, avatar);
+    else await this.ctx.storage.delete(`v:${peer.id}`);
+    this.broadcast(JSON.stringify(avatar ? { t: 'v', id: peer.id, ...avatar } : { t: 'v', id: peer.id }), ws);
+  }
+
+  /** The avatars of these peers, and stored avatars of anyone no longer here are forgotten. */
+  private async avatarsOf(peers: Peer[]): Promise<Map<string, PeerAvatar>> {
+    const avatars = new Map<string, PeerAvatar>();
+    const stored = await this.ctx.storage.list<PeerAvatar>({ prefix: 'v:', limit: 256 });
+    if (stored.size === 0) return avatars;
+    const live = new Set(this.ctx.getWebSockets().map((ws) => (ws.deserializeAttachment() as Peer | null)?.id));
+    const wearing = new Set(peers.filter((peer) => peer.avatar).map((peer) => peer.id));
+    const stale: string[] = [];
+    for (const [key, value] of stored) {
+      const id = key.slice(2);
+      if (wearing.has(id)) avatars.set(id, value);
+      else if (!live.has(id)) stale.push(key);
+    }
+    if (stale.length) this.ctx.waitUntil(this.ctx.storage.delete(stale));
+    return avatars;
+  }
+
   private leave(ws: WebSocket): void {
     const peer = ws.deserializeAttachment() as Peer | null;
+    if (peer?.avatar) this.ctx.waitUntil(this.ctx.storage.delete(`v:${peer.id}`));
     if (peer?.seen) this.broadcast(JSON.stringify({ t: 'leave', id: peer.id }), ws);
   }
 
@@ -420,4 +506,12 @@ export class Room extends DurableObject<Env> {
 
 function round(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+function isHttpsUrl(raw: string): boolean {
+  try {
+    return new URL(raw).protocol === 'https:';
+  } catch {
+    return false;
+  }
 }

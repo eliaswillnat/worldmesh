@@ -7,6 +7,8 @@ import {
   type AvatarDescriptor,
   isStrokeMaterial,
   Presence,
+  SharedAvatarLink,
+  createShareVerifier,
   setAvatarAppear,
   setAvatarColor,
   setStrokeOpacity,
@@ -653,6 +655,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   let privateTimer = 0;
   // Body colour picked in settings; presence sends it so everyone else sees it too.
   let color: string | null = null;
+  // The character everyone else sees this visitor wearing (set by loadCharacter).
+  const sharedCharacter = new SharedAvatarLink(() => {
+    const ticket = characterTicket();
+    return ticket ? resolveWorldMeshAvatar(window.location.origin, ticket) : Promise.resolve(null);
+  });
   const presence = options.presenceEndpoint
     ? new Presence({
         url: `${options.presenceEndpoint.replace(/\/$/, '')}/room/lobby`,
@@ -662,6 +669,10 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         getAlias: () => alias,
         // Private mode keeps the default colour, so nothing ties the alias back to this visitor.
         getColor: () => (alias ? null : color),
+        // Private mode wears the default body, so the character cannot give the visitor away either.
+        getAvatar: () => (alias || !world.avatarDescriptor ? null : sharedCharacter.get()),
+        // Everyone else's character is shown only from a link this hub signed.
+        verifyAvatar: createShareVerifier(window.location.origin),
         // Someone else arriving on a pad warps in for everyone watching.
         // Visitors coming back out of a world appear at a door, not here.
         // Each new figure is handed over just before its arrival is reported.
@@ -777,7 +788,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       if (turn !== characterTurn || disposed) return;
       // Already wearing it (only the ticket was renewed): nothing to swap or warp.
       const worn = character?.descriptor;
-      if (descriptor && worn && !alias && descriptor.avatarId && descriptor.provider === worn.provider && descriptor.avatarId === worn.avatarId) return;
+      if (descriptor && worn && !alias && descriptor.avatarId && descriptor.provider === worn.provider && descriptor.avatarId === worn.avatarId) {
+        // Its link may be new, though: that is the one others download.
+        sharedCharacter.set(descriptor);
+        return;
+      }
       const data = descriptor ? await downloadAvatarModel(descriptor).catch(() => null) : null;
       if (turn !== characterTurn || disposed) return;
       if (!descriptor || !data || alias) {
@@ -787,10 +802,12 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
           warpCharacterIn();
         }
         character = null;
+        sharedCharacter.set(null);
         return;
       }
       if ((await world.loadAvatar(descriptor, data)) && turn === characterTurn && !alias) {
         character = { descriptor, data };
+        sharedCharacter.set(descriptor);
         warpCharacterIn();
       }
     } finally {
@@ -2356,6 +2373,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     disposed = true;
     window.clearTimeout(warpTimer);
     window.clearTimeout(privateTimer);
+    sharedCharacter.dispose();
     if (billboardTimer) window.clearInterval(billboardTimer);
     if (occupancyTimer) window.clearInterval(occupancyTimer);
     occupancyFetch?.abort();
