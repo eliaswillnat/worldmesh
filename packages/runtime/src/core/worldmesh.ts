@@ -2,7 +2,7 @@ import { Euler, Group, PerspectiveCamera, Plane, Quaternion, Vector2, Vector3 } 
 import { resolveAbilities } from '../abilities/abilities.js';
 import { parseAvatarDescriptor, type AvatarDescriptor } from '../avatar/descriptor.js';
 import { getAvatarTicket, resolveWorldMeshAvatar, setAvatarTicket, takeAvatarTicket } from '../avatar/handoff.js';
-import { SharedAvatarLink } from '../avatar/share.js';
+import { SharedAvatarLink, createShareVerifier } from '../avatar/share.js';
 import { rememberView, takeViewHandoff } from '../camera/viewHandoff.js';
 import { loadAvatarModel } from '../avatar/loader.js';
 import { Footsteps } from '../audio/footsteps.js';
@@ -809,6 +809,8 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
       scene,
       onCount: (count) => events.emit('players', { count }),
       getAvatar: () => sharedAvatar.get(),
+      // Other players' avatars are shown only from links this world's hub signed.
+      verifyAvatar: createShareVerifier((options.avatar?.source === 'worldmesh' && options.avatar.hubUrl) || DEFAULT_HUB),
       maxAvatarBytes: options.avatar?.maxBytes,
     });
   }

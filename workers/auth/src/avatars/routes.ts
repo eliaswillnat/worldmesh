@@ -28,6 +28,7 @@ import { callbackUri as signInCallbackUri } from '../atprotoSignIn';
 import { atprotoClientMetadata, atprotoProvider } from './atproto';
 import { open, seal } from './crypto';
 import { mintTicket, readTicket } from './handoff';
+import { shareKey, signShare } from './share';
 import { UnsafeUrlError } from './net';
 import { sketchfabProvider } from './sketchfab';
 import * as store from './store';
@@ -299,13 +300,19 @@ async function finishConnect(request: Request, env: Env, auth: Auth, exec: WaitU
 async function resolve(request: Request, env: Env, exec: WaitUntil, origin: string): Promise<Response> {
   const cors = {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'POST',
+    'Access-Control-Allow-Methods': 'GET, POST',
     'Access-Control-Allow-Headers': 'Content-Type',
     'Access-Control-Max-Age': '86400',
   };
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
+  const reply = (data: unknown, status = 200, headers: Record<string, string> = {}) => json(data, status, { ...cors, ...headers });
+  // GET: the public key that signs avatar links shown to other players (share.ts).
+  // On this path so it is reachable wherever /resolve is (the preview's Access bypass).
+  if (request.method === 'GET') {
+    if (!avatarWalletEnabled(env)) return reply({ key: null });
+    return reply({ key: await shareKey(env.AVATAR_SECRET) }, 200, { 'Cache-Control': 'public, max-age=3600' });
+  }
   if (request.method !== 'POST') throw new HttpError(405, 'Method not allowed.');
-  const reply = (data: unknown, status = 200) => json(data, status, cors);
   if (!avatarWalletEnabled(env)) return reply({ avatar: null });
 
   let userId: string | null;
@@ -325,7 +332,11 @@ async function resolve(request: Request, env: Env, exec: WaitUntil, origin: stri
   if (!connection || !provider?.isConfigured(env)) return reply({ avatar: null });
   try {
     const resolved = await provider.resolveAvatar(context(env, exec, origin, provider.id), connection, avatar);
-    return reply({ avatar: { ...resolved, name: avatar.custom_name ?? resolved.name } });
+    const share = await signShare(env.AVATAR_SECRET, resolved).catch((error) => {
+      console.error('avatar share signing failed', error);
+      return null;
+    });
+    return reply({ avatar: { ...resolved, name: avatar.custom_name ?? resolved.name, share } });
   } catch (error) {
     if (error instanceof AvatarError) {
       if (error.reconnect) await store.markReconnect(env.DB, connection.id);

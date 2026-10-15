@@ -25,9 +25,10 @@ import { chatRejection } from './chatFilter';
  *   client → server  { t: 'o', k, v }          shared state of something in the room (a lift, a door)
  *   server → client  { t: 'o', id, k, v }      that state, for everyone including the sender, in the order the room took it
  *   server → client  welcome also carries `objects: [{ k, v, ms }]`, the last state of each key and its age
- *   client → server  { t: 'v', u, f, i }       this peer's avatar: model URL (https), format, short stable id; no u = default body
- *   server → client  { t: 'v', id, u?, f?, i? } another peer's avatar changed (sent only once they are seen)
- *   server → client  welcome peers also carry `v: { u, f, i }` when they wear one, so late joiners see it too
+ *   client → server  { t: 'v', u, f, i, x, s } this peer's avatar: model URL (https), format, short stable id, expiry, hub signature; no u = default body
+ *   server → client  { t: 'v', id, u?, f?, i?, x?, s? } another peer's avatar changed (sent only once they are seen)
+ *   server → client  welcome peers also carry `v: { u, f, i, x, s }` when they wear one, so late joiners see it too
+ *   The relay does not check the signature: every client checks it against the hub's key before downloading anything.
  *
  * Shared state is the one thing the room remembers: the latest value per key,
  * so someone walking in sees the lift where everyone else does. Sending it
@@ -78,6 +79,10 @@ interface PeerAvatar {
   u: string;
   f: string;
   i: string;
+  /** Unix seconds the signature lasts until. */
+  x: number;
+  /** The hub's Ed25519 signature, base64url. */
+  s: string;
 }
 
 /** The latest value of one key of shared state, and when it was set. */
@@ -98,6 +103,7 @@ const MAX_AVATAR_MESSAGE_BYTES = 2048;
 const MAX_AVATAR_URL = 1800;
 const AVATAR_FORMAT = /^(vrm|glb|gltf)$/;
 const AVATAR_ID = /^[a-z0-9]{1,16}$/;
+const AVATAR_SIGNATURE = /^[A-Za-z0-9_-]{86}$/;
 /** Shortest gap between two avatar changes from one peer. */
 const AVATAR_MIN_MS = 1000;
 /** Anything further than this from the origin is nonsense, not a position. */
@@ -272,14 +278,14 @@ export class Room extends DurableObject<Env> {
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     if (typeof message !== 'string' || message.length > MAX_AVATAR_MESSAGE_BYTES) return;
 
-    let data: { t?: unknown; p?: unknown; r?: unknown; e?: unknown; n?: unknown; a?: unknown; g?: unknown; k?: unknown; m?: unknown; u?: unknown; f?: unknown; i?: unknown };
+    let data: { t?: unknown; p?: unknown; r?: unknown; e?: unknown; n?: unknown; a?: unknown; g?: unknown; k?: unknown; m?: unknown; u?: unknown; f?: unknown; i?: unknown; x?: unknown; s?: unknown };
     try {
       data = JSON.parse(message);
     } catch {
       return;
     }
     if (data?.t === 'v') {
-      await this.relayAvatar(ws, data.u, data.f, data.i);
+      await this.relayAvatar(ws, data);
       return;
     }
     // Only avatar messages may be long.
@@ -433,11 +439,12 @@ export class Room extends DurableObject<Env> {
   }
 
   /**
-   * Remember which avatar a peer wears and tell everyone else. Only a model
-   * URL, its format and a short id the client picked: the room never fetches
-   * or stores the model. An empty URL goes back to the default body.
+   * Remember which avatar a peer wears and tell everyone else. Only a signed
+   * model link: the room never fetches or stores the model. An empty URL goes
+   * back to the default body.
    */
-  private async relayAvatar(ws: WebSocket, url: unknown, format: unknown, id: unknown): Promise<void> {
+  private async relayAvatar(ws: WebSocket, data: { u?: unknown; f?: unknown; i?: unknown; x?: unknown; s?: unknown }): Promise<void> {
+    const { u: url, f: format, i: id, x: expires, s: signature } = data;
     const peer = ws.deserializeAttachment() as Peer | null;
     if (!peer?.seen) return;
     const now = Date.now();
@@ -448,7 +455,9 @@ export class Room extends DurableObject<Env> {
       if (url.length > MAX_AVATAR_URL || !isHttpsUrl(url)) return;
       if (typeof format !== 'string' || !AVATAR_FORMAT.test(format)) return;
       if (typeof id !== 'string' || !AVATAR_ID.test(id)) return;
-      avatar = { u: url, f: format, i: id };
+      if (typeof expires !== 'number' || !Number.isInteger(expires) || expires <= 0 || expires > 1e11) return;
+      if (typeof signature !== 'string' || !AVATAR_SIGNATURE.test(signature)) return;
+      avatar = { u: url, f: format, i: id, x: expires, s: signature };
     }
     if (!avatar && !peer.avatar) return;
 

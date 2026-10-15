@@ -1,6 +1,6 @@
 import { CanvasTexture, Group, Mesh, MeshBasicMaterial, Sprite, SpriteMaterial, Vector3, type Object3D, type Scene } from 'three';
 import { Footsteps } from '../audio/footsteps.js';
-import { isLoadableUrl, type AvatarFormat } from '../avatar/descriptor.js';
+import { parseAvatarShare, type SignedAvatarShare } from '../avatar/descriptor.js';
 import { loadAvatarModel, type LoadedAvatar } from '../avatar/loader.js';
 import { animateDefaultAvatar, createDefaultAvatar, setAvatarColor, setAvatarExpression } from '../player/avatar.js';
 import { setFigureStroke } from '../player/stroke.js';
@@ -22,10 +22,16 @@ export interface PresenceOptions {
   /** Body colour ('#rrggbb') everyone else draws this visitor in, or null for the default. */
   getColor?: () => string | null;
   /**
-   * The avatar everyone else should see this visitor wearing, or null for the
-   * default body. Others download the model straight from `url`.
+   * The avatar everyone else should see this visitor wearing: the link the hub
+   * signed for it (`descriptor.share`), or null for the default body.
    */
   getAvatar?: () => SharedAvatar | null;
+  /**
+   * Whether a link someone else sent was signed by the hub (createShareVerifier).
+   * Models are downloaded only when it says yes; without it, everyone else is
+   * drawn in the default body.
+   */
+  verifyAvatar?: (share: SharedAvatar) => Promise<boolean>;
   /** Draw other people in the avatars they wear. Defaults to true. */
   showAvatars?: boolean;
   /** Largest avatar model downloaded for someone else. Defaults to 40 MB. */
@@ -68,22 +74,15 @@ export interface PresenceOptions {
   place?: (position: Vector3, grounded: boolean) => void;
 }
 
-/** An avatar as it goes to everyone else in the room. */
-export interface SharedAvatar {
-  /** The model file, https. May change (a fresh presigned link) while `id` stays. */
-  url: string;
-  format: AvatarFormat;
-  /** Short and stable for the same avatar ([a-z0-9], up to 16), so a new link does not mean a reload. */
-  id: string;
-}
+/** An avatar as it goes to everyone else in the room: a link the hub signed. */
+export type SharedAvatar = SignedAvatarShare;
 
 /** How often the local position goes out, per second. */
 const SEND_RATE = 10;
 /** The relay takes one avatar change a second per peer; stay under it. */
 const AVATAR_SEND_MS = 1200;
-const AVATAR_URL_MAX = 1800;
-const AVATAR_ID = /^[a-z0-9]{1,16}$/;
-const AVATAR_FORMATS: readonly string[] = ['vrm', 'glb', 'gltf'];
+/** Leeway for clocks that are a little off when checking a link's expiry. */
+const CLOCK_SKEW_MS = 5 * 60_000;
 /** Resend at least this often while standing still, so late joiners see us. */
 const HEARTBEAT_MS = 3000;
 const MAX_BACKOFF_MS = 30_000;
@@ -97,9 +96,8 @@ interface Remote {
   external: LoadedAvatar | null;
   /** Id of the avatar they say they wear, '' for the default body. */
   avatarId: string;
-  /** Their latest link to it. */
-  avatarUrl: string;
-  avatarFormat: AvatarFormat;
+  /** Their latest signed link to it. */
+  avatarShare: SharedAvatar | null;
   /** Download in progress. */
   avatarLoad: AbortController | null;
   /** `id url` of the last download that failed, so it is not tried again. */
@@ -154,11 +152,13 @@ interface PeerState {
   v?: WireAvatar;
 }
 
-/** An avatar on the wire: model URL, format, id. No `u` means the default body. */
+/** An avatar on the wire: a signed link (SignedAvatarShare). No `u` means the default body. */
 interface WireAvatar {
   u?: unknown;
   f?: unknown;
   i?: unknown;
+  x?: unknown;
+  s?: unknown;
 }
 
 type ServerMessage =
@@ -208,6 +208,7 @@ export class Presence implements NetworkAdapter {
   private getColor: () => string | null;
   private getAvatar: () => SharedAvatar | null;
   private showAvatars: boolean;
+  private verifyAvatar: ((share: SharedAvatar) => Promise<boolean>) | null;
   private maxAvatarBytes: number | undefined;
   private onArrive: (x: number, z: number) => void;
   private onFigure: (root: Object3D) => void;
@@ -225,6 +226,7 @@ export class Presence implements NetworkAdapter {
     this.getColor = options.getColor ?? (() => null);
     this.getAvatar = options.getAvatar ?? (() => null);
     this.showAvatars = options.showAvatars !== false;
+    this.verifyAvatar = options.verifyAvatar ?? null;
     this.maxAvatarBytes = options.maxAvatarBytes;
     this.onArrive = options.onArrive ?? (() => {});
     this.onFigure = options.onFigure ?? (() => {});
@@ -277,13 +279,13 @@ export class Presence implements NetworkAdapter {
   private sendAvatar(): void {
     const socket = this.socket;
     if (!socket || socket.readyState !== WebSocket.OPEN || !this.selfId || !this.stateSent) return;
-    const avatar = shareable(this.getAvatar());
-    const key = avatar ? `${avatar.id} ${avatar.url}` : '';
+    const avatar = parseAvatarShare(this.getAvatar());
+    const key = avatar ? `${avatar.i} ${avatar.u} ${avatar.x}` : '';
     // Nothing to say on a fresh connection when there is no avatar.
     if (key === (this.avatarSent ?? '')) return;
     const now = performance.now();
     if (now - this.avatarSentAt < AVATAR_SEND_MS) return;
-    socket.send(JSON.stringify(avatar ? { t: 'v', u: avatar.url, f: avatar.format, i: avatar.id } : { t: 'v' }));
+    socket.send(JSON.stringify(avatar ? { t: 'v', u: avatar.u, f: avatar.f, i: avatar.i, x: avatar.x, s: avatar.s } : { t: 'v' }));
     this.avatarSent = key;
     this.avatarSentAt = now;
   }
@@ -575,8 +577,7 @@ export class Presence implements NetworkAdapter {
         body,
         external: null,
         avatarId: '',
-        avatarUrl: '',
-        avatarFormat: 'glb',
+        avatarShare: null,
         avatarLoad: null,
         avatarFailed: '',
         target: new Vector3(p[0], p[1], p[2]),
@@ -643,30 +644,45 @@ export class Presence implements NetworkAdapter {
    * A new link to the same avatar only replaces the link; it is not reloaded.
    */
   private wear(remote: Remote, avatar: WireAvatar): void {
-    const wanted = this.showAvatars ? readWireAvatar(avatar) : null;
+    const wanted = this.showAvatars && this.verifyAvatar ? parseAvatarShare(avatar) : null;
     if (!wanted) {
       if (!remote.avatarId) return;
       remote.avatarId = '';
-      remote.avatarUrl = '';
+      remote.avatarShare = null;
       remote.avatarLoad?.abort();
       remote.avatarLoad = null;
       takeOffAvatar(remote);
       return;
     }
-    const sameAvatar = wanted.id === remote.avatarId;
-    remote.avatarUrl = wanted.url;
-    remote.avatarFormat = wanted.format;
+    const sameAvatar = wanted.i === remote.avatarId;
+    remote.avatarShare = wanted;
     if (sameAvatar && (remote.external || remote.avatarLoad)) return;
-    if (remote.avatarFailed === `${wanted.id} ${wanted.url}`) return;
-    remote.avatarId = wanted.id;
+    if (remote.avatarFailed === `${wanted.i} ${wanted.u} ${wanted.x}`) return;
+    remote.avatarId = wanted.i;
     remote.avatarLoad?.abort();
     const load = (remote.avatarLoad = new AbortController());
     this.avatarQueue = this.avatarQueue.then(() => this.download(remote, load));
   }
 
   private async download(remote: Remote, load: AbortController): Promise<void> {
+    const share = remote.avatarShare;
+    if (load.signal.aborted || !share) return;
+    const id = share.i;
+    const failed = (reason: unknown) => {
+      remote.avatarFailed = `${share.i} ${share.u} ${share.x}`;
+      console.warn('[worldmesh] Not showing another player’s avatar; showing the default body.', reason);
+      if (remote.avatarLoad === load) remote.avatarLoad = null;
+    };
+    // Only links the hub signed, and not ones that ran out long ago.
+    if (share.x * 1000 < Date.now() - CLOCK_SKEW_MS) return failed('its link has expired');
+    let vouched = false;
+    try {
+      vouched = !!this.verifyAvatar && (await this.verifyAvatar(share));
+    } catch {
+      vouched = false;
+    }
     if (load.signal.aborted) return;
-    const { avatarId: id, avatarUrl: url, avatarFormat: format } = remote;
+    if (!vouched) return failed('its link is not signed by the hub');
     let timedOut = false;
     const timer = window.setTimeout(() => {
       timedOut = true;
@@ -674,7 +690,7 @@ export class Presence implements NetworkAdapter {
     }, AVATAR_TIMEOUT_MS);
     try {
       const loaded = await loadAvatarModel(
-        { provider: 'peer', avatarId: id, name: null, thumbnail: null, format, modelUrl: url, expiresAt: null, sourceUrl: null },
+        { provider: 'peer', avatarId: id, name: null, thumbnail: null, format: share.f, modelUrl: share.u, expiresAt: null, sourceUrl: null },
         { height: BODY_HEIGHT, maxBytes: this.maxAvatarBytes, signal: load.signal },
       );
       if (load.signal.aborted || remote.avatarId !== id) {
@@ -688,7 +704,7 @@ export class Presence implements NetworkAdapter {
       remote.external = loaded;
     } catch (error) {
       if (load.signal.aborted && !timedOut) return;
-      remote.avatarFailed = `${id} ${url}`;
+      remote.avatarFailed = `${share.i} ${share.u} ${share.x}`;
       console.warn('[worldmesh] Could not load another player’s avatar; showing the default body.', error);
     } finally {
       window.clearTimeout(timer);
@@ -719,21 +735,6 @@ function round(value: number): number {
 const AVATAR_TIMEOUT_MS = 60_000;
 /** Marks the root of a downloaded avatar on a remote figure. */
 const EXTERNAL_KEY = 'worldmeshExternal';
-
-/** The local avatar as it may go on the wire, or null to send the default body. */
-function shareable(avatar: SharedAvatar | null): SharedAvatar | null {
-  if (!avatar) return null;
-  if (!isLoadableUrl(avatar.url) || !avatar.url.startsWith('https:') || avatar.url.length > AVATAR_URL_MAX) return null;
-  if (!AVATAR_FORMATS.includes(avatar.format) || !AVATAR_ID.test(avatar.id)) return null;
-  return avatar;
-}
-
-/** Someone else's avatar from the wire, or null for the default body. */
-function readWireAvatar(avatar: WireAvatar): SharedAvatar | null {
-  const { u, f, i } = avatar;
-  if (typeof u !== 'string' || typeof f !== 'string' || typeof i !== 'string') return null;
-  return shareable({ url: u, format: f as AvatarFormat, id: i });
-}
 
 /** Back to the default body. */
 function takeOffAvatar(remote: Remote): void {

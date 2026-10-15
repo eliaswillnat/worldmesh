@@ -162,20 +162,35 @@ else: no session, no account details, no platform tokens, no WorldMesh user id.
 
 ## Other players
 
-Everyone else in the room sees the visitor's character too. The presence
-relay carries only the model link (`{ t: 'v', u, f, i }`: URL, format and a
-short hashed id); each player's browser downloads the model from the platform
-itself, one at a time, and keeps the default body if that fails. The relay
-remembers the link for whoever joins later and forgets it when the visitor
-leaves.
+Everyone else in the room sees the visitor's character too. Each player's
+browser downloads the model from the platform itself, one at a time, and keeps
+the default body if that fails. The presence relay carries only a **link the
+hub signed**: `{ t: 'v', u, f, i, x, s }` (URL, format, hashed id, expiry,
+Ed25519 signature). The relay remembers it for whoever joins later and forgets
+it when the visitor leaves.
 
-- Links that expire (Sketchfab's, ~5 minutes) are renewed by the owner's page
-  through `/resolve` shortly before they run out, so late joiners get a working
-  one. Players who already loaded the model keep it.
-- VRoid avatars are never sent (see "Limits" below).
+**Why signed.** A model link is fetched by everyone in the room, so a made-up
+link to a server of one's own would collect their IP addresses. `POST /resolve`
+therefore returns `share` alongside the descriptor, signed with a key derived
+from `AVATAR_SECRET` (`workers/auth/src/avatars/share.ts`), and the runtime
+downloads someone else's model only if the signature checks out against the
+hub's public key (`GET /resolve` → `{ key }`, cached for an hour). Forged,
+altered or expired links are never fetched.
+
+What the hub signs:
+
+| | Shown to others | Why |
+| --- | --- | --- |
+| Sketchfab | Yes | The presigned link comes straight from Sketchfab's API. |
+| at3d on Bluesky's hosts (`bsky.social`, `*.host.bsky.network`) | Yes | Bluesky's own servers. |
+| at3d on any other PDS | No, owner only | A self-hosted PDS could be the owner's own logging server. |
+| VRoid Hub | No, owner only | See "Limits" below. |
+
+- Signatures last at most two hours, and no longer than the link (Sketchfab's
+  ~5 minutes). The owner's page asks `/resolve` again shortly before, so late
+  joiners get a working link. Players who already loaded the model keep it.
 - Private mode sends no character, like no colour.
-- A player's browser fetches whatever https link another player sends, so the
-  model host sees their IP address. Only https, at most 40 MB, 60 s per download.
+- Downloads are https only, at most 40 MB, 60 s each.
 
 ## Endpoints (`/api/account/avatar`, routed with `/api/account/*`)
 
@@ -188,7 +203,8 @@ leaves.
 | `POST /select` `{ connectionId, avatarId }` or `{ avatarId: null }` | pick, or continue without character |
 | `POST /disconnect` `{ connectionId }` | revoke (VRoid, Sketchfab) and forget |
 | `POST /handoff` | → `{ ticket, expiresAt }` |
-| `POST /resolve` `{ ticket }` | for worlds; CORS, cookie-less |
+| `POST /resolve` `{ ticket }` | for worlds; CORS, cookie-less; also returns `share` (see Other players) |
+| `GET /resolve` | the public key share links are signed with; CORS, not rate-limited |
 | `GET /atproto/client-metadata.json` | AT Protocol OAuth client metadata |
 
 State-changing calls require a same-origin request and a session. OAuth state,

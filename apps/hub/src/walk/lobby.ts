@@ -8,6 +8,7 @@ import {
   isStrokeMaterial,
   Presence,
   SharedAvatarLink,
+  createShareVerifier,
   setAvatarAppear,
   setAvatarColor,
   setStrokeOpacity,
@@ -670,6 +671,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         getColor: () => (alias ? null : color),
         // Private mode wears the default body, so the character cannot give the visitor away either.
         getAvatar: () => (alias || !world.avatarDescriptor ? null : sharedCharacter.get()),
+        // Everyone else's character is shown only from a link this hub signed.
+        verifyAvatar: createShareVerifier(window.location.origin),
         // Someone else arriving on a pad warps in for everyone watching.
         // Visitors coming back out of a world appear at a door, not here.
         // Each new figure is handed over just before its arrival is reported.
