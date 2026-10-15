@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Build a city — WorldMesh</title>
+    <meta name="description" content="WorldMesh's vision for independently operated 3D discovery cities, and what developers can build today." />
+    <link rel="canonical" href="https://worldmesh.net/build-a-city" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      :root { color-scheme: light dark; }
+      * { box-sizing: border-box; margin: 0; }
+      body {
+        background: #000; color: #ccc;
+        font-family: "Urbanist", system-ui, sans-serif;
+        padding: 4vh 20px 80px;
+        display: flex; justify-content: center;
+        -webkit-font-smoothing: antialiased;
+      }
+      @media (prefers-color-scheme: light) {
+        body { background: #fff; color: #222; }
+        a { color: #444; }
+      }
+      main { max-width: 640px; width: 100%; }
+      h1 { font-size: 24px; font-weight: 600; margin: 0 0 8px; color: #fff; }
+      @media (prefers-color-scheme: light) { h1 { color: #111; } }
+      .back { font-size: 13px; color: #888; text-decoration: none; display: inline-block; margin-bottom: 24px; }
+      .back:hover { color: #fff; }
+      .tagline { font-size: 15px; color: #888; margin-bottom: 32px; }
+      blockquote { font-size: 15px; font-style: italic; margin: 0 0 12px; padding-left: 14px; border-left: 2px solid #444; }
+      h2 { font-size: 15px; font-weight: 600; margin: 28px 0 8px; color: #eee; }
+      @media (prefers-color-scheme: light) { h2 { color: #222; } }
+      p, ul, ol { font-size: 14px; line-height: 1.7; margin: 0 0 12px; }
+      ul, ol { padding-left: 20px; }
+      a { color: #999; }
+      /* Hide scrollbar on mobile across all browsers (Firefox, Chrome, Safari, Edge) */
+      @media (max-width: 600px), (pointer: coarse) {
+        html, body { scrollbar-width: none; -ms-overflow-style: none; }
+        html::-webkit-scrollbar, body::-webkit-scrollbar { display: none; width: 0; height: 0; background: transparent; }
+      }
+    
+      nav { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 32px; padding-top: 18px; border-top: 1px solid #444; font-size: 13px; }
+      .status { font-size: 12px; color: #888; }
+      h2 { margin-top: 32px; }
+      li { margin-bottom: 4px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <a class="back" href="/">← Back to WorldMesh</a>
+      <h1>Build a city</h1>
+      <p class="tagline">Your architecture. Your community. Your destinations.</p>
+
+      <p>WorldMesh is one possible city for discovering independent 3D worlds, not a template everyone must copy. Imagine a forest of portals, a game arcade, a gallery, a virtual downtown or a social plaza, each linking visitors to worlds hosted anywhere.</p>
+      <h2>What city operators could control</h2>
+      <ul>
+        <li><strong>Architecture:</strong> the layout, design, movement and atmosphere of their own city.</li>
+        <li><strong>Discovery:</strong> which worlds to feature, recommendations, rankings and collections.</li>
+        <li><strong>Community:</strong> social experiences, events and moderation policies.</li>
+        <li><strong>Business:</strong> their own sponsorships, advertising or paid placements, disclosed to visitors and subject to applicable rules.</li>
+        <li><strong>Infrastructure:</strong> their own hosting, traffic and operational costs.</li>
+      </ul>
+      <h2>What you can do now</h2>
+      <p>The <a href="https://github.com/eliaswillnat/worldmesh">WorldMesh repository</a> is open source. You can study its hub and reuse its MIT-licensed runtime to develop a separate 3D experience, and link to independent destinations. You can <a href="/creators">connect a Three.js world</a> with shared controls and optional presence.</p>
+      <p class="status">Current limitation: the repository does not yet offer a turnkey multi-city deployment or a verified shared sign-in system for independently operated cities.</p>
+      <h2>What comes next</h2>
+      <ol>
+        <li>Document a minimal city discovery and interoperability contract.</li>
+        <li>Test an independent second city on a different domain.</li>
+        <li>Design portable user identity and permissions across operators.</li>
+        <li>Validate avatar continuity and city-to-city handoff, including safe fallbacks.</li>
+        <li>Publish a straightforward guide for operators to run and monetize their own cities.</li>
+      </ol>
+      <p>There is no franchise application or license fee to join today because the independent city network is still a proposal. The intention is an open protocol, not a city chain controlled by one company.</p>
+      <h2>Follow development</h2>
+      <p>Explore the <a href="/protocol">protocol overview</a> and <a href="https://github.com/eliaswillnat/worldmesh">GitHub repository</a>. The present priority is helping people discover worlds; a larger city ecosystem will require demonstrated interoperability first.</p>
+
+      <nav aria-label="Learn about WorldMesh">
+        <a href="/about">About</a>
+        <a href="/protocol">Protocol</a>
+        <a href="/build-a-city">Build a city</a>
+        <a href="/creators">Connect a world</a>
+      </nav>
+    </main>
+  </body>
+</html>
