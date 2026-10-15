@@ -97,7 +97,6 @@ Name it `worldmesh-preview` and give it:
 | Account | Workers KV Storage: Edit |
 | Account | Workers R2 Storage: Edit |
 | Account | D1: Edit |
-| Account | Queues: Edit |
 | Account | Access: Apps and Policies: Read |
 | Account | Account Settings: Read |
 | Zone (`worldmesh.net` only) | Zone: Read |

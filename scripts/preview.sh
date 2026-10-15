@@ -23,12 +23,6 @@ D1_NAME="worldmesh-preview"
 KV_WORLDS="worldmesh-preview-WORLDS"
 KV_VIEWS="worldmesh-preview-VIEWS"
 R2_BUCKET="worldmesh-screenshots-preview"
-# Door views used to be captured through this queue, which the screenshot
-# Worker fed and consumed. It no longer does. Cloudflare refuses a Worker
-# that a queue lists as consumer without a queue handler, and a queue that a
-# deployed Worker still binds: deploy unhooks the consumer first, and deletes
-# the queue once the new Worker is up.
-QUEUE="worldmesh-door-views-preview"
 # Order matters: admin binds presence's Durable Object; auth owns the migrations.
 WORKERS=(presence views screenshot auth admin)
 # Secrets each preview Worker gets, generated at random on first deploy.
@@ -77,7 +71,6 @@ zone_id() { cf GET "/zones?name=$ZONE_NAME" | jq -r '.[0].id'; }
 project_json() { cf GET "/accounts/$ACCOUNT/pages/projects/$1" 2>/dev/null || true; }
 r2_dev_host() { cf GET "/accounts/$ACCOUNT/r2/buckets/$R2_BUCKET/domains/managed" | jq -r '.domain'; }
 workers_subdomain() { cf GET "/accounts/$ACCOUNT/workers/subdomain" | jq -r '.subdomain'; }
-queue_id() { cf GET "/accounts/$ACCOUNT/queues?per_page=100" | jq -r --arg n "$QUEUE" '.[] | select(.queue_name == $n) | .queue_id'; }
 r2_exists() { cf GET "/accounts/$ACCOUNT/r2/buckets/$R2_BUCKET" >/dev/null 2>&1; }
 
 # ── Resources ──────────────────────────────────────────────────────────────
@@ -105,21 +98,6 @@ ensure_r2() {
   fi
   cf PUT "/accounts/$ACCOUNT/r2/buckets/$R2_BUCKET/domains/managed" '{"enabled":true}' >/dev/null
   set_r2_expiry 7
-}
-
-unhook_queue() {
-  [[ -n $(queue_id) ]] || return 0
-  assert_preview "$QUEUE"
-  log "Unhooking the screenshot Worker from the old queue $QUEUE"
-  wrangler queues consumer remove "$QUEUE" worldmesh-screenshot-preview >/dev/null 2>&1 || true
-}
-
-retire_queue() {
-  local queue; queue=$(queue_id)
-  [[ -n $queue ]] || return 0
-  assert_preview "$QUEUE"
-  log "Deleting the old queue $QUEUE"
-  cf DELETE "/accounts/$ACCOUNT/queues/$queue" >/dev/null
 }
 
 ensure_pages_project() {
@@ -201,7 +179,6 @@ ensure_all() {
   ensure_kv "$KV_WORLDS"
   ensure_kv "$KV_VIEWS"
   ensure_r2
-  unhook_queue
   for app in "${APPS[@]}"; do ensure_pages_project "$app"; ensure_pages_domain "$app"; done
 }
 
@@ -328,7 +305,6 @@ cmd_deploy() {
   require_access
   SCREENSHOT_SECRET=$(openssl rand -hex 32)
   deploy_workers
-  retire_queue
   configure_hub_project
   build_apps
   upload_apps "$sha"
@@ -405,8 +381,6 @@ cmd_teardown() {
     wrangler delete --name "$name" --force 2>/dev/null || echo "  (not deployed)"
   done
 
-  local queue; queue=$(queue_id)
-  if [[ -n $queue ]]; then assert_preview "$QUEUE"; cf DELETE "/accounts/$ACCOUNT/queues/$queue" >/dev/null; fi
   if [[ -n $(d1_id) ]]; then assert_preview "$D1_NAME"; wrangler d1 delete "$D1_NAME" -y; fi
   for title in "$KV_WORLDS" "$KV_VIEWS"; do
     local id; id=$(kv_id "$title"); [[ -n $id ]] || continue
