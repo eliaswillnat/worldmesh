@@ -16,6 +16,20 @@
         const back = sessionStorage.getItem('worldmesh.walkReturn');
         if (location.hash !== '#list' || back) document.documentElement.classList.add('walking');
       } catch {}
+      // The lobby is slow to appear (a slow connection or device): offer the
+      // gallery in the middle of the screen. Here, not in the module, so it
+      // also covers the module itself being slow. main.ts marks the lobby
+      // walk-ready on its first frame, and handles the button once it runs.
+      setTimeout(() => {
+        const root = document.documentElement;
+        if (root.classList.contains('walking') && !root.classList.contains('walk-ready')) root.classList.add('walk-stalled');
+      }, 4000);
+      document.addEventListener('click', (event) => {
+        if (!(event.target instanceof Element) || !event.target.closest('.walk-stalled-gallery')) return;
+        try { sessionStorage.removeItem('worldmesh.walkReturn'); } catch {}
+        history.replaceState(null, '', location.pathname + location.search + '#list');
+        document.documentElement.classList.remove('walking', 'walk-stalled');
+      });
     </script>
     <title>WorldMesh</title>
     <meta name="description" content="Open network for independently hosted 3D worlds, connected across the web." />
@@ -913,9 +927,9 @@
         background: #000;
         color-scheme: dark;
       }
-      /* No pointer until Esc opens the pause screen. A dialog needs one too. */
-      html.walking:not(:has(.wm-overlay[data-lock-ready="true"]:not([data-locked="true"]))):not(:has(dialog[open])),
-      html.walking:not(:has(.wm-overlay[data-lock-ready="true"]:not([data-locked="true"]))):not(:has(dialog[open])) * {
+      /* No pointer until Esc opens the pause screen. A dialog needs one too, and so does the slow-load Gallery mode button. */
+      html.walking:not(.walk-stalled):not(:has(.wm-overlay[data-lock-ready="true"]:not([data-locked="true"]))):not(:has(dialog[open])),
+      html.walking:not(.walk-stalled):not(:has(.wm-overlay[data-lock-ready="true"]:not([data-locked="true"]))):not(:has(dialog[open])) * {
         cursor: none !important;
       }
       html.walking:has(.wm-overlay[data-room-full="true"]),
@@ -1113,6 +1127,42 @@
         background: rgba(255, 255, 255, 0.75);
         border-color: rgba(0, 0, 0, 0.14);
       }
+      /* The lobby is taking too long to appear: the way to the gallery, in the middle. */
+      .walk-stalled-gallery { display: none; }
+      html.walking.walk-stalled .walk-stalled-gallery {
+        position: fixed;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 2147483002;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        height: 52px;
+        padding: 0 22px 0 18px;
+        border-radius: 26px;
+        font: 600 15px/1 "Urbanist", ui-sans-serif, system-ui, sans-serif;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+        color: #fff;
+        background: rgba(0, 0, 0, 0.6);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        -webkit-backdrop-filter: blur(10px);
+        backdrop-filter: blur(10px);
+        cursor: pointer;
+        animation: walk-stalled-in .3s ease both;
+      }
+      html.walking.walk-stalled .walk-stalled-gallery:hover,
+      html.walking.walk-stalled .walk-stalled-gallery:focus-visible { border-color: #fff; }
+      .walk-stalled-gallery svg { width: 22px; height: 22px; display: block; flex: none; }
+      @keyframes walk-stalled-in { from { opacity: 0; } }
+      html.walking[data-walk-theme="light"] .walk-stalled-gallery {
+        color: #111;
+        background: rgba(255, 255, 255, 0.75);
+        border-color: rgba(0, 0, 0, 0.14);
+      }
+      html.walking[data-walk-theme="light"].walk-stalled .walk-stalled-gallery:hover,
+      html.walking[data-walk-theme="light"].walk-stalled .walk-stalled-gallery:focus-visible { border-color: #111; }
       /* Inside a lift: the floors, as buttons in one pill. */
       .walk-lift-prompt {
         display: flex;
@@ -2061,6 +2111,15 @@
       </svg>
       <span class="walk-toggle-visit">Walk mode</span>
       <span class="walk-toggle-label">Gallery mode</span>
+    </button>
+    <button type="button" class="walk-stalled-gallery" id="walk-stalled-gallery">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3" y="3" width="7" height="7" rx="1.5"/>
+        <rect x="14" y="3" width="7" height="7" rx="1.5"/>
+        <rect x="3" y="14" width="7" height="7" rx="1.5"/>
+        <rect x="14" y="14" width="7" height="7" rx="1.5"/>
+      </svg>
+      Gallery mode
     </button>
     <dialog class="walk-confirm" id="walk-confirm" aria-labelledby="walk-confirm-title">
       <form method="dialog">
