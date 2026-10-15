@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WorldMesh protocol — WorldMesh</title>
+    <meta name="description" content="How WorldMesh connects independently hosted 3D worlds today and the planned open-city network." />
+    <link rel="canonical" href="https://worldmesh.net/protocol" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      :root { color-scheme: light dark; }
+      * { box-sizing: border-box; margin: 0; }
+      body {
+        background: #000; color: #ccc;
+        font-family: "Urbanist", system-ui, sans-serif;
+        padding: 4vh 20px 80px;
+        display: flex; justify-content: center;
+        -webkit-font-smoothing: antialiased;
+      }
+      @media (prefers-color-scheme: light) {
+        body { background: #fff; color: #222; }
+        a { color: #444; }
+      }
+      main { max-width: 640px; width: 100%; }
+      h1 { font-size: 24px; font-weight: 600; margin: 0 0 8px; color: #fff; }
+      @media (prefers-color-scheme: light) { h1 { color: #111; } }
+      .back { font-size: 13px; color: #888; text-decoration: none; display: inline-block; margin-bottom: 24px; }
+      .back:hover { color: #fff; }
+      .tagline { font-size: 15px; color: #888; margin-bottom: 32px; }
+      blockquote { font-size: 15px; font-style: italic; margin: 0 0 12px; padding-left: 14px; border-left: 2px solid #444; }
+      h2 { font-size: 15px; font-weight: 600; margin: 28px 0 8px; color: #eee; }
+      @media (prefers-color-scheme: light) { h2 { color: #222; } }
+      p, ul, ol { font-size: 14px; line-height: 1.7; margin: 0 0 12px; }
+      ul, ol { padding-left: 20px; }
+      a { color: #999; }
+      /* Hide scrollbar on mobile across all browsers (Firefox, Chrome, Safari, Edge) */
+      @media (max-width: 600px), (pointer: coarse) {
+        html, body { scrollbar-width: none; -ms-overflow-style: none; }
+        html::-webkit-scrollbar, body::-webkit-scrollbar { display: none; width: 0; height: 0; background: transparent; }
+      }
+    
+      nav { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 32px; padding-top: 18px; border-top: 1px solid #444; font-size: 13px; }
+      .status { font-size: 12px; color: #888; }
+      h2 { margin-top: 32px; }
+      li { margin-bottom: 4px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <a class="back" href="/">← Back to WorldMesh</a>
+      <h1>WorldMesh protocol</h1>
+      <p class="tagline">An open foundation for the connected 3D web.</p>
+
+      <p>The goal is simple: websites can remain independent while sharing optional conventions for movement, discovery, portals and characters. No single city should need to own every destination.</p>
+      <h2>Available building blocks</h2>
+      <ul>
+        <li><strong>Independent worlds:</strong> developers host their own code, content and infrastructure. Worlds can be listed by URL.</li>
+        <li><strong>Shared controls:</strong> <a href="https://github.com/eliaswillnat/worldmesh/tree/main/packages/runtime">@worldmesh/runtime</a> provides navigation, player controls and portal links for Three.js worlds.</li>
+        <li><strong>World manifests:</strong> optional <code>worldmesh.json</code> metadata helps directories identify a world's name and properties.</li>
+        <li><strong>Presence:</strong> compatible worlds can use the optional hosted multiplayer presence relay, or operate their own relay.</li>
+        <li><strong>Avatar wallet:</strong> users can connect supported character providers. WorldMesh saves references, not character model files, and compatible worlds can receive a selected character via a limited handoff ticket.</li>
+      </ul>
+      <h2>Doorway: the transition specification</h2>
+      <p><a href="https://github.com/eliaswillnat/worldmesh/blob/main/docs/specs/doorway.md">Doorway</a> is a draft open specification for looking through and walking into a different 3D website. The current hub and runtime implement parts of its live-view and crossing flow; support varies between destinations. Ordinary links remain the fallback. Seamless travel is not guaranteed for every world or browser.</p>
+      <h2>Planned: interoperable cities</h2>
+      <p>The next step is to specify how independent discovery cities can recognize one another and serve their own directories while users keep the same portable identity and character. This is <strong>not yet a finished or deployed city federation standard</strong>.</p>
+      <p>Shared identity across separately operated cities needs a secure sign-in and authorization design, not merely an avatar handoff URL. Existing AT Protocol or OpenID Connect standards may help; the choice and trust boundaries still need validation.</p>
+      <h2>Design principles</h2>
+      <ul>
+        <li>No requirement to host a world or city with WorldMesh.</li>
+        <li>Open specifications and independent implementations, rather than one mandatory operator.</li>
+        <li>Explicit user consent and scoped access when sharing identity or characters.</li>
+        <li>Graceful fallback when a destination does not support advanced transitions.</li>
+      </ul>
+      <h2>Explore the documentation</h2>
+      <p>Read the <a href="https://github.com/eliaswillnat/worldmesh/blob/main/docs/compatibility.md">compatibility guide</a>, <a href="https://github.com/eliaswillnat/worldmesh/blob/main/docs/avatar-wallet.md">avatar wallet design</a>, <a href="https://github.com/eliaswillnat/worldmesh/blob/main/docs/specs/doorway.md">Doorway draft</a> and <a href="https://github.com/eliaswillnat/worldmesh">source code</a>. To connect a Three.js project with an AI coding agent, use <a href="/creators">Connect your world</a>.</p>
+
+      <nav aria-label="Learn about WorldMesh">
+        <a href="/about">About</a>
+        <a href="/protocol">Protocol</a>
+        <a href="/build-a-city">Build a city</a>
+        <a href="/creators">Connect a world</a>
+      </nav>
+    </main>
+  </body>
+</html>
