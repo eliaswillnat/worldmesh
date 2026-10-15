@@ -6,6 +6,12 @@
 
 - [Connect a Three.js or React Three Fiber world to WorldMesh](https://worldmesh.net/connect.md): step-by-step instructions to follow in a creator's local project. No GitHub access or WorldMesh account needed; multiplayer uses the creator's own infrastructure, never WorldMesh's hosted relay.
 
+## Vision and open protocol
+
+- [About WorldMesh](https://worldmesh.net/about): world discovery today and the long-term city network vision.
+- [Protocol](https://worldmesh.net/protocol): current interoperability building blocks and planned multi-city standards.
+- [Build a city](https://worldmesh.net/build-a-city): independent operators and future capabilities.
+
 ## Reference
 
 - [Compatibility standard](https://github.com/eliaswillnat/worldmesh/blob/main/docs/compatibility.md): every option, event and method of the runtime.

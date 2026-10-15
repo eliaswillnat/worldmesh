@@ -1,5 +1,5 @@
 import { AnimationMixer, Box3, Group, MathUtils, Mesh, Texture, type AnimationAction, type Object3D } from 'three';
-import type { AvatarMotion } from '../player/avatar.js';
+import { attachAvatarAppear, type AvatarMotion } from '../player/avatar.js';
 import type { AvatarDescriptor } from './descriptor.js';
 
 /** A loaded external avatar, normalised to the WorldMesh body convention. */
@@ -64,6 +64,8 @@ export async function loadAvatarModel(descriptor: AvatarDescriptor, options: Loa
     child.frustumCulled = false;
     if ((child as Mesh).isMesh) child.castShadow = true;
   });
+  // Warps in like the default body when a page brings it in (setAvatarAppear).
+  attachAvatarAppear(model);
 
   // glTF and VRM face +Z; WorldMesh bodies face -Z. Scale to the player and
   // stand the feet on y = 0.

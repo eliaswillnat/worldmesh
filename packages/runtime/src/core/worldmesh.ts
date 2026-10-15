@@ -1,7 +1,8 @@
 import { Euler, Group, PerspectiveCamera, Plane, Quaternion, Vector2, Vector3 } from 'three';
 import { resolveAbilities } from '../abilities/abilities.js';
 import { parseAvatarDescriptor, type AvatarDescriptor } from '../avatar/descriptor.js';
-import { resolveWorldMeshAvatar, setAvatarTicket, takeAvatarTicket } from '../avatar/handoff.js';
+import { getAvatarTicket, resolveWorldMeshAvatar, setAvatarTicket, takeAvatarTicket } from '../avatar/handoff.js';
+import { SharedAvatarLink, createShareVerifier } from '../avatar/share.js';
 import { rememberView, takeViewHandoff } from '../camera/viewHandoff.js';
 import { loadAvatarModel } from '../avatar/loader.js';
 import { Footsteps } from '../audio/footsteps.js';
@@ -139,6 +140,16 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   const footsteps = options.footsteps ? new Footsteps() : null;
   let avatarDescriptor: AvatarDescriptor | null = null;
   let avatarLoad: AbortController | null = null;
+  /** The avatar other players see this visitor in; its link is renewed through the hub when it expires. */
+  const sharedAvatar = new SharedAvatarLink(
+    options.avatar?.source === 'worldmesh'
+      ? () => {
+          const ticket = getAvatarTicket();
+          const hubUrl = (options.avatar?.source === 'worldmesh' && options.avatar.hubUrl) || DEFAULT_HUB;
+          return ticket ? resolveWorldMeshAvatar(hubUrl, ticket) : Promise.resolve(null);
+        }
+      : null,
+  );
   let xrSession: XRSession | null = null;
   const xrOrigin = new Group();
   xrOrigin.name = 'worldmesh-xr-origin';
@@ -502,6 +513,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
       }
       if (!player.setExternalBody(loaded)) return false;
       avatarDescriptor = descriptor;
+      sharedAvatar.set(descriptor);
       applyViewVisibility();
       events.emit('avatar:load', { descriptor });
       return true;
@@ -519,6 +531,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     avatarLoad?.abort();
     player.clearExternalBody();
     avatarDescriptor = null;
+    sharedAvatar.set(null);
   }
 
   function start(): void {
@@ -795,6 +808,10 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
       url: `${server.replace(/\/$/, '')}/world`,
       scene,
       onCount: (count) => events.emit('players', { count }),
+      getAvatar: () => sharedAvatar.get(),
+      // Other players' avatars are shown only from links this world's hub signed.
+      verifyAvatar: createShareVerifier((options.avatar?.source === 'worldmesh' && options.avatar.hubUrl) || DEFAULT_HUB),
+      maxAvatarBytes: options.avatar?.maxBytes,
     });
   }
 
@@ -809,6 +826,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
       void session.end().catch(() => undefined);
     }
     avatarLoad?.abort();
+    sharedAvatar.dispose();
     window.removeEventListener('resize', handleResize);
     network?.detach?.();
     input.dispose();

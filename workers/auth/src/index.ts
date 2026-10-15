@@ -27,7 +27,9 @@ export default {
         throw new HttpError(405, 'Method not allowed.');
       }
 
-      const limited = !preflight && LIMITED.exec(url.pathname);
+      // GET /resolve only hands out the public share key (cached), so it is not limited.
+      const keyRead = request.method === 'GET' && url.pathname === `${AVATAR_BASE_PATH}/resolve`;
+      const limited = !preflight && !keyRead && LIMITED.exec(url.pathname);
       if (limited && env.AUTH_LIMITER) {
         const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
         const bucket = limited[2] ? `avatar-${limited[2]}` : url.pathname.split('/')[3];

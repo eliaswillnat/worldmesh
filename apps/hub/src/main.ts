@@ -401,6 +401,8 @@ let walkColor = WALK_COLORS[0];
 let walkRoot: HTMLDivElement | null = null;
 let lobby: import('./walk/lobby').Lobby | null = null;
 let walkLoading = false;
+/** The centered Gallery mode button was pressed while the lobby was still loading. */
+let walkAbandoned = false;
 const lightScheme = window.matchMedia('(prefers-color-scheme: light)');
 
 /**
@@ -435,6 +437,11 @@ walkToggle.addEventListener('click', () => {
 document.addEventListener('click', (event) => {
   const target = event.target instanceof Element ? event.target : null;
   if (target?.closest('.walk-gallery')) void confirmLeaveWalk();
+  // Shown only while the lobby is slow to appear, so no need to ask: drop it, loaded or not.
+  if (target?.closest('.walk-stalled-gallery')) {
+    walkAbandoned = walkLoading;
+    exitWalkMode();
+  }
 });
 
 // Walk mode is the front door. The gallery is there when someone asks for
@@ -452,9 +459,11 @@ window.addEventListener('pageshow', (event) => {
 async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = null, color: string | null = null): Promise<void> {
   if (walkRoot || walkLoading) return;
   walkLoading = true;
+  walkAbandoned = false;
   walkToggle.disabled = true;
   try {
     const { createLobby } = await import('./walk/lobby');
+    if (walkAbandoned) return;
     walkRoot = document.createElement('div');
     walkRoot.className = 'walk-root';
     document.body.appendChild(walkRoot);
@@ -514,6 +523,12 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
     showWalkColor(walkColor);
     history.replaceState(null, '', '#walk');
     setWalkToggleLabel('Gallery mode');
+    // Its first frame is on screen: the slow-load Gallery mode button is no longer needed.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (!walkRoot) return;
+      document.documentElement.classList.add('walk-ready');
+      document.documentElement.classList.remove('walk-stalled');
+    }));
   } catch (error) {
     console.error('Walk mode failed to start', error);
     // Walk mode is unlisted for now: fail quietly back to the list.
@@ -537,7 +552,7 @@ function exitWalkMode(): void {
   lobby = null;
   walkRoot?.remove();
   walkRoot = null;
-  document.documentElement.classList.remove('walking');
+  document.documentElement.classList.remove('walking', 'walk-ready', 'walk-stalled');
   delete document.documentElement.dataset.walkTheme;
   setThemeColor(null);
   delete walkOnline.dataset.count;

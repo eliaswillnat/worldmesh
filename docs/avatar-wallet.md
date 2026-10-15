@@ -111,7 +111,8 @@ animations: the runtime plays clips named like `idle` and `walk`/`run`.
 - **VRoid Hub, other players.** A download license is for the user who issued
   it. Showing someone's VRoid avatar to *other* players (multiplayer) requires
   VRoid's "Multiplay" approval and `POST /api/download_licenses/multiplay`.
-  Worlds today render only the local player, so this is not needed yet.
+  Until WorldMesh has it, VRoid avatars are shown to their owner only; other
+  players see the default body (`packages/runtime/src/avatar/share.ts`).
 - **VRoid Hub, unapproved apps** may load only the user's own models (and
   models their authors allow downloading), are rate-limited per app, and show
   users an "unapproved application" warning. Approval (hub.vroid.com/apps) also
@@ -159,6 +160,42 @@ character" or disconnecting a platform stops every outstanding ticket at once.
 It can reveal the chosen avatar's descriptor to whoever holds it, and nothing
 else: no session, no account details, no platform tokens, no WorldMesh user id.
 
+## Other players
+
+Everyone else in the room sees the visitor's character too. Each player's
+browser downloads the model from the platform itself, one at a time, and keeps
+the default body if that fails. The presence relay carries only a **link the
+hub signed**: `{ t: 'v', u, f, i, x, s }` (URL, format, hashed id, expiry,
+Ed25519 signature). The relay remembers it for whoever joins later and forgets
+it when the visitor leaves.
+
+**Why signed.** A model link is fetched by everyone in the room, so a made-up
+link to a server of one's own would collect their IP addresses. `POST /resolve`
+therefore returns `share` alongside the descriptor, signed with a key derived
+from `AVATAR_SECRET` (`workers/auth/src/avatars/share.ts`), and the runtime
+downloads someone else's model only if the signature checks out against the
+hub's public key (`GET /resolve` → `{ key }`, cached for an hour). Forged,
+altered or expired links are never fetched.
+
+What the hub signs:
+
+| | Shown to others | Why |
+| --- | --- | --- |
+| Sketchfab | Yes | The presigned link comes straight from Sketchfab's API. |
+| at3d on Bluesky's hosts (`bsky.social`, `*.host.bsky.network`) | Yes | Bluesky's own servers. |
+| at3d on any other PDS | No, owner only | A self-hosted PDS could be the owner's own logging server. |
+| VRoid Hub | No, owner only | See "Limits" below. |
+
+- Signatures last at most two hours, and no longer than the link (Sketchfab's
+  ~5 minutes). The owner's page asks `/resolve` again shortly before, so late
+  joiners get a working link. Players who already loaded the model keep it.
+- Private mode sends no character, like no colour.
+- Downloads are https only, at most 40 MB, 60 s each.
+- A brief outage does not stick. If a player's page cannot fetch the hub's key
+  (offline for a moment, the hub mid-deploy), it checks that link again a
+  minute later instead of dropping it, and the owner's page retries a failed
+  link renewal after 30 seconds.
+
 ## Endpoints (`/api/account/avatar`, routed with `/api/account/*`)
 
 | | |
@@ -170,7 +207,8 @@ else: no session, no account details, no platform tokens, no WorldMesh user id.
 | `POST /select` `{ connectionId, avatarId }` or `{ avatarId: null }` | pick, or continue without character |
 | `POST /disconnect` `{ connectionId }` | revoke (VRoid, Sketchfab) and forget |
 | `POST /handoff` | → `{ ticket, expiresAt }` |
-| `POST /resolve` `{ ticket }` | for worlds; CORS, cookie-less |
+| `POST /resolve` `{ ticket }` | for worlds; CORS, cookie-less; also returns `share` (see Other players) |
+| `GET /resolve` | the public key share links are signed with; CORS, not rate-limited |
 | `GET /atproto/client-metadata.json` | AT Protocol OAuth client metadata |
 
 State-changing calls require a same-origin request and a session. OAuth state,

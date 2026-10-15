@@ -5,8 +5,8 @@ rooms, doors, portals, multiplayer, the admin dashboard. Only you can open it,
 and it never touches production users, rooms or data.
 
 Production is unchanged: merging to `main` still deploys straight to
-worldmesh.net through the Git-connected Pages projects. A preview is never
-required.
+worldmesh.net through the Git-connected Pages projects, and the Deploy Workers
+workflow deploys the Workers that changed. A preview is never required.
 
 ## Using it
 
@@ -15,7 +15,7 @@ Tell Claude:
 | You say | What happens |
 | :--- | :--- |
 | **"Deploy to preview"** | Builds the current branch with preview settings, deploys it to the addresses below, and reports the URL and the exact commit. |
-| **"Deploy to production"** | Merges exactly the previewed commit into `main`, which Pages deploys as usual. Claude refuses if the branch has moved since the preview, or if `main` has moved (then: update the branch, preview again). Changed Workers are listed; deploying those stays manual. |
+| **"Deploy to production"** | Merges exactly the previewed commit into `main`, which Pages deploys as usual. Claude refuses if the branch has moved since the preview, or if `main` has moved (then: update the branch, preview again). The Deploy Workers workflow then deploys the Workers whose code changed ([cloudflare-deployment.md](cloudflare-deployment.md#10-deploying-workers)). |
 | **"Remove the preview"** | Replaces the preview sites with a "Preview removed" page and wipes the preview's worlds, world directory, view counts and other test data. Accounts stay (sign-in, username, verified status), so you sign back in as before. Screenshots expire within a day. The setup stays, so the next deploy is quick. |
 | **"Tear down the preview completely"** | Deletes every preview project, Worker, database, namespace, bucket and DNS record. The next deploy recreates them. |
 | **"Verify me on the preview"** | Marks your preview account's email as verified, which the admin dashboard requires (see [Admin dashboard](#admin-dashboard)). |
@@ -97,7 +97,6 @@ Name it `worldmesh-preview` and give it:
 | Account | Workers KV Storage: Edit |
 | Account | Workers R2 Storage: Edit |
 | Account | D1: Edit |
-| Account | Queues: Edit |
 | Account | Access: Apps and Policies: Read |
 | Account | Account Settings: Read |
 | Zone (`worldmesh.net` only) | Zone: Read |
@@ -113,6 +112,9 @@ repository secret, add:
 
 - `CLOUDFLARE_API_TOKEN`: the token
 - `CLOUDFLARE_ACCOUNT_ID`: the account ID
+
+The same two secrets let the Deploy Workers workflow deploy production Workers
+on merges to `main` ([cloudflare-deployment.md](cloudflare-deployment.md#10-deploying-workers)).
 - `PREVIEW_RESEND_API_KEY` (optional): see "Emails" above
 
 Or from a terminal (each command asks for the value):
@@ -253,8 +255,10 @@ commit SHA from the run summary.
    result has exactly the previewed tree.
 5. Note the Workers whose code changes: `git diff --name-only origin/main <sha> -- workers/`.
 6. `gh pr merge <pr> --merge --match-head-commit <sha>`
-7. Report the merge, and list the changed Workers from step 5: their production
-   `wrangler deploy` stays manual.
+7. Report the merge, and the Deploy Workers run it starts (`gh run list --workflow workers.yml --limit 1`)
+   for the Workers from step 5. If the merge changes `db/migrations/`, that run holds
+   back `auth` and `admin` until the migration is applied by hand
+   ([cloudflare-deployment.md](cloudflare-deployment.md#10-deploying-workers)).
 
 **Remove the preview:** `gh workflow run preview.yml --ref main -f action=remove`
 

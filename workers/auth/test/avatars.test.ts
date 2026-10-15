@@ -5,6 +5,7 @@ import worker, { type Env } from '../src/index';
 import { createAuth } from '../src/auth';
 import { atprotoClientId, UPLOAD_SCOPE } from '../src/avatars/atproto';
 import { fromBase64url, pkceChallenge, seal } from '../src/avatars/crypto';
+import { sharePayload, type SignedShare } from '../src/avatars/share';
 
 const ORIGIN = 'https://worldmesh.net';
 const WORLD = 'https://forest.worlds.example.org';
@@ -417,6 +418,8 @@ describe('VRoid Hub', () => {
         modelUrl: S3_URL,
         expiresAt: '2026-10-01T00:00:00Z',
         sourceUrl: `${VROID}/characters/char-model-1/models/model-1`,
+        // VRoid's license does not allow showing it to other players.
+        share: null,
       },
     });
     for (const secret of ['vroid-access', 'vroid-refresh', 'vroid-client-secret', 'vroid-user-1', 'vroid-resolve@example.com']) {
@@ -821,6 +824,8 @@ describe('at3d / AT Protocol', () => {
         modelUrl: `${PDS}/xrpc/com.atproto.sync.getBlob?did=${encodeURIComponent(DID)}&cid=bafkreimodelcid`,
         expiresAt: null,
         sourceUrl: null,
+        // A PDS that is not one of Bluesky's hosts could be anyone's server: not signed for other players.
+        share: null,
       },
     });
   });
@@ -1033,6 +1038,22 @@ describe('Sketchfab', () => {
     for (const secret of ['sf-access', 'sf-refresh', 'sketchfab-client-secret', SKETCHFAB_USER, 'sf-resolve@example.com']) {
       expect(text).not.toContain(secret);
     }
+
+    // Signed for other players, until the link itself runs out, and checkable with the public key.
+    const share = (avatar as unknown as { share: SignedShare }).share;
+    expect(share).toMatchObject({ u: SKETCHFAB_GLB, f: 'glb' });
+    expect(share.i).toMatch(/^[0-9a-f]{16}$/);
+    expect(share.x).toBe(Math.floor(expires / 1000));
+    const keyRes = await worker.fetch(new Request(`${ORIGIN}/api/account/avatar/resolve`, { headers: { Origin: WORLD } }), env);
+    expect(keyRes.status).toBe(200);
+    expect(keyRes.headers.get('Access-Control-Allow-Origin')).toBe('*');
+    const { key } = (await keyRes.json()) as { key: JsonWebKey };
+    expect(key).toEqual({ kty: 'OKP', crv: 'Ed25519', x: expect.any(String) });
+    const publicKey = await crypto.subtle.importKey('jwk', key, { name: 'Ed25519' }, false, ['verify']);
+    const payload = sharePayload(share.u, share.f, share.i, share.x);
+    expect(await crypto.subtle.verify({ name: 'Ed25519' }, publicKey, fromBase64url(share.s), payload)).toBe(true);
+    const forged = sharePayload('https://evil.example/model.glb', share.f, share.i, share.x);
+    expect(await crypto.subtle.verify({ name: 'Ed25519' }, publicKey, fromBase64url(share.s), forged)).toBe(false);
     expect(calls.map((c) => new URL(c.url).hostname)).not.toContain('sketchfab-prod-media.s3.amazonaws.com');
   });
 

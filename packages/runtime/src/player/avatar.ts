@@ -107,7 +107,8 @@ const UP = new Vector3(0, 1, 0);
 /**
  * Warp the surface along an axis (up and down unless told otherwise) and fade
  * it in as `uFill` goes from 0 to 1. Materials on one figure share uniforms so
- * the body and face appear together.
+ * the body and face appear together. Runs after any shader changes the
+ * material already makes (a VRM's MToon has its own).
  */
 function attachAppear(
   material: Material,
@@ -117,8 +118,15 @@ function attachAppear(
   const axis = shared?.axis ?? { value: UP.clone() };
   material.userData[APPEAR_KEY] = fill;
   material.userData[APPEAR_AXIS_KEY] = axis;
-  material.customProgramCacheKey = () => 'worldmesh-appear';
-  material.onBeforeCompile = (shader) => {
+  const ownKey = material.customProgramCacheKey;
+  const ownCompile = material.onBeforeCompile;
+  material.customProgramCacheKey = () => `${ownKey.call(material)}|worldmesh-appear`;
+  material.onBeforeCompile = (shader, renderer) => {
+    ownCompile.call(material, shader, renderer);
+    // A shader without these hooks is left as it is: it just appears without the warp.
+    const hooks = ['#include <common>', '#include <begin_vertex>'].every((hook) => shader.vertexShader.includes(hook)) &&
+      ['#include <common>', '#include <dithering_fragment>'].every((hook) => shader.fragmentShader.includes(hook));
+    if (!hooks) return;
     shader.uniforms.uFill = fill;
     shader.uniforms.uAppearAxis = axis;
     const appearFns = `
@@ -133,6 +141,11 @@ float appearHash(vec3 p) {
 float appearNoise(vec3 p) {
   return appearHash(p) * 0.65 + appearHash(p * 2.7 + 4.2) * 0.35;
 }`;
+    // The shift is picked from the rest pose but added after skinning: added
+    // before, every bone would turn it with its own rotation (a T-posed arm
+    // hanging down throws it sideways) instead of it running along the axis.
+    const shift = 'transformed += (inverse(modelMatrix) * vec4(uAppearAxis * appearShift, 0.0)).xyz;';
+    const skinned = shader.vertexShader.includes('#include <skinning_vertex>');
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>\n${appearFns}`)
       .replace(
@@ -142,9 +155,12 @@ float appearNoise(vec3 p) {
 float appearWarp = pow(1.0 - uFill, 0.6);
 vec3 appearWorld = (modelMatrix * vec4(position, 1.0)).xyz;
 float appearShift = (appearNoise(appearWorld * 5.5) * 2.0 - 1.0) * 1.1 * appearWarp;
-transformed += (inverse(modelMatrix) * vec4(uAppearAxis * appearShift, 0.0)).xyz;
-vAppearPos = appearWorld;`,
+vAppearPos = appearWorld;
+${skinned ? '' : shift}`,
       );
+    if (skinned) {
+      shader.vertexShader = shader.vertexShader.replace('#include <skinning_vertex>', `#include <skinning_vertex>\n${shift}`);
+    }
     shader.fragmentShader = shader.fragmentShader
       .replace(
         '#include <common>',
@@ -159,6 +175,23 @@ gl_FragColor.a *= uFill * uFill * (3.0 - 2.0 * uFill);`,
       );
   };
   return { fill, axis };
+}
+
+/**
+ * Give a loaded avatar (VRM or glTF) the same appear warp as the default body,
+ * so setAvatarAppear can bring it in. Settled (solid) to begin with.
+ */
+export function attachAvatarAppear(root: Object3D): void {
+  let shared: { fill: { value: number }; axis: { value: Vector3 } } | undefined;
+  root.traverse((child) => {
+    const mesh = child as Mesh;
+    if (!mesh.isMesh) return;
+    for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+      // Meshes can share a material: warp it once.
+      if (material.userData[APPEAR_KEY]) continue;
+      shared = attachAppear(material, shared);
+    }
+  });
 }
 
 /** Tint a default avatar. Custom bodies are left alone. */
@@ -178,8 +211,8 @@ export function setAvatarColor(root: Object3D, color: string): boolean {
 }
 
 /**
- * Drive the point-fill on a default avatar. The surface warps along `axis`
- * (a world direction; up by default). Returns false for anything else.
+ * Drive the point-fill on a default avatar or a loaded one. The surface warps
+ * along `axis` (a world direction; up by default). Returns false for anything else.
  */
 export function setAvatarAppear(root: Object3D, amount: number, axis: { x: number; y: number; z: number } = UP): boolean {
   let found = false;

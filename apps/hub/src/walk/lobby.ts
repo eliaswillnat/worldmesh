@@ -7,6 +7,8 @@ import {
   type AvatarDescriptor,
   isStrokeMaterial,
   Presence,
+  SharedAvatarLink,
+  createShareVerifier,
   setAvatarAppear,
   setAvatarColor,
   setStrokeOpacity,
@@ -653,6 +655,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   let privateTimer = 0;
   // Body colour picked in settings; presence sends it so everyone else sees it too.
   let color: string | null = null;
+  // The character everyone else sees this visitor wearing (set by loadCharacter).
+  const sharedCharacter = new SharedAvatarLink(() => {
+    const ticket = characterTicket();
+    return ticket ? resolveWorldMeshAvatar(window.location.origin, ticket) : Promise.resolve(null);
+  });
   const presence = options.presenceEndpoint
     ? new Presence({
         url: `${options.presenceEndpoint.replace(/\/$/, '')}/room/lobby`,
@@ -662,6 +669,10 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         getAlias: () => alias,
         // Private mode keeps the default colour, so nothing ties the alias back to this visitor.
         getColor: () => (alias ? null : color),
+        // Private mode wears the default body, so the character cannot give the visitor away either.
+        getAvatar: () => (alias || !world.avatarDescriptor ? null : sharedCharacter.get()),
+        // Everyone else's character is shown only from a link this hub signed.
+        verifyAvatar: createShareVerifier(window.location.origin),
         // Someone else arriving on a pad warps in for everyone watching.
         // Visitors coming back out of a world appear at a door, not here.
         // Each new figure is handed over just before its arrival is reported.
@@ -761,19 +772,62 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
    */
   let character: { descriptor: AvatarDescriptor; data: ArrayBuffer } | null = null;
   let characterTurn = 0;
+  /** A new body went on: it warps in, as on arrival, once nothing covers the lobby. */
+  let characterWarp = false;
+  const characterNote = document.createElement('p');
+  characterNote.className = 'walk-loading';
+  characterNote.setAttribute('role', 'status');
+  characterNote.textContent = 'Loading character…';
+  container.appendChild(characterNote);
   async function loadCharacter(): Promise<void> {
     const turn = ++characterTurn;
     const ticket = alias ? null : characterTicket();
-    const descriptor = ticket ? await resolveWorldMeshAvatar(window.location.origin, ticket) : null;
-    const data = descriptor ? await downloadAvatarModel(descriptor).catch(() => null) : null;
-    if (turn !== characterTurn || disposed) return;
-    if (!descriptor || !data || alias) {
-      // Private mode already went back to the default body.
-      if (character && !alias) world.clearAvatar();
-      character = null;
-      return;
+    characterNote.classList.toggle('visible', !!ticket);
+    try {
+      const descriptor = ticket ? await resolveWorldMeshAvatar(window.location.origin, ticket).catch(() => null) : null;
+      if (turn !== characterTurn || disposed) return;
+      // Already wearing it (only the ticket was renewed): nothing to swap or warp.
+      const worn = character?.descriptor;
+      if (descriptor && worn && !alias && descriptor.avatarId && descriptor.provider === worn.provider && descriptor.avatarId === worn.avatarId) {
+        // Its link may be new, though: that is the one others download.
+        sharedCharacter.set(descriptor);
+        return;
+      }
+      const data = descriptor ? await downloadAvatarModel(descriptor).catch(() => null) : null;
+      if (turn !== characterTurn || disposed) return;
+      if (!descriptor || !data || alias) {
+        // Private mode already went back to the default body.
+        if (character && !alias) {
+          world.clearAvatar();
+          warpCharacterIn();
+        }
+        character = null;
+        sharedCharacter.set(null);
+        return;
+      }
+      if ((await world.loadAvatar(descriptor, data)) && turn === characterTurn && !alias) {
+        character = { descriptor, data };
+        sharedCharacter.set(descriptor);
+        warpCharacterIn();
+      }
+    } finally {
+      if (turn === characterTurn) characterNote.classList.remove('visible');
     }
-    if ((await world.loadAvatar(descriptor, data)) && turn === characterTurn && !alias) character = { descriptor, data };
+  }
+  /** Hide the body that just went on until its warp can be seen (see stepCharacterWarp). */
+  function warpCharacterIn(): void {
+    if (ghost || warping || leavingAt >= 0) return;
+    characterWarp = true;
+    // Hidden from the very first frame, so it never pops in before warping.
+    arrival.start(() => null);
+    setLocalAppear(world.avatar, 0);
+  }
+  /** The swapped-in body warps in once the pause screen or a dialog is off the lobby, with the arrival sound. */
+  function stepCharacterWarp(): void {
+    if (!characterWarp || lobbyCovered()) return;
+    characterWarp = false;
+    arrival.start(() => world.avatar);
+    playWarpSound(true, 0.2);
   }
   const onCharacterChange = () => void loadCharacter();
   window.addEventListener(CHARACTER_CHANGE_EVENT, onCharacterChange);
@@ -958,8 +1012,9 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       sky.position.copy(camera.position);
       updateSky(sky, time);
       spawnPads.update(time);
-      // Arriving: the figure warps in.
+      // Arriving: the figure warps in, and again whenever a character goes on.
       updateArrivals(dt);
+      stepCharacterWarp();
       let appear = arrival.update(dt);
       // Leaving: the arrival's warp in reverse, from solid back to nothing.
       if (leavingAt >= 0) appear = 1 - Math.min(1, (time - leavingAt) / LEAVE_TIME);
@@ -1542,6 +1597,18 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     dispose,
   };
 
+  /** The pause screen or a dialog (account, characters) is over the lobby. */
+  function lobbyCovered(): boolean {
+    const overlay = document.querySelector<HTMLElement>('.wm-overlay');
+    if (overlay?.dataset.lockReady === 'true' && overlay.dataset.locked !== 'true') return true;
+    try {
+      return !!document.querySelector('dialog:modal');
+    } catch {
+      // No :modal selector in this browser.
+      return !!document.querySelector('dialog[open]');
+    }
+  }
+
   /** Another visitor arrived: hide their figure and warp it in, as ours is. */
   function startArrival(root: Object3D): void {
     const arrival = new Arrival();
@@ -1572,6 +1639,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
   /** The local figure warping in on its pad. */
   function triggerSpawnFx(): void {
+    characterWarp = false;
     arrival.start(() => world.avatar);
     // In time with the warp, which waits a moment before it starts.
     playWarpSound(true, 0.2);
@@ -2305,6 +2373,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     disposed = true;
     window.clearTimeout(warpTimer);
     window.clearTimeout(privateTimer);
+    sharedCharacter.dispose();
     if (billboardTimer) window.clearInterval(billboardTimer);
     if (occupancyTimer) window.clearInterval(occupancyTimer);
     occupancyFetch?.abort();
@@ -2322,6 +2391,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     doors.clear();
     emptyDoors.length = 0;
     addPrompt.remove();
+    characterNote.remove();
     window.removeEventListener('keydown', handleChatKey);
     window.removeEventListener('keydown', handleLiftKey);
     document.removeEventListener('mousemove', holdLook, true);
