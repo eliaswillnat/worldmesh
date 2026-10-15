@@ -1067,6 +1067,52 @@
         transition: opacity .2s ease, transform .2s ease;
       }
       .walk-add-prompt.visible { opacity: 1; pointer-events: auto; transform: translateX(-50%); }
+      /* While the character picked in the Avatar Wallet loads. Shown on the pause screen too. */
+      .walk-loading {
+        position: fixed;
+        left: 50%;
+        top: calc(max(16px, env(safe-area-inset-top)) + 64px);
+        z-index: 2147483002;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 0;
+        padding: 10px 16px;
+        border-radius: 999px;
+        font: 600 13px/1 "Urbanist", ui-sans-serif, system-ui, sans-serif;
+        white-space: nowrap;
+        color: #fff;
+        background: rgba(0, 0, 0, 0.6);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        -webkit-backdrop-filter: blur(8px);
+        backdrop-filter: blur(8px);
+        pointer-events: none;
+        opacity: 0;
+        transform: translateX(-50%) translateY(-6px);
+        transition: opacity .2s ease, transform .2s ease;
+      }
+      .walk-loading::before {
+        content: "";
+        width: 12px;
+        height: 12px;
+        flex: none;
+        box-sizing: border-box;
+        border-radius: 50%;
+        border: 2px solid currentColor;
+        border-right-color: transparent;
+        animation: walk-loading-spin .8s linear infinite;
+      }
+      /* Shown after a beat, so a quick check that changes nothing never flashes it. */
+      .walk-loading.visible { opacity: 1; transform: translateX(-50%); transition-delay: .15s; }
+      @keyframes walk-loading-spin { to { transform: rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) {
+        .walk-loading::before { animation-duration: 2.4s; }
+      }
+      html.walking[data-walk-theme="light"] .walk-loading {
+        color: #111;
+        background: rgba(255, 255, 255, 0.75);
+        border-color: rgba(0, 0, 0, 0.14);
+      }
       /* Inside a lift: the floors, as buttons in one pill. */
       .walk-lift-prompt {
         display: flex;
