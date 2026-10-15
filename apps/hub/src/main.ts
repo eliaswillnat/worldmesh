@@ -51,6 +51,7 @@ const communityWorldsStatic = devWorldUrls(communityWorldsJson as WorldEntry[]);
 import { AD_CONFIG } from './ads/config';
 import { entryIconSvg, formatEntries, hasEntries } from './entries';
 import { HUB_VISIT_KEY, shouldCountHubVisit } from './hubVisit';
+import { CONNECT_PROMPT } from './connectPrompt';
 
 const VIEWS_ENDPOINT = (import.meta.env.VITE_VIEWS_ENDPOINT as string | undefined)
   || (import.meta.env.DEV ? 'https://worldmesh-views.elias-willnat.workers.dev' : '/api/views');
@@ -249,6 +250,21 @@ window.addEventListener('keydown', (e) => {
     setStatus('');
     input.focus();
   }
+});
+
+// ── Connect your world: the prompt creators paste into their own AI agent ────
+const connectCopy = document.querySelector<HTMLButtonElement>('#connect-copy')!;
+connectCopy.addEventListener('click', async () => {
+  const label = connectCopy.textContent;
+  try {
+    await navigator.clipboard.writeText(CONNECT_PROMPT);
+    connectCopy.textContent = 'Copied. Paste it into your agent';
+  } catch {
+    // No clipboard (permissions, old browser): /creators shows the prompt to copy by hand.
+    window.location.href = '/creators';
+    return;
+  }
+  setTimeout(() => (connectCopy.textContent = label), 2400);
 });
 
 // ── Mobile: a top-right menu with Add world, account and appearance ──────────
@@ -745,6 +761,11 @@ function mountPauseActions(): void {
   discord.rel = 'noopener noreferrer';
   discord.textContent = 'Feedback on Discord';
 
+  const connect = document.createElement('a');
+  connect.className = 'walk-connect';
+  connect.href = '/creators';
+  connect.textContent = 'Connect your world';
+
   const priv = document.createElement('button');
   priv.type = 'button';
   priv.className = 'walk-private';
@@ -775,7 +796,7 @@ function mountPauseActions(): void {
 
   const colors = walkColors.cloneNode(true) as HTMLDivElement;
   colors.removeAttribute('id');
-  bar.append(gallery, discord, priv, theme, colors);
+  bar.append(gallery, connect, discord, priv, theme, colors);
   const keys = content.querySelector('.wm-keys');
   if (keys) content.insertBefore(bar, keys);
   else content.appendChild(bar);

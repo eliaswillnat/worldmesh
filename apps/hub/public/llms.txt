@@ -4,7 +4,7 @@
 
 ## For AI coding agents
 
-- [Connect a Three.js world to WorldMesh](https://worldmesh.net/connect.md): step-by-step instructions to follow in a creator's project.
+- [Connect a Three.js or React Three Fiber world to WorldMesh](https://worldmesh.net/connect.md): step-by-step instructions to follow in a creator's local project. No GitHub access or WorldMesh account needed; multiplayer uses the creator's own infrastructure, never WorldMesh's hosted relay.
 
 ## Vision and open protocol
 

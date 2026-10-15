@@ -1869,11 +1869,13 @@
       .walk-pause-actions .walk-private,
       .walk-pause-actions .walk-theme,
       .walk-pause-actions .walk-gallery,
-      .walk-pause-actions .walk-discord {
+      .walk-pause-actions .walk-discord,
+      .walk-pause-actions .walk-connect {
         position: static;
       }
       .walk-pause-actions .walk-gallery,
-      .walk-pause-actions .walk-discord {
+      .walk-pause-actions .walk-discord,
+      .walk-pause-actions .walk-connect {
         height: 44px;
         padding: 0 16px;
         border-radius: 22px;
@@ -1886,7 +1888,8 @@
         text-decoration: none;
       }
       html.walking[data-walk-theme="light"] .walk-pause-actions .walk-gallery,
-      html.walking[data-walk-theme="light"] .walk-pause-actions .walk-discord {
+      html.walking[data-walk-theme="light"] .walk-pause-actions .walk-discord,
+      html.walking[data-walk-theme="light"] .walk-pause-actions .walk-connect {
         color: #111;
         background: rgba(0, 0, 0, 0.06);
         border-color: rgba(0, 0, 0, 0.3);
@@ -1920,6 +1923,7 @@
       html.walking .wm-lock .wm-lock-cta,
       html.walking .wm-lock .walk-pause-actions .walk-gallery,
       html.walking .wm-lock .walk-pause-actions .walk-discord,
+      html.walking .wm-lock .walk-pause-actions .walk-connect,
       html.walking .wm-lock .walk-pause-actions .walk-private {
         box-sizing: border-box;
         width: var(--pause-w);
@@ -1946,6 +1950,7 @@
       }
       html.walking .wm-lock .walk-pause-actions .walk-gallery:hover,
       html.walking .wm-lock .walk-pause-actions .walk-discord:hover,
+      html.walking .wm-lock .walk-pause-actions .walk-connect:hover,
       html.walking .wm-lock .walk-pause-actions .walk-private:hover {
         background: var(--pause-hover);
         border-color: var(--pause-fg);
@@ -2082,6 +2087,33 @@
       footer { margin-top: 50px; font-size: 12px; color: var(--muted); line-height: 1.7; }
       footer a { color: var(--subtle); text-decoration: none; transition: color .15s ease; }
       footer a:hover { color: var(--text); }
+      /* ── Connect your world: one prompt for the creator's own AI agent ── */
+      .connect-world {
+        margin-top: 50px;
+        padding: 22px;
+        border: 1px solid var(--border);
+        border-radius: 20px;
+        background: var(--card);
+      }
+      .connect-world h2 { font-size: 18px; font-weight: 600; margin: 0 0 6px; }
+      .connect-world p { font-size: 14px; line-height: 1.6; color: var(--muted); margin: 0 0 14px; max-width: 620px; }
+      .connect-gains { list-style: none; padding: 0; margin: 0 0 18px; display: flex; flex-wrap: wrap; gap: 6px; }
+      .connect-gains li {
+        font-size: 12px;
+        padding: 5px 11px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: var(--input-bg);
+      }
+      .connect-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+      .connect-copy, .connect-copy:hover { background: var(--text); color: var(--bg); border-color: var(--text); font-weight: 600; }
+      .connect-copy:hover { opacity: 0.88; }
+      .connect-actions a { font-size: 13px; color: var(--muted); }
+      .connect-actions a:hover { color: var(--text); }
+      @media (max-width: 600px) {
+        .connect-world { margin: 24px 16px 0; padding: 18px 16px; scroll-snap-align: start; }
+        .connect-copy { width: 100%; }
+      }
       /* Hide scrollbar on mobile across all browsers (Firefox, Chrome, Safari, Edge) */
       @media (max-width: 600px), (pointer: coarse) {
         html, body { scrollbar-width: none; -ms-overflow-style: none; }
@@ -2222,6 +2254,22 @@
 
       <!-- <h2>Demo worlds</h2> -->
       <ul class="card-grid" id="demo-worlds"></ul>
+
+      <section class="connect-world" id="connect-world" aria-labelledby="connect-world-title">
+        <h2 id="connect-world-title">Connect your world</h2>
+        <p>Made a 3D world already? Copy one prompt into the AI coding agent you use (Claude, Cursor, Replit…) and it connects your world to WorldMesh. No coding or GitHub needed, and your world stays on your own hosting.</p>
+        <ul class="connect-gains">
+          <li>Multiplayer</li>
+          <li>Portable avatars</li>
+          <li>One identity</li>
+          <li>Portals to other worlds</li>
+        </ul>
+        <div class="connect-actions">
+          <button type="button" class="connect-copy" id="connect-copy">Copy AI prompt</button>
+          <a href="/creators">How it works</a>
+          <a href="/connect.md">Integration guide</a>
+        </div>
+      </section>
 
       <footer>
         <a href="/about">About</a> · <a href="/protocol">Protocol</a> · <a href="/build-a-city">Build a city</a> · <a href="/creators">Connect your world</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="https://discord.gg/cJYFfyVheP" target="_blank" rel="noopener noreferrer">Discord</a>

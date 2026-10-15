@@ -54,6 +54,23 @@ push hosting costs onto WorldMesh instead of onto the creators.
    in worlds, and world-hosted servers for creators who want shared game
    state.
 
+<!--
+Parked follow-ups from WorldMesh Connect, hidden until we pick them up again:
+
+- The relay still serves any website. connect.md, /creators and
+  compatibility.md steer third-party worlds away from it, but any world that
+  sets `multiplayer: true` still runs on relay.worldmesh.net at WorldMesh's
+  cost. Blocking that means limiting the relay to WorldMesh's own domains,
+  which would cut off worlds that already rely on it.
+- The terms and privacy pages still say WorldMesh runs a free relay for
+  worlds that turn on multiplayer. Update them if the relay is limited.
+- The runtime's comment on `NetworkAdapter.sendLocalState`
+  (packages/runtime/src/types.ts) says it is called at the network tick rate.
+  It is not: an adapter subscribes to `world.on('update', …)` in `attach`.
+  The guide and compatibility.md say this correctly; fixing the comment
+  means a new runtime version.
+-->
+
 ## Open questions
 
 - Should the manifest be required for directory listing? Requiring it is a

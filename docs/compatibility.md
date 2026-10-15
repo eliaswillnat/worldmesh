@@ -47,7 +47,7 @@ overlay, gravity, jumping and respawning.
 | `view` | `{ mode: 'first', distance: 5 }` | Starting camera mode, boom length, mouse sensitivity, initial `yaw`/`pitch`. |
 | `movement` | see `DEFAULT_TUNING` | `gravity`, `walkSpeed`, `jumpSpeed`, `fallLimit`, … |
 | `keymap` | the convention | Add bindings; do not move the core row. |
-| `multiplayer` | off | `true` shows everyone else in your world through the relay WorldMesh hosts; `{ server: 'wss://…' }` uses your own. See below. |
+| `multiplayer` | off | `{ server: 'wss://…' }` shows everyone else in your world through your own relay. `true` uses the relay WorldMesh hosts for its own spaces, not for third-party worlds. See below. |
 | `vr` | on | Shows **Enter VR** and calls `navigator.xr.requestSession('immersive-vr')` when the headset browser supports it. `false` hides the control. |
 | `ui` | all on | `title`, `hubUrl`, `crosshair`, `badge`, `controlsHint`. |
 | `autoStart` | `true` | `false` if you drive your own loop. |
@@ -102,7 +102,7 @@ world.on('portal:activate', (event) => {
 ## Multiplayer
 
 ```js
-createWorldMesh({ scene, camera, renderer, multiplayer: true });
+createWorldMesh({ scene, camera, renderer, multiplayer: { server: 'wss://your-relay.example' } });
 ```
 
 Everyone on your world's page sees everyone else as a figure that walks,
@@ -114,18 +114,24 @@ nothing.
   (`https://forest.example`), so there is nothing to register and another
   site cannot join your room from a browser. Different pages on the same
   origin share one room.
-- **Up to 16 people per world** on the hosted relay (64 in the hub lobby).
-  Visitors past that see a full-screen “World is full” / “Lobby is full”
-  overlay instead of joining silently alone.
-- **Your own relay.** Deploy `workers/presence` to your own Cloudflare
-  account and pass `multiplayer: { server: 'wss://your-relay.example' }`. The
-  traffic and cost are then yours, and you can raise the limit.
+- **Your own relay.** WorldMesh does not pay for multiplayer in third-party
+  worlds: deploy `workers/presence` to your own Cloudflare account (the free
+  Workers plan is enough) and pass `multiplayer: { server: 'wss://your-relay.example' }`.
+  The traffic and cost are yours. `multiplayer: true` points at the relay
+  WorldMesh runs for its own spaces. [connect.md](../apps/hub/public/connect.md)
+  walks through the deploy.
+- **Up to 16 people per world** (`MAX_WORLD_PEERS`, which you can raise on
+  your relay; 64 in the hub lobby). Visitors past that see a full-screen
+  “World is full” / “Lobby is full” overlay instead of joining silently alone.
 - **Offline is fine.** If the relay cannot be reached the world stays
   single-player.
 
 `world.on('players', ({ count }) => …)` reports how many people are in the
 room, including the visitor (`null` while disconnected). To network the world
-some other way, pass your own `NetworkAdapter` as `network`.
+some other way (for example the multiplayer it already has), pass your own
+`NetworkAdapter` as `network`. Its `attach(world)` subscribes to
+`world.on('update', …)` to send the local player's state; the runtime does not
+call `sendLocalState` for you.
 
 ## The handle
 
@@ -180,5 +186,5 @@ be able to read it.
 ## What compatibility does *not* require
 
 No WorldMesh account. No build plugin. No asset upload. No SDK beyond one
-import. No server, not even for multiplayer. Your world stays entirely on your hosting, and removing the
+import. No server, except a relay of your own if you want multiplayer. Your world stays entirely on your hosting, and removing the
 `createWorldMesh` call leaves you with the Three.js project you started with.
