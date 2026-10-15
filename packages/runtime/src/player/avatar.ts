@@ -141,6 +141,11 @@ float appearHash(vec3 p) {
 float appearNoise(vec3 p) {
   return appearHash(p) * 0.65 + appearHash(p * 2.7 + 4.2) * 0.35;
 }`;
+    // The shift is picked from the rest pose but added after skinning: added
+    // before, every bone would turn it with its own rotation (a T-posed arm
+    // hanging down throws it sideways) instead of it running along the axis.
+    const shift = 'transformed += (inverse(modelMatrix) * vec4(uAppearAxis * appearShift, 0.0)).xyz;';
+    const skinned = shader.vertexShader.includes('#include <skinning_vertex>');
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>\n${appearFns}`)
       .replace(
@@ -150,9 +155,12 @@ float appearNoise(vec3 p) {
 float appearWarp = pow(1.0 - uFill, 0.6);
 vec3 appearWorld = (modelMatrix * vec4(position, 1.0)).xyz;
 float appearShift = (appearNoise(appearWorld * 5.5) * 2.0 - 1.0) * 1.1 * appearWarp;
-transformed += (inverse(modelMatrix) * vec4(uAppearAxis * appearShift, 0.0)).xyz;
-vAppearPos = appearWorld;`,
+vAppearPos = appearWorld;
+${skinned ? '' : shift}`,
       );
+    if (skinned) {
+      shader.vertexShader = shader.vertexShader.replace('#include <skinning_vertex>', `#include <skinning_vertex>\n${shift}`);
+    }
     shader.fragmentShader = shader.fragmentShader
       .replace(
         '#include <common>',
