@@ -38,8 +38,8 @@ The hub also has a **walk mode**: the directory
 as a place. Every listed world is a doorway set into a round wall around a
 mirrored floor, showing its cover, and walking into one travels there. The lobby is black or white depending on each visitor's own
 light/dark setting. Everyone in
-walk mode sees everyone else, through a tiny presence relay in
-`workers/presence`. Outside the citadel stands the tower city: a tower per
+walk mode sees everyone else, through the lobby's own presence relay in
+`workers/lobby`. Outside the citadel stands the tower city: a tower per
 category, floors of doors showing each world's poster or preview loop, a slow
 elevator up the middle and bridges between towers (see
 [docs/tower-city.md](docs/tower-city.md)). The billboard ad system
