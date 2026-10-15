@@ -15,6 +15,9 @@ WORLD_DAILY_MINUTES = "0"
 # Worlds exempt from that daily limit, comma-separated: origins, or
 # "*.example.net" for every https subdomain. Only matters when the limit is on.
 OWN_ORIGINS = ""
+# The only worlds this relay serves, written like OWN_ORIGINS. Others get 403.
+# Empty: every world.
+ALLOWED_ORIGINS = ""
 # Named rooms (/room/<name>), comma-separated, e.g. "lobby" for a city's own
 # lobby. Empty: none.
 NAMED_ROOMS = ""

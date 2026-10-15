@@ -30,6 +30,9 @@
       "OWN_ORIGINS": {
         "description": "Your own worlds, exempt from the daily limit: comma-separated origins such as `https://forest.example`, or `*.example.net` for every subdomain."
       },
+      "ALLOWED_ORIGINS": {
+        "description": "The only worlds this relay serves, written like `OWN_ORIGINS`. Any other world is refused, so nobody else's traffic lands on your bill. Empty: every world."
+      },
       "NAMED_ROOMS": {
         "description": "Named rooms (`/room/<name>`), comma-separated, such as `lobby` for a city's own lobby. Empty: none."
       },
