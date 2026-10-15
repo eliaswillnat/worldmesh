@@ -16,10 +16,10 @@ function fakeFetch(fail: (batch: string[]) => boolean = () => false) {
 }
 
 describe('batchOrigins', () => {
-  it('dedupes and splits into batches of 50', () => {
+  it('dedupes and splits into batches of 24', () => {
     const list = [...Array.from({ length: 120 }, (_, i) => origin(i)), origin(0), origin(5)];
     const batches = batchOrigins(list);
-    expect(batches.map((b) => b.length)).toEqual([50, 50, 20]);
+    expect(batches.map((b) => b.length)).toEqual([24, 24, 24, 24, 24]);
     expect(new Set(batches.flat()).size).toBe(120);
   });
 
@@ -33,7 +33,7 @@ describe('fetchOccupancy', () => {
     const list = Array.from({ length: 10_000 }, (_, i) => origin(i));
     const { fn, calls } = fakeFetch();
     const { occupancy, failed } = await fetchOccupancy('https://relay', list, new AbortController().signal, fn);
-    expect(calls).toHaveLength(10_000 / OCCUPANCY_BATCH_SIZE);
+    expect(calls).toHaveLength(Math.ceil(10_000 / OCCUPANCY_BATCH_SIZE));
     expect(calls.every((b) => b.length <= OCCUPANCY_BATCH_SIZE)).toBe(true);
     expect(occupancy.size).toBe(10_000);
     expect(failed).toEqual([]);
@@ -43,8 +43,8 @@ describe('fetchOccupancy', () => {
     const list = Array.from({ length: 120 }, (_, i) => origin(i));
     const { fn } = fakeFetch((batch) => batch.includes(origin(60)));
     const { occupancy, failed } = await fetchOccupancy('https://relay', list, new AbortController().signal, fn);
-    expect(occupancy.size).toBe(70);
-    expect(failed).toHaveLength(50);
+    expect(occupancy.size).toBe(96);
+    expect(failed).toHaveLength(24);
     expect(failed).toContain(origin(60));
   });
 
@@ -56,8 +56,8 @@ describe('fetchOccupancy', () => {
       return new Response(JSON.stringify(Object.fromEntries(originsOf(url).map((o) => [o, { count: 1, cap: 2 }]))));
     };
     const { occupancy, failed } = await fetchOccupancy('https://relay', list, new AbortController().signal, fn);
-    expect(failed).toHaveLength(50);
-    expect(occupancy.size).toBe(10);
+    expect(failed).toHaveLength(24);
+    expect(occupancy.size).toBe(36);
   });
 
   it('rejects when aborted', async () => {

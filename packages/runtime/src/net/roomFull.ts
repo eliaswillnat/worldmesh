@@ -95,15 +95,27 @@ export type ProbeFetch = (
 ) => Promise<Response>;
 
 /**
- * After a handshake that never welcomed us, ask the relay whether the room
- * is full. Same-path GET (no Upgrade) is the browser stand-in for the 503;
- * GET /occupancy covers older relays and Node callers that omit Origin.
+ * The shared relay turns a world away for the rest of the UTC day once its
+ * room has used the free daily allowance: HTTP 429 with "allowance" in the
+ * body. A plain 429 ("Too many requests") is only a short rate limit.
  */
-export async function probeRoomFull(
+export function isOverAllowanceSignal(signal: { status?: number; body?: string } | null | undefined): boolean {
+  return signal?.status === 429 && /allowance/i.test(signal.body ?? '');
+}
+
+/** Why a join was refused: the room is full, the world is past today's allowance, or neither (a network blip). */
+export type RoomProbe = 'full' | 'allowance' | 'open';
+
+/**
+ * After a handshake that never welcomed us, ask the relay why. Same-path GET
+ * (no Upgrade) is the browser stand-in for the refused upgrade; GET
+ * /occupancy covers older relays and Node callers that omit Origin.
+ */
+export async function probeRoom(
   wsUrl: string,
   pageOrigin?: string,
   fetchFn: ProbeFetch = fetch as ProbeFetch,
-): Promise<boolean> {
+): Promise<RoomProbe> {
   const origin = pageOrigin || (typeof location !== 'undefined' ? location.origin : undefined);
   const headers: Record<string, string> = { Accept: 'text/plain, application/json' };
   if (origin) headers.Origin = origin;
@@ -111,11 +123,12 @@ export async function probeRoomFull(
   try {
     const direct = await fetchFn(presenceHttpUrl(wsUrl), { method: 'GET', headers });
     const text = await direct.text();
-    if (isRoomFullSignal({ status: direct.status, body: text })) return true;
+    if (isRoomFullSignal({ status: direct.status, body: text })) return 'full';
+    if (isOverAllowanceSignal({ status: direct.status, body: text })) return 'allowance';
     if (direct.ok) {
       try {
         const json = JSON.parse(text) as { count?: unknown; cap?: unknown };
-        if (atCapacity(json.count, json.cap)) return true;
+        if (atCapacity(json.count, json.cap)) return 'full';
       } catch {
         // Not occupancy JSON (e.g. the old 426 body).
       }
@@ -125,14 +138,23 @@ export async function probeRoomFull(
   }
 
   const occupancyUrl = occupancyProbeUrl(wsUrl, origin);
-  if (!occupancyUrl) return false;
+  if (!occupancyUrl) return 'open';
   try {
     const res = await fetchFn(occupancyUrl, { method: 'GET', headers: { Accept: 'application/json' } });
     const text = await res.text();
-    if (isRoomFullSignal({ status: res.status, body: text })) return true;
-    if (!res.ok) return false;
-    return occupancyIsFull(JSON.parse(text), wsUrl, origin);
+    if (isRoomFullSignal({ status: res.status, body: text })) return 'full';
+    if (!res.ok) return 'open';
+    return occupancyIsFull(JSON.parse(text), wsUrl, origin) ? 'full' : 'open';
   } catch {
-    return false;
+    return 'open';
   }
+}
+
+/** probeRoom, answering only whether the room is full. */
+export async function probeRoomFull(
+  wsUrl: string,
+  pageOrigin?: string,
+  fetchFn: ProbeFetch = fetch as ProbeFetch,
+): Promise<boolean> {
+  return (await probeRoom(wsUrl, pageOrigin, fetchFn)) === 'full';
 }

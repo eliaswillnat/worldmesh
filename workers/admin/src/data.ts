@@ -255,7 +255,9 @@ export async function presence(env: Env, worldUrls: { name: string; url: string 
       room,
       label,
       stats: await attempt(async () => {
-        const stub = namespace.get(namespace.idFromName(room)) as unknown as PresenceRoom;
+        // The lobby has its own Worker (workers/lobby); world rooms are on the free relay.
+        const rooms = room === 'lobby' ? (env.LOBBY_ROOMS ?? namespace) : namespace;
+        const stub = rooms.get(rooms.idFromName(room)) as unknown as PresenceRoom;
         return stub.stats();
       }),
     })),

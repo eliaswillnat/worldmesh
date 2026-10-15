@@ -5,7 +5,7 @@ import { loadAvatarModel, type LoadedAvatar } from '../avatar/loader.js';
 import { animateDefaultAvatar, createDefaultAvatar, setAvatarColor, setAvatarExpression } from '../player/avatar.js';
 import { setFigureStroke } from '../player/stroke.js';
 import type { NetworkAdapter, PeerBody, PlayerState, WorldMeshHandle } from '../types.js';
-import { isRoomFullSignal, probeRoomFull } from './roomFull.js';
+import { isRoomFullSignal, probeRoom } from './roomFull.js';
 
 /** The relay WorldMesh hosts (workers/presence). Worlds can point at their own. */
 export const DEFAULT_PRESENCE_SERVER = 'wss://relay.worldmesh.net';
@@ -84,8 +84,14 @@ const SEND_RATE = 10;
 const AVATAR_SEND_MS = 1200;
 /** Leeway for clocks that are a little off when checking a link's expiry. */
 const CLOCK_SKEW_MS = 5 * 60_000;
-/** Resend at least this often while standing still, so late joiners see us. */
-const HEARTBEAT_MS = 3000;
+/**
+ * While standing still, send only a keep-alive this often. The relay answers
+ * it without waking the room, so a room where nobody moves can sleep; late
+ * joiners still see us, as the relay remembers our last position.
+ */
+const KEEPALIVE_MS = 30_000;
+/** After the relay says this world used today's free allowance, try again this much later. */
+const ALLOWANCE_RETRY_MS = 30 * 60_000;
 const MAX_BACKOFF_MS = 30_000;
 
 interface Remote {
@@ -189,6 +195,8 @@ export class Presence implements NetworkAdapter {
   private welcomed = false;
   private full = false;
   private probeId = 0;
+  /** The over-allowance notice was logged once already. */
+  private allowanceLogged = false;
   /** This connection has sent a position, so the relay will take an avatar. */
   private stateSent = false;
   /** `id url` of the avatar the relay last heard from us; null before anything was sent. */
@@ -265,7 +273,12 @@ export class Presence implements NetworkAdapter {
 
     const [x, y, z] = state.position;
     const payload = JSON.stringify({ t: 's', p: [round(x), round(y), round(z)], r: round(state.facing), e: state.expression, n: this.getName() ?? '', a: this.getAlias() ?? '', k: this.getColor() ?? '', g: state.onGround || state.flying ? 1 : 0 });
-    if (payload === this.lastPayload && now - this.lastSent < HEARTBEAT_MS) return;
+    if (payload === this.lastPayload) {
+      if (now - this.lastSent < KEEPALIVE_MS) return;
+      socket.send('ping');
+      this.lastSent = now;
+      return;
+    }
 
     socket.send(payload);
     this.lastPayload = payload;
@@ -488,10 +501,26 @@ export class Presence implements NetworkAdapter {
   /** Browser handshakes hide 503; confirm via HTTP before treating this as a network blip. */
   private async classifyFailedJoin(): Promise<void> {
     const id = ++this.probeId;
-    const full = await probeRoomFull(this.url);
+    const state = await probeRoom(this.url);
     if (id !== this.probeId || this.closed || this.socket || this.full) return;
-    if (full) this.enterFull();
+    if (state === 'full') this.enterFull();
+    else if (state === 'allowance') this.waitForAllowance();
     else this.scheduleReconnect();
+  }
+
+  /**
+   * The shared relay turned this world away for today: stay single-player,
+   * tell the creator once in the console, and look again much later.
+   */
+  private waitForAllowance(): void {
+    if (!this.allowanceLogged) {
+      this.allowanceLogged = true;
+      console.info(
+        "[WorldMesh] This world has used today's free multiplayer allowance on the shared relay, so visitors are single-player until 00:00 UTC. Run your own relay to lift the limit: https://worldmesh.net/connect.md",
+      );
+    }
+    window.clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = window.setTimeout(() => this.connect(), ALLOWANCE_RETRY_MS);
   }
 
   private handleMessage(message: ServerMessage): void {

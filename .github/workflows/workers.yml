@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       workers:
-        description: 'Workers to deploy, separated by spaces (presence views notify screenshot auth admin), or all'
+        description: 'Workers to deploy, separated by spaces (lobby presence views notify screenshot auth admin), or all'
         type: string
         default: all
 

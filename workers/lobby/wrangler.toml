@@ -1,0 +1,69 @@
+# The hub lobby's relay: WorldMesh's own city, paid for by WorldMesh.
+# Same code as workers/presence, but a separate Worker with its own rooms, so
+# the free relay for independent worlds (relay.worldmesh.net) can be limited,
+# blocked or moved without touching the lobby. Named rooms only.
+name = "worldmesh-lobby"
+main = "../presence/src/index.ts"
+compatibility_date = "2025-06-01"
+routes = [
+  { pattern = "lobby-relay.worldmesh.net", custom_domain = true },
+]
+
+[vars]
+NAMED_ROOMS = "lobby"
+WORLD_ROOMS = "off"
+# Optional secrets: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID, to hear when someone walks in.
+#   npx wrangler secret put TELEGRAM_BOT_TOKEN --config workers/lobby/wrangler.toml
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]
+
+[[ratelimits]]
+name = "JOIN_LIMIT"
+namespace_id = "1003"
+simple = { limit = 30, period = 60 }
+
+[[ratelimits]]
+name = "READ_LIMIT"
+namespace_id = "1004"
+simple = { limit = 60, period = 60 }
+
+# Deploy with:
+# cd workers/lobby && npx wrangler deploy
+
+# ── Preview (docs/previews.md) ─────────────────────────────────────────────
+# Outside Cloudflare Access, like preview-relay: WebSockets cannot carry the
+# Access login.
+[env.preview]
+name = "worldmesh-lobby-preview"
+routes = [
+  { pattern = "preview-lobby-relay.worldmesh.net", custom_domain = true },
+]
+workers_dev = false
+
+[env.preview.vars]
+NAMED_ROOMS = "lobby"
+WORLD_ROOMS = "off"
+
+[[env.preview.durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+[[env.preview.migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]
+
+[[env.preview.ratelimits]]
+name = "JOIN_LIMIT"
+namespace_id = "1103"
+simple = { limit = 30, period = 60 }
+
+[[env.preview.ratelimits]]
+name = "READ_LIMIT"
+namespace_id = "1104"
+simple = { limit = 60, period = 60 }

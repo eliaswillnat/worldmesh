@@ -30,10 +30,18 @@ import { chatRejection } from './chatFilter';
  *   server → client  welcome peers also carry `v: { u, f, i, x, s }` when they wear one, so late joiners see it too
  *   The relay does not check the signature: every client checks it against the hub's key before downloading anything.
  *
+ *   client → server  'ping'                    keep-alive while standing still; the room answers 'pong' without waking up
+ *
  * Shared state is the one thing the room remembers: the latest value per key,
  * so someone walking in sees the lift where everyone else does. Sending it
  * back to the sender too gives every client the same order of writes, so two
  * people pressing at once still end up agreeing.
+ *
+ * The same code runs as two Workers: workers/lobby (the hub's own lobby,
+ * named rooms only) and workers/presence (relay.worldmesh.net, the free relay
+ * for independent worlds, world rooms only). The vars below say which. On the
+ * free relay each world has a daily allowance of active minutes; past it, new
+ * visitors get 429 and stay single-player until the next UTC day.
  */
 
 interface Env {
@@ -41,6 +49,19 @@ interface Env {
   /** Optional: set both (wrangler secret put) to get a Telegram message when someone enters. */
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_CHAT_ID?: string;
+  /** Named rooms this relay serves, comma-separated, e.g. "lobby". Unset or empty: none. */
+  NAMED_ROOMS?: string;
+  /** "off": this relay serves no world rooms (`/world`). */
+  WORLD_ROOMS?: string;
+  /** Minutes a world's room may be active each UTC day. Unset or 0: no limit. */
+  WORLD_DAILY_MINUTES?: string;
+  /** Worlds WorldMesh runs itself, exempt from the daily limit: origins, or "*.example.net" for subdomains. */
+  OWN_ORIGINS?: string;
+  /** Secret (wrangler secret put BLOCKED_ORIGINS): origins refused outright, comma-separated. */
+  BLOCKED_ORIGINS?: string;
+  /** Per-IP limits on WebSocket joins and on plain reads (occupancy, full probes). */
+  JOIN_LIMIT?: RateLimit;
+  READ_LIMIT?: RateLimit;
 }
 
 interface Peer {
@@ -85,6 +106,16 @@ interface PeerAvatar {
   s: string;
 }
 
+/** How long a room was active on one UTC day ('2026-10-15'), for the daily allowance. */
+interface Activity {
+  day: string;
+  ms: number;
+}
+
+function utcDay(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
 /** The latest value of one key of shared state, and when it was set. */
 interface Shared {
   v: Record<string, unknown>;
@@ -126,13 +157,25 @@ const CORS = {
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
 };
-/** How many world origins one occupancy request may ask about. */
-const MAX_OCCUPANCY_ORIGINS = 50;
+/** How many world origins one occupancy request may ask about. Each one is a call to that world's room. */
+const MAX_OCCUPANCY_ORIGINS = 24;
 /** Named rooms (e.g. lobby) on the same public occupancy read. */
-const MAX_OCCUPANCY_ROOMS = 20;
+const MAX_OCCUPANCY_ROOMS = 4;
+/** Occupancy answers are shared at the edge this long, so a hall full of visitors asks each room once. */
+const OCCUPANCY_CACHE_S = 10;
+/** Tells the room this world's daily allowance in minutes (0: none). Set by this Worker only. */
+const ALLOWANCE_HEADER = 'X-WorldMesh-Allowance';
+/** Once a world is past its allowance, the edge answers for it this long without waking its room. */
+const OVER_ALLOWANCE_CACHE_S = 600;
+/** Gaps between messages longer than this are not counted: the room was quiet and could sleep. */
+const ACTIVE_GAP_MS = 15_000;
+/** How often a busy room writes its active time to storage. */
+const ACTIVITY_FLUSH_MS = 60_000;
+/** Body of the 429 for a world past its allowance. Clients match "allowance". */
+const OVER_ALLOWANCE = "This world has used today's free multiplayer allowance on the shared WorldMesh relay. Visitors stay single-player until 00:00 UTC. Run your own relay to lift the limit: https://worldmesh.net/connect.md";
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
     if (request.method === 'OPTIONS') {
@@ -142,18 +185,26 @@ export default {
     // Public read: how full each world's presence room is (count + cap, no names).
     // The hub polls this to blur door covers before someone walks into a full world.
     if (request.method === 'GET' && url.pathname === '/occupancy') {
-      return occupancy(url, env);
+      if (await limited(env.READ_LIMIT, request)) return tooMany();
+      return occupancy(url, env, ctx);
     }
 
     let name: string;
     let kind: 'room' | 'world';
+    let origin = '';
     const match = url.pathname.match(/^\/room\/([a-z0-9-]{1,64})$/i);
     if (match) {
       name = match[1].toLowerCase();
+      // Only the rooms this relay is set up for: anyone could otherwise make new ones.
+      if (!list(env.NAMED_ROOMS).includes(name)) return new Response('No such room', { status: 404, headers: CORS });
       kind = 'room';
     } else if (url.pathname === '/world') {
-      const origin = worldOrigin(request.headers.get('Origin'));
+      if (env.WORLD_ROOMS === 'off') return new Response('This relay has no world rooms', { status: 404, headers: CORS });
+      origin = worldOrigin(request.headers.get('Origin')) ?? '';
       if (!origin) return new Response('A world room needs an http(s) Origin', { status: 403 });
+      if (list(env.BLOCKED_ORIGINS).map(worldOrigin).includes(origin)) {
+        return new Response('This world is blocked from the shared relay', { status: 403, headers: CORS });
+      }
       // Prefixed so a world can never land in a named room such as the lobby.
       name = `world:${origin}`;
       kind = 'world';
@@ -162,47 +213,136 @@ export default {
     }
 
     const room = env.ROOMS.get(env.ROOMS.idFromName(name));
+    const allowance = kind === 'world' ? allowanceFor(origin, env) : 0;
 
     if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
       // Browsers never see the 503 on a failed upgrade. A plain GET to the
-      // same path is the public stand-in: 503 + "Room is full", or count/cap.
+      // same path is the public stand-in: 503 + "Room is full", 429 past the
+      // allowance, or count/cap.
       if (request.method === 'GET') {
-        return room.occupancyHttp(kind === 'world');
+        if (await limited(env.READ_LIMIT, request)) return tooMany();
+        if (allowance && (await knownOverAllowance(url, origin))) return overAllowance();
+        return room.occupancyHttp(kind === 'world', allowance);
       }
       return new Response('Expected a WebSocket upgrade', { status: 426 });
     }
 
+    if (await limited(env.JOIN_LIMIT, request)) return tooMany();
+    if (allowance && (await knownOverAllowance(url, origin))) return overAllowance();
+
     const forwarded = new Request(request);
     forwarded.headers.set(ROOM_HEADER, kind);
-    return room.fetch(forwarded);
+    forwarded.headers.set(ALLOWANCE_HEADER, String(allowance));
+    const response = await room.fetch(forwarded);
+    if (response.status === 429 && allowance) ctx.waitUntil(rememberOverAllowance(url, origin));
+    return response;
   },
 };
+
+/** Comma-separated config value as a list. */
+function list(value: string | undefined): string[] {
+  return (value ?? '').split(',').map((part) => part.trim().toLowerCase()).filter(Boolean);
+}
+
+/** This world's daily allowance in minutes on this relay; 0 for none (no limit set, or one of WorldMesh's own). */
+function allowanceFor(origin: string, env: Env): number {
+  const minutes = Number(env.WORLD_DAILY_MINUTES);
+  if (!Number.isFinite(minutes) || minutes <= 0) return 0;
+  const host = new URL(origin).hostname;
+  const own = list(env.OWN_ORIGINS).some((entry) =>
+    entry.startsWith('*.') ? origin.startsWith('https://') && host.endsWith(entry.slice(1)) : worldOrigin(entry) === origin,
+  );
+  return own ? 0 : minutes;
+}
+
+/** True when this request should be turned away for its IP. No binding (e.g. a self-hosted copy without one): never. */
+async function limited(limiter: RateLimit | undefined, request: Request): Promise<boolean> {
+  if (!limiter) return false;
+  try {
+    const { success } = await limiter.limit({ key: request.headers.get('CF-Connecting-IP') ?? 'unknown' });
+    return !success;
+  } catch {
+    return false;
+  }
+}
+
+function tooMany(): Response {
+  return new Response('Too many requests', { status: 429, headers: { 'Retry-After': '60', ...CORS } });
+}
+
+function overAllowance(): Response {
+  const now = Date.now();
+  const untilMidnight = Math.ceil((86_400_000 - (now % 86_400_000)) / 1000);
+  return new Response(OVER_ALLOWANCE, {
+    status: 429,
+    headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Retry-After': String(untilMidnight), ...CORS },
+  });
+}
+
+/** Edge cache key marking a world past its allowance. Same host as the request, so the zone's cache takes it. */
+function overAllowanceKey(url: URL, origin: string): string {
+  return new URL(`/__over-allowance?o=${encodeURIComponent(origin)}`, url).toString();
+}
+
+async function knownOverAllowance(url: URL, origin: string): Promise<boolean> {
+  try {
+    return !!(await caches.default.match(overAllowanceKey(url, origin)));
+  } catch {
+    return false;
+  }
+}
+
+async function rememberOverAllowance(url: URL, origin: string): Promise<void> {
+  try {
+    await caches.default.put(
+      overAllowanceKey(url, origin),
+      new Response('1', { headers: { 'Cache-Control': `public, max-age=${OVER_ALLOWANCE_CACHE_S}` } }),
+    );
+  } catch {
+    // Only saves a room wake-up; the room still says no on its own.
+  }
+}
 
 /**
  * GET /occupancy?origins=https://a.example,https://b.example&rooms=lobby
  * → { "https://a.example": { count, cap }, "room:lobby": { count, cap }, ... }
  *
  * Cap is the live room limit. Counts are open sockets; peer names stay private.
+ * Answers are cached at the edge for a few seconds: every visitor in the hall
+ * asks about the same doors.
  */
-async function occupancy(url: URL, env: Env): Promise<Response> {
+async function occupancy(url: URL, env: Env, ctx: ExecutionContext): Promise<Response> {
   const raw = url.searchParams.get('origins') ?? url.searchParams.get('origin') ?? '';
-  const origins = [
-    ...new Set(
-      raw
-        .split(',')
-        .map((value) => worldOrigin(value.trim()))
-        .filter((origin): origin is string => !!origin),
-    ),
-  ].slice(0, MAX_OCCUPANCY_ORIGINS);
+  const origins =
+    env.WORLD_ROOMS === 'off'
+      ? []
+      : [
+          ...new Set(
+            raw
+              .split(',')
+              .map((value) => worldOrigin(value.trim()))
+              .filter((origin): origin is string => !!origin),
+          ),
+        ]
+          .sort()
+          .slice(0, MAX_OCCUPANCY_ORIGINS);
 
+  const allowed = list(env.NAMED_ROOMS);
   const named = [
     ...new Set(
       (url.searchParams.get('rooms') ?? url.searchParams.get('room') ?? '')
         .split(',')
         .map((value) => value.trim().toLowerCase())
-        .filter((name) => /^[a-z0-9-]{1,64}$/.test(name)),
+        .filter((name) => allowed.includes(name)),
     ),
-  ].slice(0, MAX_OCCUPANCY_ROOMS);
+  ]
+    .sort()
+    .slice(0, MAX_OCCUPANCY_ROOMS);
+
+  const key = new URL('/occupancy', url);
+  key.search = new URLSearchParams({ origins: origins.join(','), rooms: named.join(',') }).toString();
+  const cached = await caches.default.match(key.toString()).catch(() => undefined);
+  if (cached) return cached;
 
   const rooms: Record<string, { count: number; cap: number }> = {};
   await Promise.all([
@@ -217,10 +357,12 @@ async function occupancy(url: URL, env: Env): Promise<Response> {
       rooms[`room:${name}`] = { count, cap: MAX_ROOM_PEERS };
     }),
   ]);
-  return new Response(JSON.stringify(rooms), {
+  const response = new Response(JSON.stringify(rooms), {
     status: 200,
-    headers: { 'Content-Type': 'application/json', ...CORS },
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': `public, max-age=${OCCUPANCY_CACHE_S}`, ...CORS },
   });
+  ctx.waitUntil(caches.default.put(key.toString(), response.clone()).catch(() => undefined));
+  return response;
 }
 
 /** 'https://forest.example' (scheme + host + port), or null for opaque/odd origins. */
@@ -238,9 +380,15 @@ function worldOrigin(header: string | null): string | null {
 export class Room extends DurableObject<Env> {
   /** Shared state by key, kept in storage too so it outlives the room going idle. */
   private shared = new Map<string, Shared>();
+  /** Last message from anyone, and active time not yet written to storage (see countActivity). */
+  private activeAt = 0;
+  private pendingActiveMs = 0;
+  private flushedAt = 0;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    // Keep-alives are answered by the runtime, so a room where nobody moves can sleep.
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
     ctx.blockConcurrencyWhile(async () => {
       const stored = await ctx.storage.list<Shared>({ prefix: 'o:', limit: MAX_SHARED_KEYS });
       for (const [key, value] of stored) this.shared.set(key.slice(2), value);
@@ -253,6 +401,9 @@ export class Room extends DurableObject<Env> {
     if (sockets.length >= (isWorld ? MAX_WORLD_PEERS : MAX_ROOM_PEERS)) {
       return new Response('Room is full', { status: 503, headers: CORS });
     }
+    // People already here stay; only new joins are turned away.
+    const allowance = Number(request.headers.get(ALLOWANCE_HEADER)) || 0;
+    if (allowance > 0 && (await this.activeMsToday()) >= allowance * 60_000) return overAllowance();
 
     const { 0: client, 1: server } = new WebSocketPair();
     const peer: Peer = { id: crypto.randomUUID().slice(0, 8), p: [0, 0, 0], r: 0, e: 'smile', n: '', a: '', k: '', seen: false, chatAt: 0, notify: !isWorld };
@@ -314,6 +465,7 @@ export class Room extends DurableObject<Env> {
 
     const peer = ws.deserializeAttachment() as Peer;
     if (!peer.seen && peer.notify) this.ctx.waitUntil(this.notifyEntered());
+    await this.countActivity();
     peer.p = position.map(round) as Peer['p'];
     peer.r = round(yaw);
     if (typeof data.e === 'string' && EXPRESSION.test(data.e)) peer.e = data.e;
@@ -363,10 +515,11 @@ export class Room extends DurableObject<Env> {
   }
 
   /** Plain GET to /room/… or /world — browsers use this after a silent failed upgrade. */
-  async occupancyHttp(isWorld: boolean): Promise<Response> {
+  async occupancyHttp(isWorld: boolean, allowance = 0): Promise<Response> {
     const cap = isWorld ? MAX_WORLD_PEERS : MAX_ROOM_PEERS;
     const count = this.ctx.getWebSockets().length;
     const full = count >= cap;
+    if (!full && allowance > 0 && (await this.activeMsToday()) >= allowance * 60_000) return overAllowance();
     return new Response(full ? 'Room is full' : JSON.stringify({ count, cap }), {
       status: full ? 503 : 200,
       headers: {
@@ -374,6 +527,33 @@ export class Room extends DurableObject<Env> {
         ...CORS,
       },
     });
+  }
+
+  /**
+   * Count the time this room is busy, which is roughly the time it is awake
+   * and costs anything: the gaps between position messages, from anyone,
+   * up to ACTIVE_GAP_MS. A room where everyone stands still (keep-alives
+   * only) or that sits empty counts nothing. Written to storage at most
+   * once a minute; what a room forgets when it sleeps is under a minute.
+   */
+  private async countActivity(): Promise<void> {
+    const now = Date.now();
+    const gap = now - this.activeAt;
+    this.activeAt = now;
+    if (gap > 0 && gap < ACTIVE_GAP_MS) this.pendingActiveMs += gap;
+    if (this.pendingActiveMs === 0 || now - this.flushedAt < ACTIVITY_FLUSH_MS) return;
+    const pending = this.pendingActiveMs;
+    this.pendingActiveMs = 0;
+    this.flushedAt = now;
+    const day = utcDay(now);
+    const stored = await this.ctx.storage.get<Activity>('activity');
+    await this.ctx.storage.put('activity', { day, ms: (stored?.day === day ? stored.ms : 0) + pending });
+  }
+
+  /** Active time today (UTC), including what is not written yet. */
+  private async activeMsToday(): Promise<number> {
+    const stored = await this.ctx.storage.get<Activity>('activity');
+    return (stored?.day === utcDay(Date.now()) ? stored.ms : 0) + this.pendingActiveMs;
   }
 
   /** Tell the owner on Telegram that someone started walking in this room. */

@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  isOverAllowanceSignal,
   isRoomFullSignal,
   occupancyIsFull,
   occupancyProbeUrl,
+  probeRoom,
   probeRoomFull,
   roomFullLabel,
   type ProbeFetch,
@@ -97,5 +99,43 @@ describe('probeRoomFull', () => {
       throw new TypeError('Failed to fetch');
     };
     await expect(probeRoomFull('wss://relay.worldmesh.net/room/lobby', undefined, fetchFn)).resolves.toBe(false);
+  });
+});
+
+describe('probeRoom', () => {
+  const world = 'wss://relay.worldmesh.net/world';
+
+  it('tells a world past its daily allowance apart from a full room', async () => {
+    const fetchFn: ProbeFetch = async (input) => {
+      if (String(input) === 'https://relay.worldmesh.net/world') {
+        return new Response("This world has used today's free multiplayer allowance on the shared WorldMesh relay.", { status: 429 });
+      }
+      throw new Error(`unexpected ${input}`);
+    };
+    await expect(probeRoom(world, 'https://forest.example', fetchFn)).resolves.toBe('allowance');
+    await expect(probeRoomFull(world, 'https://forest.example', fetchFn)).resolves.toBe(false);
+  });
+
+  it('treats a plain rate limit as a blip, not the allowance', async () => {
+    const fetchFn: ProbeFetch = async (input) => {
+      const url = String(input);
+      if (url === 'https://relay.worldmesh.net/world') return new Response('Too many requests', { status: 429 });
+      if (url.startsWith('https://relay.worldmesh.net/occupancy')) return new Response('Too many requests', { status: 429 });
+      throw new Error(`unexpected ${url}`);
+    };
+    await expect(probeRoom(world, 'https://forest.example', fetchFn)).resolves.toBe('open');
+  });
+
+  it('still reports a full room', async () => {
+    const fetchFn: ProbeFetch = async () => new Response('Room is full', { status: 503 });
+    await expect(probeRoom(world, 'https://forest.example', fetchFn)).resolves.toBe('full');
+  });
+});
+
+describe('isOverAllowanceSignal', () => {
+  it('needs both the 429 and the word allowance', () => {
+    expect(isOverAllowanceSignal({ status: 429, body: 'free multiplayer allowance' })).toBe(true);
+    expect(isOverAllowanceSignal({ status: 429, body: 'Too many requests' })).toBe(false);
+    expect(isOverAllowanceSignal({ status: 503, body: 'allowance' })).toBe(false);
   });
 });

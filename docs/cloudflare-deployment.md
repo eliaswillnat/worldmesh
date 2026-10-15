@@ -122,27 +122,52 @@ and, for `/api/admin/submit`, `APPROVE_SECRET`. Without the KV binding, submissi
 
 The hub's walk mode shows everyone else who is in the lobby, and any world
 created with `multiplayer: true` shows everyone else in that world. Positions
-are relayed by a small Worker with one Durable Object per room, in
-`workers/presence`. It stores nothing and carries only positions. The runtime's
-default server (`DEFAULT_PRESENCE_SERVER`) points at this Worker.
+are relayed by a small Worker with one Durable Object per room. It stores
+nothing but the last state of shared objects and each room's active minutes
+today. The same code (`workers/presence/src`) runs as two Workers:
 
-1. Deploy it (SQLite-backed Durable Objects work on the Workers free plan):
+| Worker | Address | Serves |
+| :--- | :--- | :--- |
+| `worldmesh-lobby` (`workers/lobby`) | `lobby-relay.worldmesh.net` | The hub lobby only. WorldMesh's own city: no daily limit. |
+| `worldmesh-presence` (`workers/presence`) | `relay.worldmesh.net` | World rooms only: the free relay, and the runtime's default server (`DEFAULT_PRESENCE_SERVER`). Daily allowance per world, rate limits, blocklist. |
+
+1. Deploy both (SQLite-backed Durable Objects and rate limit bindings work on
+   the Workers free plan). The Deploy Workers workflow does this on merges;
+   by hand, lobby first:
    ```bash
-   cd workers/presence
-   npx wrangler deploy
+   cd workers/lobby && npx wrangler deploy
    ```
-2. Give the Worker the custom domain `relay.worldmesh.net` (Worker →
-   Settings → Domains & Routes). The hub and the runtime's
-   `DEFAULT_PRESENCE_SERVER` both connect to `wss://relay.worldmesh.net`. To
-   point the hub somewhere else, set on **`worldmesh-hub`**:
+   ```bash
+   cd workers/presence && npx wrangler deploy
+   ```
+   `workers/lobby` creates its custom domain `lobby-relay.worldmesh.net`
+   itself. `relay.worldmesh.net` is set on `worldmesh-presence` in the
+   dashboard (Worker → Settings → Domains & Routes). To point the hub
+   somewhere else, set on **`worldmesh-hub`**:
    ```env
-   VITE_PRESENCE_ENDPOINT=wss://relay.example.com
+   VITE_PRESENCE_ENDPOINT=wss://lobby-relay.example.com
+   VITE_WORLD_RELAY_ENDPOINT=wss://relay.example.com
    ```
-3. Keep the Worker's `workers.dev` address switched on.
+2. Keep `worldmesh-presence`'s `workers.dev` address switched on.
    `@worldmesh/runtime@0.2.0` has `wss://worldmesh-presence.elias-willnat.workers.dev`
    built in, so worlds still on that version lose multiplayer without it.
+3. Limits on the free relay are vars in `workers/presence/wrangler.toml`:
+   `WORLD_DAILY_MINUTES` (per world, per UTC day), `OWN_ORIGINS` (WorldMesh's
+   own worlds, no daily limit), and the per-IP `ratelimits`. To refuse a world
+   outright, set a secret, which survives deploys:
+   ```bash
+   npx wrangler secret put BLOCKED_ORIGINS --config workers/presence/wrangler.toml
+   ```
+   The value is a comma-separated list of origins, e.g. `https://spam.example`.
+   To switch the free relay off entirely, set the var `WORLD_ROOMS = "off"`.
+4. The lobby's Telegram ping (optional) needs `TELEGRAM_BOT_TOKEN` and
+   `TELEGRAM_CHAT_ID` set on `worldmesh-lobby` (same `wrangler secret put`,
+   `--config workers/lobby/wrangler.toml`).
+5. In Cloudflare → Notifications → Add, create a **Usage Based Billing**
+   notification for Workers and Durable Objects, so a surprise shows up as an
+   email rather than an invoice.
 
-If the presence Worker is unreachable, walk mode still works single-player.
+If a relay is unreachable, walk mode and worlds still work single-player.
 
 **Screenshot Worker (`workers/screenshot`).** It stores cover uploads in R2.
 It used to also take 360° door views through the `worldmesh-door-views` queue
@@ -201,7 +226,7 @@ never leaves a site expecting a Worker that isn't live yet.
 
 | Deployed | Never deployed from here |
 | :--- | :--- |
-| `presence`, `views`, `notify`, `screenshot`, `auth`, `admin` (in that order: `admin` binds the relay's Durable Object) | `federation`, `ads` (not live) |
+| `lobby`, `presence`, `views`, `notify`, `screenshot`, `auth`, `admin` (in that order: the lobby's relay is up before the free relay stops serving the lobby, and `admin` binds both relays' Durable Objects) | `federation`, `ads` (not live) |
 
 - **What counts as changed:** anything in `workers/<name>/`, any other file its
   bundle is built from (`admin` includes the hub's `worlds/categories.json`), or

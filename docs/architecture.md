@@ -115,9 +115,23 @@ a world can `preventDefault()` to take over.
 Durable Object per world, keyed by the page's origin. Each visitor sends its
 position, facing and expression about ten times a second, and the room forwards
 it to everyone else. The relay keeps no game state and stores nothing, so it is
-cheap: rooms with nobody in them hibernate and cost nothing. Rooms are capped
-(16 per world, 64 for the hub lobby) so one busy world cannot use up the free
-plan. A creator who needs more runs their own copy and passes `server`.
+cheap: rooms with nobody in them, or where nobody moves (clients send only a
+keep-alive the relay answers without waking the room), hibernate and cost
+nothing.
+
+WorldMesh pays for multiplayer in its own city and offers a bounded free relay
+to everyone else, so third-party growth cannot become an open-ended bill or
+take the hub down:
+
+- the hub lobby runs on its own Worker (`workers/lobby`, `lobby-relay.worldmesh.net`),
+  separate from the free relay for independent worlds (`workers/presence`,
+  `relay.worldmesh.net`, the runtime's default). Same code, different config;
+- on the free relay a world's room holds 16 people and may be active 240
+  minutes a day; named rooms are an allowlist, joins and reads are rate
+  limited per IP, origins can be blocked, and occupancy reads are cached at
+  the edge;
+- a creator or city that needs more runs their own copy and passes `server`.
+  Nothing in the runtime requires WorldMesh's servers.
 
 Physics, shared objects and other game state are not synced. The runtime is
 shaped so a richer network layer can replace this one:

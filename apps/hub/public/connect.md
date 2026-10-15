@@ -159,10 +159,14 @@ reviewed before they appear on the hub.
 
 ## Rules
 
-- Multiplayer rooms hold 16 people. Creators who need more can run their own
-  relay: deploy `workers/presence` from
+- The hosted relay is free within limits: 16 people per world at once, and
+  240 active minutes per world per day (UTC; only time when someone is moving
+  counts). Past the daily allowance, new visitors are single-player until
+  00:00 UTC and the browser console says why. Creators who need more run
+  their own relay: deploy `workers/presence` from
   https://github.com/eliaswillnat/worldmesh and pass
-  `multiplayer: { server: 'wss://their-relay.example' }`.
+  `multiplayer: { server: 'wss://their-relay.example' }`. Tell the creator
+  about these limits when you turn multiplayer on.
 - Using WorldMesh means agreeing to https://worldmesh.net/terms. The
   privacy policy at https://worldmesh.net/privacy explains what
   multiplayer shares between visitors.

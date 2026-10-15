@@ -1,5 +1,5 @@
 /** Relay caps `/occupancy` at this many origins per request (MAX_OCCUPANCY_ORIGINS). */
-export const OCCUPANCY_BATCH_SIZE = 50;
+export const OCCUPANCY_BATCH_SIZE = 24;
 
 export interface OccupancyInfo {
   count: number;
@@ -24,7 +24,7 @@ export function batchOrigins(origins: Iterable<string>, size = OCCUPANCY_BATCH_S
 }
 
 /**
- * Fetch occupancy for any number of origins, one request per batch of 50, in parallel.
+ * Fetch occupancy for any number of origins, one request per batch of 24, in parallel.
  * A failed batch is reported in `failed` instead of failing the rest. Throws if aborted.
  */
 export async function fetchOccupancy(

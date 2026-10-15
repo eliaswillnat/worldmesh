@@ -94,8 +94,13 @@ export interface LobbyOptions {
   start?: WalkSpot | null;
   /** Draw the lobby white with dark lines instead of black with light ones. */
   light?: boolean;
-  /** WebSocket base URL of the presence server. Leave empty for single-player. */
+  /** WebSocket base URL of the lobby's relay (workers/lobby). Leave empty for single-player. */
   presenceEndpoint?: string;
+  /**
+   * WebSocket base URL of the relay the worlds behind the doors use
+   * (workers/presence), asked how full each one is. Defaults to presenceEndpoint.
+   */
+  worldRelayEndpoint?: string;
   /** Name shown above this visitor for everyone else; null shows them as a guest. */
   playerName?: () => string | null;
   /** Start in private mode (see `Lobby.setPrivate`). */
@@ -1803,7 +1808,9 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   }
 
   async function refreshOccupancy(): Promise<void> {
-    if (!options.presenceEndpoint || disposed) return;
+    const endpoint = options.worldRelayEndpoint || options.presenceEndpoint;
+    // A hidden tab has no doors to look at; it catches up when it is shown again.
+    if (!endpoint || disposed || document.hidden) return;
     const origins = [...new Set([...doors.keys()].map(worldRoomOrigin).filter((o): o is string => !!o))];
     if (!origins.length) {
       occupancyByOrigin.clear();
@@ -1814,7 +1821,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     const controller = new AbortController();
     occupancyFetch = controller;
     try {
-      const base = presenceHttpBase(options.presenceEndpoint);
+      const base = presenceHttpBase(endpoint);
       const { occupancy, failed } = await fetchOccupancy(base, origins, controller.signal);
       // All batches failed — leave the last known full/not-full state.
       if (failed.length === origins.length) return;
@@ -1834,12 +1841,18 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   }
 
   function startOccupancyPolling(): void {
-    if (!options.presenceEndpoint) return;
+    if (!(options.worldRelayEndpoint || options.presenceEndpoint)) return;
     void refreshOccupancy();
+    document.removeEventListener('visibilitychange', handleOccupancyVisibility);
+    document.addEventListener('visibilitychange', handleOccupancyVisibility);
     if (occupancyTimer) window.clearInterval(occupancyTimer);
     occupancyTimer = window.setInterval(() => {
       void refreshOccupancy();
     }, OCCUPANCY_MS);
+  }
+
+  function handleOccupancyVisibility(): void {
+    if (!document.hidden) void refreshOccupancy();
   }
 
   function setWorlds(worlds: LobbyWorld[]): void {
@@ -2376,6 +2389,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     sharedCharacter.dispose();
     if (billboardTimer) window.clearInterval(billboardTimer);
     if (occupancyTimer) window.clearInterval(occupancyTimer);
+    document.removeEventListener('visibilitychange', handleOccupancyVisibility);
     occupancyFetch?.abort();
     billboardFetch?.abort();
     adModal?.close();

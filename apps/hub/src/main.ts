@@ -76,9 +76,13 @@ try {
  * serverless function. Leave unset to skip notifications.
  */
 const NOTIFY_WEBHOOK = import.meta.env.VITE_NOTIFY_WEBHOOK as string | undefined;
-/** WebSocket base of workers/presence. Walk mode is single-player without it. */
+/** WebSocket base of workers/lobby, the lobby's own relay. Walk mode is single-player without it. */
 const PRESENCE_ENDPOINT =
   (import.meta.env.VITE_PRESENCE_ENDPOINT as string | undefined) ||
+  (import.meta.env.DEV ? 'ws://localhost:8787' : 'wss://lobby-relay.worldmesh.net');
+/** WebSocket base of workers/presence, the free relay the worlds behind the doors use: asked how full each one is. */
+const WORLD_RELAY_ENDPOINT =
+  (import.meta.env.VITE_WORLD_RELAY_ENDPOINT as string | undefined) ||
   (import.meta.env.DEV ? 'ws://localhost:8787' : 'wss://relay.worldmesh.net');
 function getDemoWorldUrl(envKey: string, localPort: number, defaultSubdomain: string): string {
   const envVal = import.meta.env[envKey] as string | undefined;
@@ -457,6 +461,7 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
       start,
       light: walkIsLight(),
       presenceEndpoint: PRESENCE_ENDPOINT,
+      worldRelayEndpoint: WORLD_RELAY_ENDPOINT,
       playerName: getUsername,
       private: loadWalkPrivate(),
       color,
