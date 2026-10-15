@@ -2,6 +2,10 @@
 
 Open network for independently hosted 3D worlds, connected across the web.
 
+**Vision:** One identity. Infinite worlds. Independent cities.
+
+WorldMesh currently operates a discovery hub for independent worlds. The long-term goal is an open network of separately operated 3D cities, each with its own architecture, discovery choices, community and business model, connecting through interoperable world travel and portable characters. **Multi-city federation and portable sign-in between operators are not implemented yet.** See [Protocol](apps/hub/public/protocol.html) and [Build a city](apps/hub/public/build-a-city.html) for the current/aspirational split.
+
 Anyone builds a 3D world, hosts it wherever they like, and pastes the URL into
 WorldMesh. The worlds stay on their creators' own infrastructure. WorldMesh
 supplies the one thing they need to share: **a navigation standard**, so that

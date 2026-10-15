@@ -52,7 +52,7 @@ import { describeBillboard } from './layout';
 import { planAvenues, type CityPlan } from './avenuePlan';
 import { buildAvenues, dressHall } from './avenues';
 import { STOREFRONT_WIDTH } from './facade';
-import { playSendSound, playWarpSound, setPortalHum, stopPortalHum } from './sounds';
+import { playSendSound, playWarpSound } from './sounds';
 import { chatRejection } from '../../../../workers/presence/src/chatFilter';
 import { fetchOccupancy } from './occupancy';
 import { Arrival } from './arrival';
@@ -296,8 +296,6 @@ function assignDoors(worlds: LobbyWorld[], inside: number): { inside: string[]; 
   const url = (world: LobbyWorld) => world.url;
   return { inside: within.map(url), city: [...solo, ...together.slice(inside)].map(url) };
 }
-/** The portal hum is heard from this far from an open door, in metres. */
-const HUM_RANGE = 9;
 /** Stand this close in front of an empty door to be offered it. */
 const EMPTY_DOOR_REACH = 4.8;
 /** A tap on an empty door this far away still counts. */
@@ -749,7 +747,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     },
     entered: (door) => {
       presence?.detach();
-      stopPortalHum();
       const out = door.inFront(RETURN_STEP * door.group.scale.x);
       returnTo = { position: [out.x, door.group.position.y, out.z], yaw: out.yaw };
       if (door.world) options.onEnterWorld?.(door.world, returnTo);
@@ -969,20 +966,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         const { x: doorX, z: doorZ } = exitDoor.inFront(0);
         if (Math.hypot(x - doorX, z - doorZ) > EXIT_CLEAR) setExitDoor(null);
       }
-      let humDoor: Door | null = null;
-      let humDistance = HUM_RANGE;
       for (const door of doors.values()) {
         door.update(time);
         if (!level(door)) continue;
         if (!warping && !emerging && door.contains(x, z)) enter(door);
-        const { x: doorX, z: doorZ } = door.inFront(0);
-        const distance = Math.hypot(x - doorX, z - doorZ);
-        if (distance < humDistance) {
-          humDistance = distance;
-          humDoor = door;
-        }
       }
-      updatePortalHum(humDoor, humDistance);
       walkThrough.update();
       let near: Door | null = null;
       let nearest = EMPTY_DOOR_REACH;
@@ -1308,27 +1296,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       }
     }
   }
-
-  /**
-   * The open portals' warp hum: louder the closer the nearest one is,
-   * and heard from its side.
-   */
-  function updatePortalHum(door: Door | null, distance: number): void {
-    if (!door) {
-      setPortalHum(0, 0);
-      return;
-    }
-    const near = 1 - distance / HUM_RANGE;
-    const { x: doorX, z: doorZ } = door.inFront(0);
-    camera.getWorldDirection(humFacing);
-    const toX = doorX - camera.position.x;
-    const toZ = doorZ - camera.position.z;
-    // Right of the camera is (-facing.z, facing.x); how far the door lies that way.
-    const side = (toX * -humFacing.z + toZ * humFacing.x) / (Math.hypot(toX, toZ) * Math.hypot(humFacing.x, humFacing.z) || 1);
-    // Rounded off so tiny moves don't reschedule the sound every frame.
-    setPortalHum(Math.round(near * near * 100) / 100, Math.round(side * 0.7 * 20) / 20);
-  }
-  const humFacing = new Vector3();
 
   /**
    * Into a world, from a lobby door or a tower door: flash, then go to its
@@ -2387,7 +2354,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     walkThrough.dispose();
     liveDoors.dispose();
     disposed = true;
-    stopPortalHum();
     window.clearTimeout(warpTimer);
     window.clearTimeout(privateTimer);
     if (billboardTimer) window.clearInterval(billboardTimer);
