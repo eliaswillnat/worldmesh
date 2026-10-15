@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Connect your world — WorldMesh</title>
-    <meta name="description" content="Connect your Three.js world to WorldMesh with one prompt to your AI coding agent." />
+    <meta name="description" content="Connect your existing 3D world to WorldMesh: copy one prompt into your AI coding agent and it does the work in your project." />
     <link rel="canonical" href="https://worldmesh.net/creators" />
     <link rel="alternate" type="text/markdown" href="/connect.md" title="Instructions for AI agents" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -29,18 +29,28 @@
       p, ul, ol { font-size: 14px; line-height: 1.7; margin: 0 0 12px; }
       ul, ol { padding-left: 20px; }
       a { color: #999; }
+      .gains { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0 0 28px; }
+      .gains li { border: 1px solid #222; border-radius: 12px; padding: 12px 14px; font-size: 13px; line-height: 1.5; margin: 0; }
+      .gains strong { display: block; color: #fff; font-size: 14px; font-weight: 600; margin-bottom: 2px; }
       .prompt {
         border: 1px solid #333; border-radius: 12px; padding: 16px;
         background: #0d0d0d; margin: 8px 0 12px;
       }
-      .prompt p { font-size: 15px; color: #fff; margin: 0 0 14px; }
+      .prompt-text {
+        font-size: 13px; line-height: 1.6; color: #ddd; white-space: pre-wrap;
+        overflow-wrap: anywhere; max-height: 220px; overflow-y: auto; margin: 0 0 14px;
+      }
       .actions { display: flex; flex-wrap: wrap; gap: 8px; }
       button {
         font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
         border-radius: 999px; padding: 8px 14px; border: 1px solid #444;
         background: transparent; color: #ddd;
       }
-      button.primary { background: #fff; color: #000; border-color: #fff; }
+      button.primary { background: #fff; color: #000; border-color: #fff; font-size: 15px; padding: 12px 22px; }
+      @media (max-width: 480px) {
+        .gains { grid-template-columns: 1fr; }
+        .actions button { flex: 1 1 100%; }
+      }
       pre {
         font-size: 13px; line-height: 1.6; overflow-x: auto;
         background: #0d0d0d; border: 1px solid #222; border-radius: 10px;
@@ -55,7 +65,9 @@
         a { color: #444; }
         .back:hover { color: #000; }
         .prompt, pre { background: #f6f6f6; border-color: #ddd; }
-        .prompt p, pre { color: #111; }
+        .prompt-text, pre { color: #111; }
+        .gains li { border-color: #e2e2e2; }
+        .gains strong { color: #111; }
         button { color: #222; border-color: #bbb; }
         button.primary { background: #111; color: #fff; border-color: #111; }
       }
@@ -65,35 +77,69 @@
     <main>
       <a class="back" href="/">← Back to WorldMesh</a>
       <h1>Connect your world</h1>
-      <p class="lead">Give your Three.js world the shared WorldMesh controls, portals to other worlds, and multiplayer, so visitors see each other. Your world stays on your own hosting. No account, no server.</p>
+      <p class="lead">Already made a 3D world? Copy one prompt into the AI coding agent you already use, and it connects your world to WorldMesh for you. Your world stays yours, on your own hosting.</p>
 
-      <h2>Hand this to your AI coding agent</h2>
+      <ul class="gains">
+        <li><strong>Multiplayer</strong>Visitors see each other, through your own multiplayer or a free relay you own.</li>
+        <li><strong>Portable avatars</strong>Visitors arrive as the character they picked on WorldMesh.</li>
+        <li><strong>One identity</strong>The same character in every connected world. No sign-up in yours.</li>
+        <li><strong>Portals</strong>Walk from your world into others, and straight in from WorldMesh where supported.</li>
+      </ul>
+
+      <h2>1. Copy this prompt</h2>
       <div class="prompt">
-        <p id="prompt">Connect this 3D world to WorldMesh. Read https://worldmesh.net/connect.md and follow it step by step.</p>
+        <div class="prompt-text" id="prompt">Connect this 3D world to WorldMesh (https://worldmesh.net).
+
+Work in this project as it is on my computer. You do not need GitHub access, a pull request or a WorldMesh account.
+
+1. Read the official guide at https://worldmesh.net/connect.md and follow it step by step. If you cannot open web pages, tell me and I will paste the guide in.
+2. Inspect the project first: engine, render loop, controls, player, physics, any existing multiplayer, and how it is deployed.
+3. Keep my existing gameplay, controls, rendering and multiplayer working. Ask me before removing or replacing any of them.
+4. Do not use the multiplayer relay WorldMesh hosts. Use my existing multiplayer, or set up a WorldMesh relay on my own hosting as the guide explains.
+5. Ask me before creating accounts, adding paid services, deploying, or committing and pushing.
+6. When you are done, tell me plainly what works, what you tested, and what is still left for me to do. Do not say it is finished if it is not.</div>
         <div class="actions">
-          <button type="button" class="primary" id="copy-prompt">Copy prompt</button>
-          <button type="button" id="copy-full">Copy full instructions</button>
+          <button type="button" class="primary" id="copy-prompt">Copy AI prompt</button>
+          <button type="button" id="copy-full">Copy full guide</button>
         </div>
       </div>
-      <p class="note">Works with Claude Code, Cursor, Codex, Copilot and similar agents. If your agent cannot open web pages, use <strong>Copy full instructions</strong> and paste everything instead.</p>
 
-      <h2>Or do it yourself</h2>
-      <pre><code>npm i @worldmesh/runtime three</code></pre>
-      <pre><code>import { createWorldMesh } from '@worldmesh/runtime';
+      <h2>2. Paste it into your AI coding agent</h2>
+      <p>Claude, Cursor, Replit, Codex, Copilot or similar. Open your world's project in it and paste. The agent works on your own copy, so private projects are fine. No GitHub access, pull request or WorldMesh account is needed.</p>
+      <p class="note">If your agent cannot open web pages, use <strong>Copy full guide</strong> and paste that too.</p>
 
-createWorldMesh({ scene, camera, renderer, multiplayer: true });</code></pre>
-      <p>Pass the scene, camera and renderer you already have. Add <code>colliders</code> for the meshes visitors should stand on, and remove your own camera controls. <a href="/connect.md">The full instructions</a> cover the rest.</p>
+      <h2>When your agent will ask you</h2>
+      <ul>
+        <li>Before it replaces your controls, player, physics or multiplayer. It keeps them unless you agree.</li>
+        <li>Before it creates or uses an account. Multiplayer without your own server needs a free Cloudflare account you sign in to.</li>
+        <li>Before it deploys anything or commits your code.</li>
+      </ul>
+      <p>At the end it tells you what works, what it tested and what is left for you. If something could not be done safely, it explains the remaining steps instead.</p>
 
-      <h2>Then</h2>
+      <h2>3. Publish</h2>
       <ol>
         <li>Deploy your world wherever you host it.</li>
         <li>Submit its URL with <strong>Submit world</strong> on the <a href="/">WorldMesh homepage</a>. Submissions are reviewed before they appear.</li>
       </ol>
 
+      <h2>Which worlds work</h2>
+      <ul>
+        <li><strong>Three.js and React Three Fiber:</strong> everything above.</li>
+        <li><strong>Other engines</strong> (Babylon.js, PlayCanvas, A-Frame, Unity, Godot and others): your world can still be listed if it uses the usual controls (WASD, mouse, Space), but it cannot get WorldMesh multiplayer, avatars or portals yet.</li>
+      </ul>
+
+      <h2>Who pays for multiplayer</h2>
+      <p>WorldMesh does not host multiplayer for your world, so it stays under your control. Your agent keeps the multiplayer you already have, or sets up a WorldMesh relay on your own Cloudflare account. It runs on Cloudflare's free plan, and you can raise its 16-person room limit.</p>
+
+      <h2>Prefer to do it yourself?</h2>
+      <pre><code>npm i @worldmesh/runtime three</code></pre>
+      <pre><code>import { createWorldMesh } from '@worldmesh/runtime';
+
+createWorldMesh({ scene, camera, renderer, avatar: { source: 'worldmesh' } });</code></pre>
+      <p>Pass the scene, camera and renderer you already have, add <code>colliders</code> for what visitors stand on, and remove your own camera controls. The <a href="/connect.md">integration guide</a> covers multiplayer and the rest, and the <a href="https://github.com/eliaswillnat/worldmesh/blob/main/docs/compatibility.md">reference</a> lists every option.</p>
+
       <h2>Good to know</h2>
       <ul>
-        <li>Only Three.js worlds can use the runtime. Worlds made with other engines can still be listed if they use the standard controls.</li>
-        <li>Up to 16 people can be in a world at once. Need more? Run your own relay and pass <code>multiplayer: { server: 'wss://…' }</code>.</li>
         <li>See the <a href="/terms">terms</a> and what multiplayer shares in the <a href="/privacy">privacy policy</a>.</li>
       </ul>
     </main>
