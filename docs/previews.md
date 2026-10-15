@@ -32,7 +32,8 @@ and an action.
 | Hub | https://preview.worldmesh.net |
 | Worlds | https://preview-forest.worldmesh.net, `preview-mars`, `preview-city`, `preview-medieval`, `preview-space` |
 | Admin dashboard | https://preview-admin.worldmesh.net |
-| Multiplayer relay | `wss://preview-relay.worldmesh.net` |
+| Multiplayer relay (worlds) | `wss://preview-relay.worldmesh.net` |
+| Multiplayer relay (lobby) | `wss://preview-lobby-relay.worldmesh.net` |
 
 The first visit asks for your email and sends a one-time code (Cloudflare
 Access). The login lasts 24 hours across all the preview addresses.
@@ -46,8 +47,8 @@ Access). The login lasts 24 hours across all the preview addresses.
 | KV `WORLDS`, `VIEWS` | KV `worldmesh-preview-WORLDS`, `worldmesh-preview-VIEWS` |
 | R2 `worldmesh-screenshots` | R2 `worldmesh-screenshots-preview` |
 | `SCREENSHOT_SECRET`, `APPROVE_SECRET` | Separate random values, made by the workflow |
-| Workers `worldmesh-presence`, `-auth`, `-admin`, `-views`, `-screenshot` | The same names with `-preview`, from the `[env.preview]` block in each `workers/*/wrangler.toml` |
-| Presence rooms (Durable Objects of `worldmesh-presence`) | Rooms of `worldmesh-presence-preview`, so preview visitors never meet production ones |
+| Workers `worldmesh-presence`, `-lobby`, `-auth`, `-admin`, `-views`, `-screenshot` | The same names with `-preview`, from the `[env.preview]` block in each `workers/*/wrangler.toml` |
+| Presence rooms (Durable Objects of `worldmesh-presence` and `worldmesh-lobby`) | Rooms of `worldmesh-presence-preview` and `worldmesh-lobby-preview`, so preview visitors never meet production ones |
 
 Left out of the preview:
 
@@ -164,8 +165,9 @@ gh secret set CLOUDFLARE_ACCOUNT_ID
      `pages.dev` address, and each deployment on a `<hash>.` address under it.
      Without them, those would be public copies of the preview.
 
-     **Do not** add `preview-relay`. Browsers can't send the Access login over a
-     WebSocket, so multiplayer would break; the relay stores nothing.
+     **Do not** add `preview-relay` or `preview-lobby-relay`. Browsers can't
+     send the Access login over a WebSocket, so multiplayer would break; the
+     relays store nothing.
    - Policy: name `Only Elias`, action **Allow**, Include → **Emails** →
      `elias.willnat@gmail.com`.
    - Save.

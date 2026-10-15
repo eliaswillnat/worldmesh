@@ -52,6 +52,12 @@ name = "ROOMS"
 class_name = "Room"
 script_name = "worldmesh-presence"
 
+# workers/lobby's rooms: the hub lobby (deploy lobby first).
+[[durable_objects.bindings]]
+name = "LOBBY_ROOMS"
+class_name = "Room"
+script_name = "worldmesh-lobby"
+
 # Secrets (npx wrangler secret put <NAME> --config workers/admin/wrangler.toml):
 #   ADMIN_SECRET    random, at least 32 bytes (openssl rand -base64 32); signs
 #                   the hand-off ticket and the dashboard cookie
@@ -96,4 +102,9 @@ id = "__PREVIEW_VIEWS_KV_ID__"
 name = "ROOMS"
 class_name = "Room"
 script_name = "worldmesh-presence-preview"
+
+[[env.preview.durable_objects.bindings]]
+name = "LOBBY_ROOMS"
+class_name = "Room"
+script_name = "worldmesh-lobby-preview"
 # Secret (set by scripts/preview.sh on first deploy): ADMIN_SECRET

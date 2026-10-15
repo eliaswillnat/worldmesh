@@ -114,12 +114,23 @@ nothing.
   (`https://forest.example`), so there is nothing to register and another
   site cannot join your room from a browser. Different pages on the same
   origin share one room.
-- **Up to 16 people per world** on the hosted relay (64 in the hub lobby).
-  Visitors past that see a full-screen “World is full” / “Lobby is full”
-  overlay instead of joining silently alone.
-- **Your own relay.** Deploy `workers/presence` to your own Cloudflare
-  account and pass `multiplayer: { server: 'wss://your-relay.example' }`. The
-  traffic and cost are then yours, and you can raise the limit.
+- **The hosted relay is free, within limits.** WorldMesh pays for it so
+  small worlds can try multiplayer without a server. Its limits:
+  - **16 people per world** at once (64 in the hub lobby, which has its own
+    relay). Visitors past that see a full-screen “World is full” / “Lobby is
+    full” overlay instead of joining silently alone.
+  - **240 active minutes per world per day** (UTC). Minutes count only while
+    someone in the room is moving; empty rooms and people standing still
+    count nothing. Past that, people already in the world stay, new visitors
+    are single-player until 00:00 UTC, and the console says why.
+  - **Rate limits per IP address** on joining and on occupancy reads.
+  - WorldMesh can block a world that misuses the relay, and may change these
+    limits ([terms](https://worldmesh.net/terms)).
+- **Your own relay.** Busy worlds, and independent cities, run their own:
+  deploy `workers/presence` to your own Cloudflare account (set
+  `WORLD_DAILY_MINUTES = "0"` for no daily limit) and pass
+  `multiplayer: { server: 'wss://your-relay.example' }`. The traffic and cost
+  are then yours, and you can raise the limits.
 - **Offline is fine.** If the relay cannot be reached the world stays
   single-player.
 

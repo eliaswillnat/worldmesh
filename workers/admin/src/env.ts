@@ -17,8 +17,10 @@ export interface Env {
   WORLDS?: KVNamespace;
   /** workers/views: count:<url>. */
   VIEWS?: KVNamespace;
-  /** workers/presence's Durable Object namespace (script_name binding). */
+  /** workers/presence's Durable Object namespace (script_name binding): the free relay's world rooms. */
   ROOMS?: DurableObjectNamespace;
+  /** workers/lobby's Durable Object namespace: the hub lobby. Falls back to ROOMS. */
+  LOBBY_ROOMS?: DurableObjectNamespace;
 
   /** https://worldmesh.net — where the session cookie lives. */
   HUB_ORIGIN: string;

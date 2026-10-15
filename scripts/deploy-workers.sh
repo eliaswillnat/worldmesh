@@ -16,10 +16,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT=$PWD
 
-# The Workers running in production, in deploy order: admin binds presence's
-# Durable Object; auth and admin read the database the migrations change.
-# federation and ads are not live and are never deployed from here.
-WORKERS=(presence views notify screenshot auth admin)
+# The Workers running in production, in deploy order: lobby before presence,
+# so the lobby's new relay is up before the free relay stops serving the lobby;
+# admin binds both their Durable Objects; auth and admin read the database the
+# migrations change. federation and ads are not live and are never deployed from here.
+WORKERS=(lobby presence views notify screenshot auth admin)
 
 : "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN is not set}"
 : "${CLOUDFLARE_ACCOUNT_ID:?CLOUDFLARE_ACCOUNT_ID is not set}"

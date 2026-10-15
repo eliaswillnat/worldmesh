@@ -23,8 +23,8 @@ D1_NAME="worldmesh-preview"
 KV_WORLDS="worldmesh-preview-WORLDS"
 KV_VIEWS="worldmesh-preview-VIEWS"
 R2_BUCKET="worldmesh-screenshots-preview"
-# Order matters: admin binds presence's Durable Object; auth owns the migrations.
-WORKERS=(presence views screenshot auth admin)
+# Order matters: admin binds presence's and lobby's Durable Objects; auth owns the migrations.
+WORKERS=(lobby presence views screenshot auth admin)
 # Secrets each preview Worker gets, generated at random on first deploy.
 SECRETS_auth="BETTER_AUTH_SECRET"
 SECRETS_admin="ADMIN_SECRET"
@@ -255,12 +255,14 @@ deploy_workers() {
 build_apps() {
   local views="https://worldmesh-views-preview.$(workers_subdomain).workers.dev"
   local relay="wss://preview-relay.$ZONE_NAME"
+  local lobby_relay="wss://preview-lobby-relay.$ZONE_NAME"
 
   log "Building runtime"
   npm run build:runtime
 
   log "Building hub (preview settings)"
-  env VITE_PRESENCE_ENDPOINT="$relay" \
+  env VITE_PRESENCE_ENDPOINT="$lobby_relay" \
+      VITE_WORLD_RELAY_ENDPOINT="$relay" \
       VITE_VIEWS_ENDPOINT="$views" \
       VITE_ADS_ENABLED=false \
       VITE_WORLD_FOREST_URL="https://$(host_of forest)/" \
