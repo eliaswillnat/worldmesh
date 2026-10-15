@@ -147,13 +147,12 @@ If the presence Worker is unreachable, walk mode still works single-player.
 **Screenshot Worker (`workers/screenshot`).** It stores cover uploads in R2.
 It used to also take door views through the `worldmesh-door-views` queue; that
 is gone. Cloudflare refuses to deploy a Worker a queue still lists as its
-consumer, and to delete a queue a deployed Worker still binds, so the next
-deploy goes in this order, once:
+consumer, and to delete a queue a deployed Worker still binds. The Deploy
+Workers workflow ([section 10](#10-deploying-workers)) unhooks the queue before
+each screenshot deploy. Once the new Worker is live, delete the queue, once:
 
 ```bash
 cd workers/screenshot
-npx wrangler queues consumer remove worldmesh-door-views worldmesh-screenshot
-npx wrangler deploy
 npx wrangler queues delete worldmesh-door-views
 ```
 
@@ -197,3 +196,41 @@ KV, the `VIEWS` KV and the presence rooms. Setup in [admin.md](admin.md#deploy).
 To try a branch on a private copy before it reaches worldmesh.net, see
 [previews.md](previews.md). It uses separate projects, Workers and data, and
 doesn't change anything above.
+
+---
+
+## 10. Deploying Workers
+
+Pages deploys the sites on every push to `main`. The **Deploy Workers** workflow
+(`.github/workflows/workers.yml`, running `scripts/deploy-workers.sh`) does the
+same for the production Workers whose code changed in that push, so a merge
+never leaves a site expecting a Worker that isn't live yet.
+
+| Deployed | Never deployed from here |
+| :--- | :--- |
+| `presence`, `views`, `notify`, `screenshot`, `auth`, `admin` (in that order: `admin` binds the relay's Durable Object) | `federation`, `ads` (not live) |
+
+- **What counts as changed:** anything in `workers/<name>/`, any other file its
+  bundle is built from (`admin` includes the hub's `worlds/categories.json`), or
+  the lockfile of packages it bundles. Docs-only pushes don't start a run.
+- **Checked first:** each Worker's `typecheck` and tests (if it has a `test/`
+  folder). One that fails is not deployed; the others still are, and the run is
+  red.
+- **Migrations stay manual.** A push that changes `db/migrations/` deploys
+  nothing that uses the database (`auth`, `admin`), and the run is red with the
+  next steps. Apply the migration, then deploy what waited:
+  ```bash
+  npx wrangler d1 migrations apply worldmesh --remote --config workers/auth/wrangler.toml
+  gh workflow run workers.yml -f workers="auth admin"
+  ```
+- **By hand:** GitHub → Actions → Deploy Workers → Run workflow, with `all` or
+  some names, or `gh workflow run workers.yml -f workers="auth presence"`. A red
+  run can also be re-run as is: it checks the same push again.
+- **Configuration comes from `wrangler.toml`.** A deploy replaces variables set
+  in the dashboard, so add plain variables to the file (secrets are kept).
+- It uses the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` repository
+  secrets from the preview setup ([previews.md](previews.md#2-api-token-and-github-secrets)).
+  That token is account-wide and already deploys the same kinds of Workers,
+  routes and custom domains for the preview.
+- Locally, `DRY_RUN=1 scripts/deploy-workers.sh changed <commit>` shows what
+  would be deployed, with the same checks, and deploys nothing.
