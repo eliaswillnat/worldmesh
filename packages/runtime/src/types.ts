@@ -1,4 +1,4 @@
-import type { AvatarDescriptor } from './avatar/descriptor.js';
+import type { AvatarDescriptor, SignedAvatarShare } from './avatar/descriptor.js';
 import type { AvatarExpression } from './player/avatar.js';
 import type { Camera, Object3D, PerspectiveCamera, Scene, WebGLRenderer } from 'three';
 
@@ -211,17 +211,24 @@ export interface PeerBody {
 
 /**
  * Multiplayer seam. `multiplayer` plugs in the built-in relay client; pass
- * your own adapter here to network the world some other way.
+ * your own adapter as `network` to network the world some other way
+ * (docs/compatibility.md, "Your own network layer"). The runtime calls only
+ * `attach`, `bodies` and `detach`; the adapter does everything else itself.
  */
 export interface NetworkAdapter {
-  /** Called once with a read-only view of the local world. */
+  /**
+   * Called once when the world goes online, with the world's handle. Listen
+   * to its `update` event for the local player's state every frame. In a
+   * hub's live doorway the world stays offline until the visitor walks in.
+   */
   attach(world: WorldMeshHandle): void;
-  /** Called with the local player's state at the network tick rate. */
+  /** Never called by the runtime: a conventional name for the adapter's own send, called from `update`. */
   sendLocalState?(state: PlayerState): void;
-  /** Called by the adapter when a remote peer's state arrives. */
+  /** Never called by the runtime: a conventional name for the adapter's own receive. */
   onRemoteState?(peerId: string, state: PlayerState): void;
-  /** Where everyone else is standing right now. The local player is kept out of them. */
+  /** Where everyone else is standing right now, asked every step. The local player is kept out of them. */
   bodies?(): Iterable<PeerBody>;
+  /** Called from `world.dispose()`. Disconnect and remove what the adapter added to the scene. */
   detach?(): void;
 }
 
@@ -320,6 +327,12 @@ export interface WorldMeshHandle {
   loadAvatar(descriptor: AvatarDescriptor, data?: ArrayBuffer): Promise<boolean>;
   /** Go back to the world's default body. */
   clearAvatar(): void;
+  /**
+   * The link other players may download this visitor's avatar from, signed by
+   * the hub and renewed before it expires; null for the default body or an
+   * avatar that may not be shown to others. For a custom `network` to send.
+   */
+  getSharedAvatar(): SignedAvatarShare | null;
 
   /** Refresh the collider list after the world adds geometry. */
   refreshColliders(): void;

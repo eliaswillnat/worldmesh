@@ -73,6 +73,11 @@ const world = createWorldMesh({
   project's own `requestAnimationFrame` render loop and resize handler, and
   move per-frame logic into `onUpdate: (dt, world) => { ... }`.
 
+**Already running a multiplayer backend** (Nakama, Colyseus, PartyKit,
+Supabase Realtime, Ably, a WebSocket server of its own)? Leave `multiplayer`
+out and pass a `network` adapter for it instead: see "Your own network layer"
+in the full reference (link at the end), with a complete example.
+
 **React Three Fiber:** create the world inside a component, let R3F keep
 rendering, and step WorldMesh from `useFrame`:
 
