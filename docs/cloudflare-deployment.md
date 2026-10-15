@@ -145,16 +145,9 @@ default server (`DEFAULT_PRESENCE_SERVER`) points at this Worker.
 If the presence Worker is unreachable, walk mode still works single-player.
 
 **Screenshot Worker (`workers/screenshot`).** It stores cover uploads in R2.
-It used to also take door views through the `worldmesh-door-views` queue; that
-is gone. Cloudflare refuses to deploy a Worker a queue still lists as its
-consumer, and to delete a queue a deployed Worker still binds. The Deploy
-Workers workflow ([section 10](#10-deploying-workers)) unhooks the queue before
-each screenshot deploy. Once the new Worker is live, delete the queue, once:
-
-```bash
-cd workers/screenshot
-npx wrangler queues delete worldmesh-door-views
-```
+It used to also take 360° door views through the `worldmesh-door-views` queue
+and a headless browser; both went with the live doors (Oct 14), and the queue
+and its R2 images (`door-views/`) were deleted on Oct 15.
 
 Walk-mode doors show each world's cover image inside WebGL, which needs CORS. The
 R2 bucket does not send CORS headers, so the hub relays covers through the
