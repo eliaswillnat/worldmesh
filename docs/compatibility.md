@@ -133,7 +133,7 @@ nothing.
   (`MAX_WORLD_PEERS`, `WORLD_DAILY_MINUTES`, …). Then pass
   `multiplayer: { server: 'wss://worldmesh-relay.<your-subdomain>.workers.dev' }`.
   The traffic and cost are then yours. Without the button:
-  `npm create cloudflare@latest my-relay -- --template eliaswillnat/worldmesh/templates/relay`,
+  `npm create cloudflare@latest my-relay -- --template=eliaswillnat/worldmesh/templates/relay`,
   then `npx wrangler deploy` in `my-relay`.
 - **Offline is fine.** If the relay cannot be reached the world stays
   single-player.

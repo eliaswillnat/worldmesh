@@ -165,7 +165,7 @@ reviewed before they appear on the hub.
   00:00 UTC and the browser console says why. Creators who need more run
   their own relay, in one click on their own Cloudflare account:
   https://deploy.workers.cloudflare.com/?url=https://github.com/eliaswillnat/worldmesh/tree/main/templates/relay
-  (or `npm create cloudflare@latest my-relay -- --template eliaswillnat/worldmesh/templates/relay`,
+  (or `npm create cloudflare@latest my-relay -- --template=eliaswillnat/worldmesh/templates/relay`,
   then `npx wrangler deploy`). It has no daily limit, and `MAX_WORLD_PEERS`
   sets how many people fit in a world. Then pass
   `multiplayer: { server: 'wss://worldmesh-relay.<their-subdomain>.workers.dev' }`.

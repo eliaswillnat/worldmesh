@@ -181,7 +181,7 @@ The button copies only `templates/relay` into a new repository of theirs and
 deploys it as `worldmesh-relay` (world rooms, no daily limit, no named rooms;
 `MAX_WORLD_PEERS` and `MAX_ROOM_PEERS` set the room caps). Without the button:
 ```bash
-npm create cloudflare@latest my-relay -- --template eliaswillnat/worldmesh/templates/relay
+npm create cloudflare@latest my-relay -- --template=eliaswillnat/worldmesh/templates/relay
 ```
 then `npx wrangler deploy` in `my-relay`. Its own settings are in
 [`templates/relay/README.md`](../templates/relay/README.md). A change to

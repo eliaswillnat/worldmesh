@@ -27,7 +27,7 @@ Each push to your new repository deploys again.
 Without the button:
 
 ```bash
-npm create cloudflare@latest my-relay -- --template eliaswillnat/worldmesh/templates/relay
+npm create cloudflare@latest my-relay -- --template=eliaswillnat/worldmesh/templates/relay
 ```
 
 then `npx wrangler deploy` in `my-relay`.
