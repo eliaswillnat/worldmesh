@@ -96,11 +96,6 @@ deploy() {
     deployed+=("$w (dry run)")
     return 0
   fi
-  if [[ $w == screenshot ]]; then
-    # The old door-view queue still lists this Worker as its consumer, and
-    # Cloudflare refuses a consumer without a queue handler. A no-op once unhooked.
-    wrangler_in workers/screenshot queues consumer remove worldmesh-door-views worldmesh-screenshot >/dev/null 2>&1 || true
-  fi
   log "Deploying worldmesh-$w"
   if ! out=$(wrangler_in "workers/$w" deploy --env="" --message "main $sha" 2>&1); then
     printf '%s\n' "$out" >&2
