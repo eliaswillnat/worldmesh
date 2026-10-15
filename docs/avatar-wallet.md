@@ -191,6 +191,10 @@ What the hub signs:
   joiners get a working link. Players who already loaded the model keep it.
 - Private mode sends no character, like no colour.
 - Downloads are https only, at most 40 MB, 60 s each.
+- A brief outage does not stick. If a player's page cannot fetch the hub's key
+  (offline for a moment, the hub mid-deploy), it checks that link again a
+  minute later instead of dropping it, and the owner's page retries a failed
+  link renewal after 30 seconds.
 
 ## Endpoints (`/api/account/avatar`, routed with `/api/account/*`)
 

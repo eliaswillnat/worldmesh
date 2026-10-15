@@ -1,0 +1,61 @@
+# Production Worker deploys (docs/cloudflare-deployment.md → "Deploying Workers").
+# Pages deploys the sites on every push to main; this deploys the Workers whose
+# code changed in the same push, so the two never drift apart. By hand:
+#   gh workflow run workers.yml -f workers="auth presence"   (or all)
+name: Deploy Workers
+run-name: "Workers: ${{ github.event_name == 'push' && 'changed' || inputs.workers }} at ${{ github.sha }}"
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+  workflow_dispatch:
+    inputs:
+      workers:
+        description: 'Workers to deploy, separated by spaces (presence views notify screenshot auth admin), or all'
+        type: string
+        default: all
+
+# One deploy at a time, in the order pushes landed.
+concurrency:
+  group: workers-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The push's previous commit, to see what changed.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Deploy changed Workers
+        if: github.event_name == 'push'
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: scripts/deploy-workers.sh changed "$BEFORE"
+
+      - name: Deploy ${{ inputs.workers }}
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          WORKERS: ${{ inputs.workers }}
+        # Unquoted on purpose: one argument per Worker. The script refuses unknown names.
+        run: scripts/deploy-workers.sh $WORKERS

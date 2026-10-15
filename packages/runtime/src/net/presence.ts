@@ -29,7 +29,8 @@ export interface PresenceOptions {
   /**
    * Whether a link someone else sent was signed by the hub (createShareVerifier).
    * Models are downloaded only when it says yes; without it, everyone else is
-   * drawn in the default body.
+   * drawn in the default body. Throwing means it cannot tell right now (the
+   * hub's key did not load): the link is checked again a minute later.
    */
   verifyAvatar?: (share: SharedAvatar) => Promise<boolean>;
   /** Draw other people in the avatars they wear. Defaults to true. */
@@ -679,7 +680,9 @@ export class Presence implements NetworkAdapter {
     try {
       vouched = !!this.verifyAvatar && (await this.verifyAvatar(share));
     } catch {
-      vouched = false;
+      // Could not tell just now (the hub's key did not load): not a bad link, so check again later.
+      if (!load.signal.aborted) this.retryLater(remote, load);
+      return;
     }
     if (load.signal.aborted) return;
     if (!vouched) return failed('its link is not signed by the hub');
@@ -712,6 +715,18 @@ export class Presence implements NetworkAdapter {
     }
   }
 
+  /**
+   * Download their avatar again in a while, with whatever link they sent by
+   * then. Called off when the download is (they left or changed avatar).
+   */
+  private retryLater(remote: Remote, load: AbortController): void {
+    const timer = window.setTimeout(() => {
+      if (load.signal.aborted || remote.avatarLoad !== load) return;
+      this.avatarQueue = this.avatarQueue.then(() => this.download(remote, load));
+    }, AVATAR_RETRY_MS);
+    load.signal.addEventListener('abort', () => window.clearTimeout(timer), { once: true });
+  }
+
   // Leave the room promptly when the tab navigates away (e.g. through a door),
   // and rejoin if the browser restores the page from its back/forward cache.
   private handlePageHide = (): void => {
@@ -733,6 +748,8 @@ function round(value: number): number {
 
 /** Give up on someone else's avatar download after this long. */
 const AVATAR_TIMEOUT_MS = 60_000;
+/** Check someone's link again after this long when the hub's key could not be had. */
+const AVATAR_RETRY_MS = 60_000;
 /** Marks the root of a downloaded avatar on a remote figure. */
 const EXTERNAL_KEY = 'worldmeshExternal';
 

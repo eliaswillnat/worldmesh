@@ -96,7 +96,10 @@ export class SharedAvatarLink {
     try {
       fresh = await this.resolve();
     } catch {
-      fresh = null;
+      // The hub could not be reached just now. Ask again shortly, or the link
+      // runs out for anyone joining later.
+      if (turn === this.turn) this.timer = window.setTimeout(() => void this.refresh(turn), MIN_REFRESH_MS);
+      return;
     }
     if (turn !== this.turn || !this.descriptor) return;
     // A different avatar (picked on the hub since) is not swapped in here; the
@@ -114,12 +117,15 @@ function sharePayload(share: SignedAvatarShare): Uint8Array<ArrayBuffer> {
 }
 
 const verifiers = new Map<string, (share: SignedAvatarShare) => Promise<boolean>>();
+/** After the hub's key failed to load, wait this long before asking for it again. */
+const KEY_RETRY_MS = 30_000;
 
 /**
  * Checks links other players send against the public key of the hub at
- * `hubUrl` (fetched once from its resolve endpoint). Says no when the key
- * cannot be had or the browser cannot check Ed25519, so nothing unchecked is
- * ever downloaded.
+ * `hubUrl` (fetched once from its resolve endpoint). Says no when the hub has
+ * no key or the browser cannot check Ed25519, so nothing unchecked is ever
+ * downloaded. Throws when the key could not be fetched just now (offline for a
+ * moment, the hub mid-deploy): the link may well be fine, so ask again later.
  */
 export function createShareVerifier(hubUrl: string): (share: SignedAvatarShare) => Promise<boolean> {
   let endpoint: string;
@@ -131,23 +137,36 @@ export function createShareVerifier(hubUrl: string): (share: SignedAvatarShare) 
   const existing = verifiers.get(endpoint);
   if (existing) return existing;
 
+  // Resolves to null when links can never be checked here; rejects when the key could not be fetched.
   let key: Promise<CryptoKey | null> | null = null;
   let failedAt = 0;
   const loadKey = (): Promise<CryptoKey | null> => {
-    // After a failure, try again a minute later rather than on every link.
-    if (key && !(failedAt && Date.now() - failedAt > 60_000)) return key;
+    // After a failure, fetch again a little later rather than for every link.
+    if (key && !(failedAt && Date.now() - failedAt > KEY_RETRY_MS)) return key;
     failedAt = 0;
     key = (async () => {
+      let x: string | null;
       try {
         const response = await fetch(endpoint, { method: 'GET', mode: 'cors', credentials: 'omit', referrerPolicy: 'no-referrer' });
         if (!response.ok) throw new Error(`Key request failed (${response.status})`);
         const body = (await response.json()) as { key?: { kty?: unknown; crv?: unknown; x?: unknown } | null };
         const jwk = body.key;
-        if (!jwk || jwk.kty !== 'OKP' || jwk.crv !== 'Ed25519' || typeof jwk.x !== 'string') throw new Error('The hub has no share key');
-        return await crypto.subtle.importKey('jwk', { kty: 'OKP', crv: 'Ed25519', x: jwk.x }, { name: 'Ed25519' }, false, ['verify']);
+        if (jwk === null) x = null;
+        else if (!jwk || jwk.kty !== 'OKP' || jwk.crv !== 'Ed25519' || typeof jwk.x !== 'string') throw new Error('Unexpected share key');
+        else x = jwk.x;
       } catch (error) {
         failedAt = Date.now();
-        console.warn('[worldmesh] Cannot check other players’ avatar links; showing default bodies.', error);
+        console.warn('[worldmesh] Cannot load the hub’s avatar key yet; showing default bodies for now.', error);
+        throw error;
+      }
+      if (!x) {
+        console.warn('[worldmesh] This hub does not vouch for avatar links; showing default bodies.');
+        return null;
+      }
+      try {
+        return await crypto.subtle.importKey('jwk', { kty: 'OKP', crv: 'Ed25519', x }, { name: 'Ed25519' }, false, ['verify']);
+      } catch (error) {
+        console.warn('[worldmesh] This browser cannot check other players’ avatar links; showing default bodies.', error);
         return null;
       }
     })();
@@ -155,6 +174,7 @@ export function createShareVerifier(hubUrl: string): (share: SignedAvatarShare) 
   };
 
   const verify = async (share: SignedAvatarShare): Promise<boolean> => {
+    // Throws while the key cannot be fetched: the caller tries again later.
     const publicKey = await loadKey();
     if (!publicKey) return false;
     try {
