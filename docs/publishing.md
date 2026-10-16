@@ -70,20 +70,59 @@ A protocol bump is a major release of the package, and it is a real cost: every
 published world is on someone else's hosting and nobody can redeploy them for
 their creators. That asymmetry is the whole reason the number exists.
 
+While the package is `0.x`, the patch number is what reaches existing worlds:
+`^0.2.1` in a world's package.json and `@0.2` in the esm.sh import map
+(`apps/hub/public/connect.md`) both take any `0.2.*`, and neither takes `0.3.0`.
+Additive releases go out as the next patch.
+
 ## Release checklist
 
 Nothing here runs automatically; publishing is a deliberate act.
 
 1. `npm install && npm run typecheck && npm run build` from the repo root.
 2. Bump `version` in `packages/runtime/package.json` and `WORLDMESH_VERSION` in
-   `packages/runtime/src/index.ts` together. Decide whether
+   `packages/runtime/src/index.ts` together (and the `packages/runtime` entry in
+   `package-lock.json`, which `npm install` does). Decide whether
    `WORLDMESH_PROTOCOL` moves, by the rules above.
 3. Inspect the tarball without publishing: `npm run pack:runtime`.
 4. Optional but cheap: `npx publint packages/runtime` and
-   `npx @arethetypeswrong/cli packages/runtime`.
-5. Commit, tag (`runtime-v0.1.0`), push.
-6. `npm publish --workspace=packages/runtime` — `prepare` rebuilds `dist`
+   `npx @arethetypeswrong/cli --pack packages/runtime`. The one expected
+   warning is that CommonJS `require` gets ESM: the package is ESM only.
+5. Publish, either from GitHub (below; nothing needed but a browser) or from a
+   laptop: commit, tag (`runtime-v0.1.0`), push, then
+   `npm publish --workspace=packages/runtime` — `prepare` rebuilds `dist`
    first, and `publishConfig.access: public` covers the scoped name.
+
+## Publishing from GitHub
+
+`.github/workflows/publish-runtime.yml` ("Publish runtime" under Actions) runs
+only when started by hand, and only on `main`. It installs with `npm ci`, runs
+`npm run typecheck` and `npm run build`, refuses if npm already has the version
+in `packages/runtime/package.json` (or its tag exists), then runs
+`npm publish --workspace=packages/runtime --provenance --access public` and
+pushes the tag `runtime-v<version>` on the published commit. Provenance links
+the version on npmjs.com to the workflow run and commit that built it.
+
+Once: create an npm granular access token (npmjs.com → avatar → Access Tokens →
+Generate New Token → Granular Access Token) with read and write permission on
+`@worldmesh/runtime` only, "Bypass two-factor authentication" ticked (CI cannot
+answer an OTP prompt) and a short expiry; npm caps write tokens at 90 days. Add
+it as the repository secret `NPM_TOKEN` (GitHub → Settings → Secrets and
+variables → Actions). It never goes in this repo, a commit or a chat.
+
+Each release:
+
+1. Open a PR with the version bump (checklist steps 1–4), and merge it.
+2. GitHub → Actions → "Publish runtime" → Run workflow, on `main`.
+3. Check `npm view @worldmesh/runtime version`, and that the tag arrived.
+
+npm is ending direct publishing with tokens around January 2027 (a token will
+only be able to stage a release for a human to approve). Before then, move to
+trusted publishing, which needs no token at all: on npmjs.com, add this
+repository and `publish-runtime.yml` as the package's trusted publisher, run
+npm 11.5.1 or later in the workflow, and drop `NODE_AUTH_TOKEN` and the
+`NPM_TOKEN` secret. The workflow already has the `id-token: write` permission
+trusted publishing relies on.
 
 ### Still needed before the first publish
 
@@ -91,8 +130,8 @@ Nothing here runs automatically; publishing is a deliberate act.
   be a member of it. Nothing in this repo can create that.
 - That account needs 2FA; `npm publish` will ask for an OTP, or pass
   `--otp=<code>`.
-- Publishing from CI instead would need an automation token in repository
-  secrets and `--provenance`. No token belongs in this repo.
+- Publishing from CI uses a token in repository secrets and `--provenance`;
+  see "Publishing from GitHub". No token belongs in this repo.
 - `three` peer range (`>=0.160.0`) is deliberately wide. Widen or narrow it
   before the first publish rather than after, since consumers install against
   whatever the first version claims.
