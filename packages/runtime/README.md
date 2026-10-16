@@ -25,9 +25,9 @@ The package is ESM only and targets ES2022 browsers. It touches `window` and
 If you already have a scene, a camera and a renderer, this is the whole job:
 
 ```js
-import { createWorldMesh } from '@worldmesh/runtime';
+import { loadWorldMesh } from '@worldmesh/runtime';
 
-const world = createWorldMesh({
+const world = await loadWorldMesh({
   scene,
   camera,
   renderer,
@@ -43,13 +43,22 @@ person with a consistent toggle, pointer-lock handling, touch controls on touch
 devices, immersive VR through the shared Enter VR control when WebXR is
 available, the shared overlay and portals between worlds.
 
-Removing the `createWorldMesh` call leaves you with the Three.js project you
+Removing the `loadWorldMesh` call leaves you with the Three.js project you
 started with.
+
+## Staying current
+
+`loadWorldMesh` runs the current runtime from worldmesh.net, with your copy of
+Three.js, so fixes and improvements reach your world without a rebuild. If it
+cannot be loaded, the copy in this package runs instead (in its own chunk,
+downloaded only then). `createWorldMesh` takes the same options and always
+runs the copy in this package, synchronously. Details:
+[Staying current](https://github.com/eliaswillnat/worldmesh/blob/main/docs/compatibility.md#staying-current-loadworldmesh-and-createworldmesh).
 
 ## Visitors' own avatars (optional)
 
 ```js
-createWorldMesh({ scene, camera, renderer, avatar: { source: 'worldmesh' } });
+loadWorldMesh({ scene, camera, renderer, avatar: { source: 'worldmesh' } });
 ```
 
 Visitors who picked a character in their WorldMesh Avatar Wallet (Sketchfab,
@@ -94,7 +103,8 @@ open other pages, as the page around your world is the hub's.
 
 | | |
 | --- | --- |
-| `createWorldMesh` | the one call a world needs |
+| `loadWorldMesh` | the one call a world needs, kept current |
+| `createWorldMesh`, `HOSTED_RUNTIME_URL` | the same call on the copy in this package; where `loadWorldMesh` loads from |
 | `Input`, `TouchControls`, `DEFAULT_KEYMAP`, `resolveKeymap` | the control convention |
 | `MovementController`, `CollisionWorld`, `DEFAULT_TUNING` | movement and collision |
 | `CameraRig`, `Player`, `createDefaultAvatar`, `AVATAR_EXPRESSIONS` | camera and figure |

@@ -1,7 +1,7 @@
 # WorldMesh compatibility
 
 A WorldMesh world is an ordinary web page that renders a Three.js scene and
-calls `createWorldMesh` once. There is nothing else to implement, no account to
+calls `loadWorldMesh` (or `createWorldMesh`) once. There is nothing else to implement, no account to
 create, and no build tooling to adopt.
 
 The runtime ships as an ESM package with `three` as a peer dependency:
@@ -10,13 +10,10 @@ The runtime ships as an ESM package with `three` as a peer dependency:
 npm i @worldmesh/runtime three
 ```
 
-It is packaged but not on npm yet, so until it is, clone the repo and use the
-workspace copy. See [publishing.md](publishing.md).
-
 ## Minimum viable world
 
 ```js
-import { createWorldMesh } from '@worldmesh/runtime';
+import { loadWorldMesh } from '@worldmesh/runtime';
 import { PerspectiveCamera, Scene, WebGLRenderer } from 'three';
 
 const scene = new Scene();
@@ -26,11 +23,40 @@ document.body.appendChild(renderer.domElement);
 
 // ...build your world however you like...
 
-createWorldMesh({ scene, camera, renderer, spawn: [0, 2, 0] });
+const world = await loadWorldMesh({ scene, camera, renderer, spawn: [0, 2, 0] });
 ```
 
 That gets you the full control convention, both camera modes, the shared
 overlay, gravity, jumping and respawning.
+
+## Staying current: `loadWorldMesh` and `createWorldMesh`
+
+Both take the same options and give the same handle.
+
+- **`loadWorldMesh(options)`** resolves to the world once the current runtime
+  has loaded from `https://worldmesh.net/runtime/1/index.js` (the `1` is
+  `WORLDMESH_PROTOCOL`). That runtime uses your copy of Three.js, so fixes and
+  improvements reach your world the next time someone opens it, with no
+  rebuild. If it cannot be loaded within 8 seconds, is blocked (for example by
+  your Content Security Policy), speaks another protocol, or throws while
+  starting, the copy installed with the package runs instead, and the console
+  says why. Your bundler puts that copy in a separate chunk, downloaded only
+  then. Using it costs one thing: your bundle includes all of Three.js rather
+  than the parts you import, because the runtime may use any of it.
+- **`createWorldMesh(options)`** returns the world straight away and always
+  runs the installed copy: the runtime your world was built with, until you
+  update the package and rebuild.
+
+`loadWorldMesh` takes a second argument:
+
+| Option | Default | Notes |
+| --- | --- | --- |
+| `url` | `HOSTED_RUNTIME_URL` | Another copy to run, e.g. one you host yourself. |
+| `timeoutMs` | `8000` | How long to wait for it before using the installed copy. |
+| `hosted` | `true` | `false` runs the installed copy, like `createWorldMesh`. |
+
+Only `loadWorldMesh` itself is kept current. Everything else the package
+exports (`Presence`, `createNameTag`, …) is the installed version.
 
 ## Options
 
@@ -280,7 +306,7 @@ the relay:
 
 ## The handle
 
-`createWorldMesh` returns:
+`loadWorldMesh` resolves to, and `createWorldMesh` returns:
 
 ```ts
 world.update(dt)            // step the simulation without rendering
@@ -333,4 +359,4 @@ be able to read it.
 
 No WorldMesh account. No build plugin. No asset upload. No SDK beyond one
 import. No server, not even for multiplayer. Your world stays entirely on your hosting, and removing the
-`createWorldMesh` call leaves you with the Three.js project you started with.
+`loadWorldMesh` call leaves you with the Three.js project you started with.

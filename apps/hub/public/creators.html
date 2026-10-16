@@ -79,10 +79,10 @@
 
       <h2>Or do it yourself</h2>
       <pre><code>npm i @worldmesh/runtime three</code></pre>
-      <pre><code>import { createWorldMesh } from '@worldmesh/runtime';
+      <pre><code>import { loadWorldMesh } from '@worldmesh/runtime';
 
-createWorldMesh({ scene, camera, renderer, multiplayer: true });</code></pre>
-      <p>Pass the scene, camera and renderer you already have. Add <code>colliders</code> for the meshes visitors should stand on, and remove your own camera controls. <a href="/connect.md">The full instructions</a> cover the rest.</p>
+const world = await loadWorldMesh({ scene, camera, renderer, multiplayer: true });</code></pre>
+      <p>Pass the scene, camera and renderer you already have. <code>loadWorldMesh</code> runs the current WorldMesh runtime, so your world gets fixes and improvements without you updating or redeploying anything. Add <code>colliders</code> for the meshes visitors should stand on, and remove your own camera controls. <a href="/connect.md">The full instructions</a> cover the rest.</p>
 
       <h2>Then</h2>
       <ol>

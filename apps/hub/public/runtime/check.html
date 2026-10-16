@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Runtime check — WorldMesh</title>
+    <!--
+      A small world on the runtime this site serves for loadWorldMesh
+      (/runtime/1/index.js), with Three.js from a CDN like an outside world.
+      Open it on the preview before a runtime change goes to production
+      (docs/publishing.md). Unlike loadWorldMesh, it never falls back.
+    -->
+    <style>
+      :root { color-scheme: dark; }
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0d10; color: #e6e6e6; }
+      #status {
+        position: fixed; left: 12px; top: 12px; z-index: 2147483647; max-width: calc(100% - 24px);
+        font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+        background: rgba(0, 0, 0, 0.7); padding: 8px 10px; border-radius: 6px; white-space: pre-wrap;
+      }
+      #status.failed { color: #ff8a80; }
+    </style>
+    <script type="importmap">
+      { "imports": { "three": "https://esm.sh/three@0.169.0" } }
+    </script>
+  </head>
+  <body>
+    <div id="status">Loading the runtime…</div>
+    <script type="module">
+      import * as THREE from 'three';
+
+      const status = document.getElementById('status');
+      const url = new URL('./1/index.js', location.href).href;
+
+      try {
+        // What loadWorldMesh does, without its fallback to a bundled copy.
+        globalThis[Symbol.for('worldmesh.three')] = THREE;
+        const runtime = await import(url);
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x9fb8cc);
+        scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 2));
+        const sun = new THREE.DirectionalLight(0xffffff, 1.5);
+        sun.position.set(5, 10, 3);
+        scene.add(sun);
+
+        const ground = new THREE.Mesh(new THREE.BoxGeometry(40, 1, 40), new THREE.MeshStandardMaterial({ color: 0x6f8f5f }));
+        ground.position.y = -0.5;
+        scene.add(ground);
+        const colliders = [ground];
+        for (let i = 0; i < 6; i++) {
+          const height = 0.5 + i * 0.5;
+          const step = new THREE.Mesh(new THREE.BoxGeometry(2, height, 2), new THREE.MeshStandardMaterial({ color: 0xc9b38f }));
+          step.position.set(-5 + i * 2, height / 2, -6);
+          scene.add(step);
+          colliders.push(step);
+        }
+
+        const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 500);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+        document.body.appendChild(renderer.domElement);
+
+        runtime.createWorldMesh({ scene, camera, renderer, colliders, spawn: [0, 2, 4] });
+        status.textContent = `Runtime ${runtime.WORLDMESH_VERSION} (protocol ${runtime.WORLDMESH_PROTOCOL}) from ${url}\nThree.js r${THREE.REVISION}. Walk, jump, climb the steps, press V.`;
+      } catch (error) {
+        status.classList.add('failed');
+        status.textContent = `The runtime at ${url} did not start:\n${error?.stack ?? error}`;
+      }
+    </script>
+  </body>
+</html>

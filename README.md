@@ -102,16 +102,14 @@ are running. To see other visitors in walk mode locally, also run
 
 ## Making a Three.js project WorldMesh-compatible
 
-The runtime is packaged for npm — `npm i @worldmesh/runtime three` — but not
-published yet, so for now clone this repo. See
-[docs/publishing.md](docs/publishing.md).
-
-If you already have a scene, a camera and a renderer, this is the whole job:
+`npm i @worldmesh/runtime three`, or hand your AI coding agent
+https://worldmesh.net/connect.md. If you already have a scene, a camera and a
+renderer, this is the whole job:
 
 ```js
-import { createWorldMesh } from '@worldmesh/runtime';
+import { loadWorldMesh } from '@worldmesh/runtime';
 
-createWorldMesh({
+const world = await loadWorldMesh({
   scene,
   camera,
   renderer,
