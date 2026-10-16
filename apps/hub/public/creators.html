@@ -90,12 +90,19 @@ const world = await loadWorldMesh({ scene, camera, renderer, multiplayer: true }
         <li>Submit its URL with <strong>Submit world</strong> on the <a href="/">WorldMesh homepage</a>. Submissions are reviewed before they appear.</li>
       </ol>
 
+      <h2>Multiplayer: your choice</h2>
+      <p>WorldMesh gives your world its controls, portals and a place on the hub. Which server lets your visitors see each other is up to you, and you can switch any time:</p>
+      <ol>
+        <li><strong>WorldMesh's free relay.</strong> Pass <code>multiplayer: true</code>. Free within limits: up to 16 people in a world at once, and 240 active minutes per world each day (UTC; only time when someone is moving counts). After that, new visitors are single-player until midnight UTC.</li>
+        <li><strong>Your own relay.</strong> The same relay on your Cloudflare account: <a href="https://deploy.workers.cloudflare.com/?url=https://github.com/eliaswillnat/worldmesh/tree/main/templates/relay">deploy it in one click</a>, then pass <code>multiplayer: { server: 'wss://…' }</code>. Everything works the same, with no daily limit; the traffic is on your account, and the Workers free plan covers most worlds. <a href="https://github.com/eliaswillnat/worldmesh/tree/main/templates/relay">Settings and manual steps</a>.</li>
+        <li><strong>Your own backend.</strong> Already on Nakama, Colyseus, PartyKit, Firebase, Supabase, AWS or a server of your own? Pass a small <code>network</code> adapter instead, and nothing goes through WorldMesh. A few things the relay does for you, such as chat bubbles and “World is full”, are then yours to build. <a href="https://github.com/eliaswillnat/worldmesh/blob/main/docs/compatibility.md#your-own-network-layer">The guide</a> has a complete example.</li>
+      </ol>
+
       <p class="note">Interested in an independent 3D discovery city instead? Read <a href="/build-a-city">Build a city</a> and the <a href="/protocol">protocol overview</a>. Multi-city sign-in and federation are not available yet.</p>
 
       <h2>Good to know</h2>
       <ul>
         <li>Only Three.js worlds can use the runtime. Worlds made with other engines can still be listed if they use the standard controls.</li>
-        <li>Multiplayer on the WorldMesh relay is free within limits: up to 16 people in a world at once, and 240 active minutes per world each day (UTC; only time when someone is moving counts). After that, new visitors are single-player until midnight UTC. Busier worlds run their own relay: <a href="https://deploy.workers.cloudflare.com/?url=https://github.com/eliaswillnat/worldmesh/tree/main/templates/relay">deploy it to your Cloudflare account in one click</a> (no daily limit; <a href="https://github.com/eliaswillnat/worldmesh/tree/main/templates/relay">settings and manual steps</a>), then pass <code>multiplayer: { server: 'wss://…' }</code>.</li>
         <li>See the <a href="/terms">terms</a> and what multiplayer shares in the <a href="/privacy">privacy policy</a>.</li>
       </ul>
     </main>
