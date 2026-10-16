@@ -1,7 +1,16 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { MeshBasicMaterial, Vector3 } from 'three';
 import { GALLERY_LEVELS } from '../src/walk/rotunda';
 import { Lifts, planLifts, type LiftShared } from '../src/walk/elevators';
+
+// The lobby has been one storey since a5112a3 ("Lobby: one wide storey, twice
+// as wide"): no galleries, so the lifts stop only at the hall floor and the
+// lobby builds none. They stay for when galleries come back, so test them at
+// the two levels the galleries last stood at.
+vi.mock('../src/walk/rotunda', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/walk/rotunda')>()),
+  GALLERY_LEVELS: [10.4, 19.4],
+}));
 
 const RADIUS = 30;
 
