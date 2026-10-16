@@ -59,7 +59,9 @@ worldmesh/
 │   ├── federation/     WebFinger + ActivityPub for creators
 │   ├── ads/            paid billboard ads in walk mode: uploads, Stripe, moderation
 │   ├── admin/          admin.worldmesh.net: read-only dashboard over everything
-│   └── …               presence, views, screenshot, notify
+│   └── …               presence, lobby, views, screenshot, notify
+├── templates/
+│   └── relay/          the presence relay; one click deploys your own
 ├── db/migrations/      the D1 schema both of them share
 ├── apps/
 │   ├── hub/            the directory (port 5170)

@@ -37,11 +37,14 @@ import { chatRejection } from './chatFilter';
  * back to the sender too gives every client the same order of writes, so two
  * people pressing at once still end up agreeing.
  *
- * The same code runs as two Workers: workers/lobby (the hub's own lobby,
- * named rooms only) and workers/presence (relay.worldmesh.net, the free relay
- * for independent worlds, world rooms only). The vars below say which. On the
- * free relay each world has a daily allowance of active minutes; past it, new
- * visitors get 429 and stay single-player until the next UTC day.
+ * This directory (templates/relay) is also the one-click template anyone can
+ * deploy as their own relay (README.md). WorldMesh runs the same code as two
+ * Workers: workers/lobby (the hub's own lobby, named rooms only) and
+ * workers/presence (relay.worldmesh.net, the free relay for independent
+ * worlds, world rooms only). The vars below say which, and set the room caps.
+ * On the free relay each world has a daily allowance of active minutes; past
+ * it, new visitors get 429 and stay single-player until the next UTC day.
+ * A relay can also serve only the worlds in ALLOWED_ORIGINS; others get 403.
  */
 
 interface Env {
@@ -55,10 +58,16 @@ interface Env {
   WORLD_ROOMS?: string;
   /** Minutes a world's room may be active each UTC day. Unset or 0: no limit. */
   WORLD_DAILY_MINUTES?: string;
-  /** Worlds WorldMesh runs itself, exempt from the daily limit: origins, or "*.example.net" for subdomains. */
+  /** The relay owner's own worlds, exempt from the daily limit: origins, or "*.example.net" for subdomains. */
   OWN_ORIGINS?: string;
+  /** The only worlds this relay serves, written like OWN_ORIGINS. Unset or empty: every world. */
+  ALLOWED_ORIGINS?: string;
   /** Secret (wrangler secret put BLOCKED_ORIGINS): origins refused outright, comma-separated. */
   BLOCKED_ORIGINS?: string;
+  /** People at once in one world's room. Unset or not a positive whole number: 16. */
+  MAX_WORLD_PEERS?: string;
+  /** People at once in one named room, such as the hub lobby. Unset or not a positive whole number: 64. */
+  MAX_ROOM_PEERS?: string;
   /** Per-IP limits on WebSocket joins and on plain reads (occupancy, full probes). */
   JOIN_LIMIT?: RateLimit;
   READ_LIMIT?: RateLimit;
@@ -122,10 +131,10 @@ interface Shared {
   at: number;
 }
 
-/** Named rooms such as the hub lobby. */
-const MAX_ROOM_PEERS = 64;
-/** A world's room. Lower, because every creator's world draws on the same free plan. */
-const MAX_WORLD_PEERS = 16;
+/** Named rooms such as the hub lobby, unless MAX_ROOM_PEERS says otherwise. */
+const DEFAULT_ROOM_PEERS = 64;
+/** A world's room, unless MAX_WORLD_PEERS says otherwise. Lower, because every creator's world draws on the same free plan. */
+const DEFAULT_WORLD_PEERS = 16;
 /** Set by this Worker on the request it hands to a room; clients cannot choose it. */
 const ROOM_HEADER = 'X-WorldMesh-Room';
 const MAX_MESSAGE_BYTES = 256;
@@ -171,8 +180,10 @@ const OVER_ALLOWANCE_CACHE_S = 600;
 const ACTIVE_GAP_MS = 15_000;
 /** How often a busy room writes its active time to storage. */
 const ACTIVITY_FLUSH_MS = 60_000;
-/** Body of the 429 for a world past its allowance. Clients match "allowance". */
-const OVER_ALLOWANCE = "This world has used today's free multiplayer allowance on the shared WorldMesh relay. Visitors stay single-player until 00:00 UTC. Run your own relay to lift the limit: https://worldmesh.net/connect.md";
+/** Body of the 429 for a world past its allowance. Clients match "allowance". Any relay, WorldMesh's or someone else's. */
+const OVER_ALLOWANCE = "This world has used today's free multiplayer allowance on this relay. Visitors stay single-player until 00:00 UTC. Run your own relay to lift the limit (https://worldmesh.net/connect.md), or, if this relay is yours, list the world in OWN_ORIGINS.";
+/** Body of the 403 for a world not in ALLOWED_ORIGINS. */
+const NOT_ALLOWED = "This world is not in this relay's ALLOWED_ORIGINS. Run your own relay: https://worldmesh.net/connect.md";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -203,8 +214,9 @@ export default {
       origin = worldOrigin(request.headers.get('Origin')) ?? '';
       if (!origin) return new Response('A world room needs an http(s) Origin', { status: 403 });
       if (list(env.BLOCKED_ORIGINS).map(worldOrigin).includes(origin)) {
-        return new Response('This world is blocked from the shared relay', { status: 403, headers: CORS });
+        return new Response('This world is blocked from this relay', { status: 403, headers: CORS });
       }
+      if (!servesWorld(origin, env)) return notAllowed();
       // Prefixed so a world can never land in a named room such as the lobby.
       name = `world:${origin}`;
       kind = 'world';
@@ -244,15 +256,35 @@ function list(value: string | undefined): string[] {
   return (value ?? '').split(',').map((part) => part.trim().toLowerCase()).filter(Boolean);
 }
 
-/** This world's daily allowance in minutes on this relay; 0 for none (no limit set, or one of WorldMesh's own). */
+/** How many people one room of this kind takes at once on this relay. */
+function capFor(isWorld: boolean, env: Env): number {
+  const value = Number(isWorld ? env.MAX_WORLD_PEERS : env.MAX_ROOM_PEERS);
+  return Number.isInteger(value) && value > 0 ? value : isWorld ? DEFAULT_WORLD_PEERS : DEFAULT_ROOM_PEERS;
+}
+
+/** True when this world origin is on a list of origins and "*.example.net" entries (every https subdomain). */
+function listed(origin: string, entries: string[]): boolean {
+  const host = new URL(origin).hostname;
+  return entries.some((entry) =>
+    entry.startsWith('*.') ? origin.startsWith('https://') && host.endsWith(entry.slice(1)) : worldOrigin(entry) === origin,
+  );
+}
+
+/** This world's daily allowance in minutes on this relay; 0 for none (no limit set, or one of the owner's own). */
 function allowanceFor(origin: string, env: Env): number {
   const minutes = Number(env.WORLD_DAILY_MINUTES);
   if (!Number.isFinite(minutes) || minutes <= 0) return 0;
-  const host = new URL(origin).hostname;
-  const own = list(env.OWN_ORIGINS).some((entry) =>
-    entry.startsWith('*.') ? origin.startsWith('https://') && host.endsWith(entry.slice(1)) : worldOrigin(entry) === origin,
-  );
-  return own ? 0 : minutes;
+  return listed(origin, list(env.OWN_ORIGINS)) ? 0 : minutes;
+}
+
+/** False when ALLOWED_ORIGINS is set and this world is not on it. */
+function servesWorld(origin: string, env: Env): boolean {
+  const allowed = list(env.ALLOWED_ORIGINS);
+  return allowed.length === 0 || listed(origin, allowed);
+}
+
+function notAllowed(): Response {
+  return new Response(NOT_ALLOWED, { status: 403, headers: CORS });
 }
 
 /** True when this request should be turned away for its IP. No binding (e.g. a self-hosted copy without one): never. */
@@ -309,11 +341,12 @@ async function rememberOverAllowance(url: URL, origin: string): Promise<void> {
  *
  * Cap is the live room limit. Counts are open sockets; peer names stay private.
  * Answers are cached at the edge for a few seconds: every visitor in the hall
- * asks about the same doors.
+ * asks about the same doors. Worlds outside ALLOWED_ORIGINS are left out, so a
+ * hall's other doors still get answers; 403 when nothing asked is served here.
  */
 async function occupancy(url: URL, env: Env, ctx: ExecutionContext): Promise<Response> {
   const raw = url.searchParams.get('origins') ?? url.searchParams.get('origin') ?? '';
-  const origins =
+  const asked =
     env.WORLD_ROOMS === 'off'
       ? []
       : [
@@ -323,9 +356,11 @@ async function occupancy(url: URL, env: Env, ctx: ExecutionContext): Promise<Res
               .map((value) => worldOrigin(value.trim()))
               .filter((origin): origin is string => !!origin),
           ),
-        ]
-          .sort()
-          .slice(0, MAX_OCCUPANCY_ORIGINS);
+        ];
+  const origins = asked
+    .filter((origin) => servesWorld(origin, env))
+    .sort()
+    .slice(0, MAX_OCCUPANCY_ORIGINS);
 
   const allowed = list(env.NAMED_ROOMS);
   const named = [
@@ -338,6 +373,7 @@ async function occupancy(url: URL, env: Env, ctx: ExecutionContext): Promise<Res
   ]
     .sort()
     .slice(0, MAX_OCCUPANCY_ROOMS);
+  if (asked.length && !origins.length && !named.length) return notAllowed();
 
   const key = new URL('/occupancy', url);
   key.search = new URLSearchParams({ origins: origins.join(','), rooms: named.join(',') }).toString();
@@ -349,12 +385,12 @@ async function occupancy(url: URL, env: Env, ctx: ExecutionContext): Promise<Res
     ...origins.map(async (origin) => {
       const stub = env.ROOMS.get(env.ROOMS.idFromName(`world:${origin}`));
       const { count } = await stub.occupancy();
-      rooms[origin] = { count, cap: MAX_WORLD_PEERS };
+      rooms[origin] = { count, cap: capFor(true, env) };
     }),
     ...named.map(async (name) => {
       const stub = env.ROOMS.get(env.ROOMS.idFromName(name));
       const { count } = await stub.occupancy();
-      rooms[`room:${name}`] = { count, cap: MAX_ROOM_PEERS };
+      rooms[`room:${name}`] = { count, cap: capFor(false, env) };
     }),
   ]);
   const response = new Response(JSON.stringify(rooms), {
@@ -398,7 +434,7 @@ export class Room extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
     const isWorld = request.headers.get(ROOM_HEADER) === 'world';
     const sockets = this.ctx.getWebSockets();
-    if (sockets.length >= (isWorld ? MAX_WORLD_PEERS : MAX_ROOM_PEERS)) {
+    if (sockets.length >= capFor(isWorld, this.env)) {
       return new Response('Room is full', { status: 503, headers: CORS });
     }
     // People already here stay; only new joins are turned away.
@@ -516,7 +552,7 @@ export class Room extends DurableObject<Env> {
 
   /** Plain GET to /room/… or /world — browsers use this after a silent failed upgrade. */
   async occupancyHttp(isWorld: boolean, allowance = 0): Promise<Response> {
-    const cap = isWorld ? MAX_WORLD_PEERS : MAX_ROOM_PEERS;
+    const cap = capFor(isWorld, this.env);
     const count = this.ctx.getWebSockets().length;
     const full = count >= cap;
     if (!full && allowance > 0 && (await this.activeMsToday()) >= allowance * 60_000) return overAllowance();

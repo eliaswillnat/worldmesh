@@ -130,7 +130,8 @@ take the hub down:
   minutes a day; named rooms are an allowlist, joins and reads are rate
   limited per IP, origins can be blocked, and occupancy reads are cached at
   the edge;
-- a creator or city that needs more runs their own copy and passes `server`.
+- a creator or city that needs more runs their own copy (`templates/relay`,
+  one click) and passes `server`.
   Nothing in the runtime requires WorldMesh's servers.
 
 Physics, shared objects and other game state are not synced. The runtime is

@@ -1,9 +1,9 @@
 # The hub lobby's relay: WorldMesh's own city, paid for by WorldMesh.
-# Same code as workers/presence, but a separate Worker with its own rooms, so
-# the free relay for independent worlds (relay.worldmesh.net) can be limited,
-# blocked or moved without touching the lobby. Named rooms only.
+# Same code as workers/presence (templates/relay), but a separate Worker with
+# its own rooms, so the free relay for independent worlds (relay.worldmesh.net)
+# can be limited, blocked or moved without touching the lobby. Named rooms only.
 name = "worldmesh-lobby"
-main = "../presence/src/index.ts"
+main = "../../templates/relay/src/index.ts"
 compatibility_date = "2025-06-01"
 routes = [
   { pattern = "lobby-relay.worldmesh.net", custom_domain = true },
