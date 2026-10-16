@@ -1,0 +1,90 @@
+# Publish @worldmesh/runtime to npm (docs/publishing.md → "Publishing from
+# GitHub"). By hand only: Actions → "Publish runtime" → Run workflow, or
+#   gh workflow run publish-runtime.yml
+# Publishes the version packages/runtime/package.json has on main, refuses one
+# npm already has, then tags the commit runtime-v<version>. Needs the
+# repository secret NPM_TOKEN; no token belongs in this repo.
+name: Publish runtime
+run-name: "Publish runtime from ${{ github.ref_name }}"
+
+on:
+  workflow_dispatch:
+
+# One publish at a time.
+concurrency:
+  group: publish-runtime
+  cancel-in-progress: false
+
+permissions:
+  # Push the runtime-v<version> tag.
+  contents: write
+  # npm provenance: the published version links back to this run and commit.
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Only from main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Publish from main, not ${GITHUB_REF}. Merge the release PR first, then run this on main."
+          exit 1
+
+      - name: NPM_TOKEN is set
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "::error::Add the repository secret NPM_TOKEN first: Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Refuse a version npm already has
+        id: version
+        run: |
+          version=$(node -p "require('./packages/runtime/package.json').version")
+          tag="runtime-v${version}"
+          # Fails the step (and the run) if npm cannot be asked, rather than guessing.
+          published=$(npm view @worldmesh/runtime versions --json)
+          if node -e 'process.exit([].concat(JSON.parse(process.argv[1])).includes(process.argv[2]) ? 0 : 1)' "$published" "$version"; then
+            echo "::error::@worldmesh/runtime@${version} is already on npm. Bump version in packages/runtime/package.json and WORLDMESH_VERSION together first."
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null; then
+            echo "::error::Tag ${tag} already exists but ${version} is not on npm. Look at the tag before publishing."
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "Publishing @worldmesh/runtime@${version}"
+
+      - name: Publish ${{ steps.version.outputs.version }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --workspace=packages/runtime --provenance --access public
+
+      - name: Tag ${{ steps.version.outputs.tag }}
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git tag "$TAG" "$GITHUB_SHA"
+          git push origin "refs/tags/${TAG}"

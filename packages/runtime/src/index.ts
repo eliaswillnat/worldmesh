@@ -46,7 +46,7 @@ export { SharedAvatarLink, createShareVerifier, shareableAvatar } from './avatar
 export { isOverAllowanceSignal, isRoomFullSignal, occupancyIsFull, occupancyProbeUrl, probeRoom, probeRoomFull, roomFullLabel } from './net/roomFull.js';
 export type { RoomProbe } from './net/roomFull.js';
 
-export const WORLDMESH_VERSION = '0.2.1';
+export const WORLDMESH_VERSION = '0.2.2';
 /** Bumped when the world-facing contract changes in an incompatible way. */
 export const WORLDMESH_PROTOCOL = 1;
 
