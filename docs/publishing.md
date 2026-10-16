@@ -47,7 +47,7 @@ npm run dev:runtime
 Two numbers, on purpose.
 
 **`version` in package.json** is ordinary semver for the npm package, and
-`WORLDMESH_VERSION` must equal it. `npm run build:runtime` refuses to build if
+`WORLDMESH_VERSION` (in `src/version.ts`) must equal it. `npm run build:runtime` refuses to build if
 the two drift (`scripts/check-version.mjs`).
 
 **`WORLDMESH_PROTOCOL`** is an integer, currently `1`, and it describes the
@@ -75,13 +75,61 @@ While the package is `0.x`, the patch number is what reaches existing worlds:
 (`apps/hub/public/connect.md`) both take any `0.2.*`, and neither takes `0.3.0`.
 Additive releases go out as the next patch.
 
+## The hosted runtime
+
+Worlds that call `loadWorldMesh` (0.2.3 and later) don't run the copy in their
+own bundle. They run the one worldmesh.net serves at
+`/runtime/<protocol>/index.js`, handing it their Three.js, and fall back to
+their bundled copy only if it can't be loaded or doesn't start
+([compatibility.md](compatibility.md#staying-current-loadworldmesh-and-createworldmesh)).
+So a change to `packages/runtime` reaches those worlds without npm and without
+anyone rebuilding them: **it goes live in every one of them when `main`
+deploys the hub.**
+
+How it is built and served:
+
+- The hub's `npm run build` runs `scripts/build-hosted.mjs` after Vite. It
+  bundles `src/hosted.ts` (`createWorldMesh` and the version constants) from
+  `dist/`, with the glTF and VRM loaders as lazy chunks, into
+  `apps/hub/dist/runtime/<protocol>/`. Every `three` import reads the world's
+  copy, which `loadWorldMesh` leaves at `globalThis[Symbol.for('worldmesh.three')]`.
+- `apps/hub/public/_headers` serves `index.js` with CORS and a 5-minute cache,
+  and the content-hashed chunks under `c/` with CORS, cached for good.
+  `_routes.json` keeps `/runtime/*` away from Pages Functions, so worlds
+  loading it cost no function requests.
+- For up to 5 minutes after a deploy, a browser can hold the old `index.js`,
+  whose chunks are gone. The shared chunk fails and the world uses its bundled
+  copy; a glTF or VRM avatar fails and the visitor keeps the default body.
+
+Before merging a runtime change:
+
+1. Say **"Deploy to preview"** ([previews.md](previews.md)).
+2. Open https://preview.worldmesh.net/runtime/check: a small world on the
+   preview's hosted runtime, with Three.js from a CDN like an outside world.
+   It names the version it runs and, unlike `loadWorldMesh`, shows the error
+   instead of falling back. Walk, jump, climb the steps, switch views.
+3. Check the preview worlds and walk mode as usual, then **"Deploy to production"**.
+
+If a release turns out broken, roll the hub back: Cloudflare → Workers &
+Pages → `worldmesh-hub` → Deployments → the previous one → **Rollback to this
+deployment** (instant), or revert the merge on `main`. Worlds pick it up
+within 5 minutes. A release that throws while starting needs no rollback to
+keep worlds working: they fall back to their bundled copy by themselves.
+
+Protocol bumps: the build writes only the current protocol's directory, and
+`_headers` names `/runtime/1/`. Before bumping `WORLDMESH_PROTOCOL`, add the
+new directory's rules to `_headers` and arrange for `/runtime/<old protocol>/`
+to keep being served (for example a build of the last release before the
+bump), or worlds on the old protocol drop to their bundled copies. They keep
+working either way.
+
 ## Release checklist
 
 Nothing here runs automatically; publishing is a deliberate act.
 
 1. `npm install && npm run typecheck && npm run build` from the repo root.
 2. Bump `version` in `packages/runtime/package.json` and `WORLDMESH_VERSION` in
-   `packages/runtime/src/index.ts` together (and the `packages/runtime` entry in
+   `packages/runtime/src/version.ts` together (and the `packages/runtime` entry in
    `package-lock.json`, which `npm install` does). Decide whether
    `WORLDMESH_PROTOCOL` moves, by the rules above.
 3. Inspect the tarball without publishing: `npm run pack:runtime`.

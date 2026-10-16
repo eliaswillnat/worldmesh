@@ -47,13 +47,13 @@ instead.
 
 ## 3. Connect
 
-Call `createWorldMesh` once, in the browser, after the scene, camera and
+Call `loadWorldMesh` once, in the browser, after the scene, camera and
 renderer exist and the level geometry has been added:
 
 ```js
-import { createWorldMesh } from '@worldmesh/runtime';
+import { loadWorldMesh } from '@worldmesh/runtime';
 
-const world = createWorldMesh({
+const world = await loadWorldMesh({
   scene,
   camera,
   renderer,
@@ -62,6 +62,13 @@ const world = createWorldMesh({
   multiplayer: true,     // visitors see each other
 });
 ```
+
+`loadWorldMesh` runs the current WorldMesh runtime from worldmesh.net, so
+fixes and improvements reach the world without rebuilding it. If that cannot
+be loaded, the copy installed with the package runs instead. It needs
+`@worldmesh/runtime` 0.2.3 or newer. If the installed version has no
+`loadWorldMesh`, use `createWorldMesh` with the same options, without `await`:
+the world then keeps the runtime it was built with.
 
 - `spawn`: pick a clear spot above the floor, near the world's main view.
 - `colliders`: the meshes a player should walk on and not walk through
@@ -84,18 +91,26 @@ rendering, and step WorldMesh from `useFrame`:
 ```jsx
 import { useFrame, useThree } from '@react-three/fiber';
 import { useEffect, useRef } from 'react';
-import { createWorldMesh } from '@worldmesh/runtime';
+import { loadWorldMesh } from '@worldmesh/runtime';
 
 function WorldMesh({ colliders }) {
   const { scene, camera, gl } = useThree();
   const world = useRef(null);
   useEffect(() => {
-    world.current = createWorldMesh({
+    let unmounted = false;
+    loadWorldMesh({
       scene, camera, renderer: gl,
       colliders, spawn: [0, 2, 0], multiplayer: true,
       autoStart: false, autoResize: false,
+    }).then((created) => {
+      if (unmounted) created.dispose();
+      else world.current = created;
     });
-    return () => world.current.dispose();
+    return () => {
+      unmounted = true;
+      world.current?.dispose();
+      world.current = null;
+    };
   }, [scene, camera, gl]);
   useFrame((_, dt) => world.current?.update(dt));
   return null;
@@ -104,6 +119,13 @@ function WorldMesh({ colliders }) {
 
 In Next.js or any server-rendered app, only create the world on the client
 (inside `useEffect`, or a component loaded with `ssr: false`).
+
+**Already connected with `createWorldMesh`?** Update the package
+(`npm update @worldmesh/runtime`, or `npm i @worldmesh/runtime@latest`), then
+replace the call with `await loadWorldMesh(...)` (same options), as above.
+Code that runs after the call and uses `world` must run after the `await`.
+Build, check it works (step 6) and deploy. This is the last WorldMesh update
+the world needs: from then on it runs the current runtime.
 
 ## 4. Remove conflicting controls
 
