@@ -48,6 +48,7 @@ overlay, gravity, jumping and respawning.
 | `movement` | see `DEFAULT_TUNING` | `gravity`, `walkSpeed`, `jumpSpeed`, `fallLimit`, … |
 | `keymap` | the convention | Add bindings; do not move the core row. |
 | `multiplayer` | off | `true` shows everyone else in your world through the relay WorldMesh hosts; `{ server: 'wss://…' }` uses your own. See below. |
+| `network` | — | Your own multiplayer backend instead of the relay; replaces `multiplayer`. See [Your own network layer](#your-own-network-layer). |
 | `vr` | on | Shows **Enter VR** and calls `navigator.xr.requestSession('immersive-vr')` when the headset browser supports it. `false` hides the control. |
 | `ui` | all on | `title`, `hubUrl`, `crosshair`, `badge`, `controlsHint`. |
 | `autoStart` | `true` | `false` if you drive your own loop. |
@@ -142,6 +143,141 @@ nothing.
 room, including the visitor (`null` while disconnected). To network the world
 some other way, pass your own `NetworkAdapter` as `network`.
 
+## Your own network layer
+
+A world that already runs a multiplayer backend (Nakama, Colyseus, PartyKit,
+Supabase Realtime, Ably, a WebSocket server of its own…) can use it instead of
+the presence relay. Pass a `NetworkAdapter` as `network`: `multiplayer` is then
+ignored, and nothing goes through WorldMesh's servers.
+
+```ts
+interface NetworkAdapter {
+  attach(world: WorldMeshHandle): void; // once, when the world goes online
+  bodies?(): Iterable<PeerBody>;        // where everyone else stands, asked every step
+  detach?(): void;                      // from world.dispose()
+}
+```
+
+The runtime calls only these three. (`sendLocalState` and `onRemoteState` are
+in the type too, as names for the adapter's own use; the runtime never calls
+them.) The rest is the adapter's:
+
+- **The visitor.** In `attach`, listen to
+  `world.on('update', ({ dt, state }) => …)`. It fires every frame, after
+  movement, with the visitor's `PlayerState`: `position` (feet), `facing` (the
+  body's yaw), `onGround`, `flying`, `crouching`, `expression`, `velocity`, and
+  the camera's `yaw` and `pitch`. Send what others need, at most about 10 times
+  a second (as the relay does), and nothing while the visitor stands still.
+- **Everyone else.** Add a figure to `world.scene` when someone first shows up,
+  ease it toward each position they report, animate it, and remove and dispose
+  of it when they leave. Return where they stand from `bodies()` (feet
+  position, 0.35 m radius, 1.8 m tall, as the relay does) and the visitor walks
+  into them rather than through them. The relay client's own pieces are
+  exported: `createDefaultAvatar`, `animateDefaultAvatar`,
+  `setAvatarExpression`, `setFigureStroke`, `createNameTag`,
+  `createSpeechBubble` and `easeYaw`.
+- **Joins and leaves.** Someone who joins later has heard nothing from people
+  standing still, so answer a join by sending your state again. When the
+  connection drops, remove everyone and reconnect in the background; the world
+  stays single-player meanwhile.
+- **Strangers' data.** Check the shape of everything that arrives, and that
+  numbers are finite, before using it.
+- **When to connect.** In a hub's live doorway the world runs offline, and
+  `attach` is called only once the visitor walks in. Connect in `attach`, not
+  when your module loads.
+
+### Other people's avatars, safely
+
+With `avatar: { source: 'worldmesh' }`, `world.getSharedAvatar()` is the link
+other people may download the visitor's avatar from: signed by the hub, and
+renewed by the runtime before it expires. It is null for the default body and
+for avatars that may not be shown to others (VRoid Hub). Send it as it is, and
+again whenever it changes.
+
+When someone else's link arrives, download the model only if the hub signed
+it. A link anyone made up could point at a server that logs the IP address of
+everyone in the room.
+
+1. `parseAvatarShare(value)` checks its shape (null if wrong).
+2. Skip it if it has expired: `x` is in Unix seconds.
+3. `await createShareVerifier(hubUrl)(share)` checks the hub's signature. Use
+   the same hub as `avatar.hubUrl` (`https://worldmesh.net/` by default). It
+   throws while the hub's key cannot be fetched; the relay client tries again a
+   minute later.
+4. Only then `loadAvatarModel(…)`, with a `maxBytes` limit.
+
+Never send, or load, a plain `modelUrl`.
+
+### Example: a pub/sub WebSocket backend
+
+[`examples/pubsub-network.ts`](examples/pubsub-network.ts) is a complete
+adapter for a server that only relays: each message goes to everyone else in
+the same room with the sender's id added as `from`, and the server says `join`
+and `leave` itself. On the wire, as JSON:
+
+```js
+{ t: 'pose', p: [x, y, z], r: facing, e: expression, g: 1 } // while moving, up to 10 a second
+{ t: 'avatar', share }                                       // world.getSharedAvatar(), when it changes
+{ t: 'join', from }, { t: 'leave', from }                    // from the server
+```
+
+```js
+import { PubSubNetwork } from './pubsub-network.js';
+
+createWorldMesh({
+  scene, camera, renderer,
+  avatar: { source: 'worldmesh' },
+  network: new PubSubNetwork('wss://rooms.example/forest'),
+});
+```
+
+It sends the visitor's pose and avatar from `update`, answers `join` by
+sending them again, draws everyone else in the default figure with a name tag
+(their own avatar once its link checks out), eases and animates them every
+frame, and removes them on `leave` or when the connection drops. Whatever
+touches `socket` is the transport; the rest is the same on any backend.
+[`examples/pubsub-server.mjs`](examples/pubsub-server.mjs) is such a server,
+in about 30 lines of Node. Before going public it also needs what the relay
+does: refuse origins other than your world's, check every field, and limit
+rates and room sizes.
+
+### On other backends
+
+Only the transport changes. Rooms, ids and presence map like this:
+
+| Backend | Send | Receive, with the sender's id | Joins and leaves |
+| --- | --- | --- | --- |
+| Nakama, relayed match (`socket.joinMatch(matchId)`) | `socket.sendMatchState(matchId, opCode, json)`, one op code per `t` | `socket.onmatchdata`: `op_code`, `data`, `presence.session_id` | `socket.onmatchpresence`: `joins`, `leaves` |
+| Colyseus (`client.joinOrCreate('world')`) | `room.send(t, data)` | `room.onMessage('*', (t, data) => …)`; the room relays with `this.onMessage('*', (client, t, data) => this.broadcast(t, { ...data, from: client.sessionId }, { except: client }))` | the room broadcasts `join` and `leave` from `onJoin` and `onLeave` |
+| PartyKit | `PartySocket` works like `WebSocket`, so the example as it is | the party relays each message to the others with `from` set to the sender's connection id | the party's `onConnect` and `onClose` |
+| Supabase Realtime (`supabase.channel(room, { config: { presence: { key: id } } })`) | `channel.send({ type: 'broadcast', event: t, payload })` | `channel.on('broadcast', { event: t }, ({ payload }) => …)`; put `id` in the payload as `from` | `channel.on('presence', { event: 'join' }, ({ key }) => …)`, and `'leave'`, after `channel.track({})` |
+| Ably (`new Realtime({ …, echoMessages: false })`, `channels.get(room)`) | `channel.publish(t, data)` | `channel.subscribe((message) => …)`: `name`, `data`, `connectionId` | `channel.presence.subscribe('enter', …)`, and `'leave'`, after `channel.presence.enter()` |
+
+### What you give up
+
+The relay client does more than the example, and some of it only works with
+the relay:
+
+- **“World is full.”** The hub's doors read how full a world is from the
+  WorldMesh relay, so they cannot say “World is full” for a world on its own
+  backend. Inside the world, the full-screen overlay, its **Try again** and the
+  `room:full` event come from the relay client too: if your backend turns
+  someone away, show your own message (`world.releasePointer()` frees the
+  cursor first).
+- **The daily allowance** and its single-player fallback belong to the shared
+  relay, and do not apply.
+- **`players` events** come from the relay client. Count your own peers
+  instead.
+- **Late joiners.** The relay remembers where everyone stands and what they
+  wear, and tells newcomers. A server that only forwards, like
+  `pubsub-server.mjs`, does not: hence the answer to `join`.
+- **The finish.** Figures fading in, other people's footsteps, chat bubbles,
+  shared state (a lift, a door), one avatar download at a time, checking a link
+  again when the hub's key could not be fetched, reconnecting with backoff. Add
+  what you need.
+- **Privacy.** WorldMesh's [privacy policy](https://worldmesh.net/privacy)
+  covers its relay. What your backend sees and keeps is yours to explain.
+
 ## The handle
 
 `createWorldMesh` returns:
@@ -158,6 +294,7 @@ world.addPortal(portal)
 world.travelTo(url)
 world.loadAvatar(descriptor) // external VRM/glTF body; resolves false and keeps the default on failure
 world.clearAvatar()
+world.getSharedAvatar()     // the hub-signed link others may load this visitor's avatar from, or null
 world.refreshColliders()    // after adding geometry
 world.enterVR()             // requestSession('immersive-vr'); the Enter VR button calls this
 world.exitVR()

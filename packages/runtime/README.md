@@ -64,6 +64,16 @@ or call `world.loadAvatar(descriptor)` / `world.clearAvatar()` at any time.
 `avatar:load` and `avatar:error` events report the outcome. The VRM and glTF
 loaders (`@pixiv/three-vrm`) are only downloaded when an avatar is shown.
 
+## Your own multiplayer backend (optional)
+
+`multiplayer: true` uses the WorldMesh presence relay. A world on Nakama,
+Colyseus, PartyKit, Supabase Realtime, Ably or a WebSocket server of its own
+passes a `NetworkAdapter` as `network` instead, and nothing goes through
+WorldMesh's servers. The runtime calls its `attach`, `bodies` and `detach`; the
+adapter listens to `update` for the visitor's state and draws everyone else.
+Guide, a complete example and what the relay does that you then do yourself:
+[Your own network layer](https://github.com/eliaswillnat/worldmesh/blob/main/docs/compatibility.md#your-own-network-layer).
+
 ## Live doors
 
 A hub door can show your world itself, live, as seen from the visitor's own
@@ -93,6 +103,7 @@ open other pages, as the page around your world is the hub's.
 | `Overlay`, `Emitter` | the shared overlay, a tiny typed emitter |
 | `immersiveVrSupported`, `requestImmersiveVr` | the shared WebXR enter-VR path |
 | `Presence`, `DEFAULT_PRESENCE_SERVER`, `NetworkAdapter` | multiplayer (`multiplayer: true`) and the seam for your own |
+| `createNameTag`, `createSpeechBubble`, `easeYaw`, `createShareVerifier` | drawing other people, and checking their avatar links, in a network layer of your own |
 | `DOORWAY_VIEW_PARAM` | a hub drawing your world live in its doorway (`?doorway-view`), from the visitor's camera; walked into, it takes over from their exact pose, goes online without reloading, and asks the hub to open any other page |
 | `WORLDMESH_VERSION`, `WORLDMESH_PROTOCOL` | what your world is speaking |
 

@@ -195,6 +195,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
 
     loadAvatar,
     clearAvatar,
+    getSharedAvatar: () => sharedAvatar.get(),
 
     on: (event, fn) => events.on(event, fn),
     off: (event, fn) => events.off(event, fn),

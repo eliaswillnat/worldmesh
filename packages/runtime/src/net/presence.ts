@@ -5,6 +5,7 @@ import { loadAvatarModel, type LoadedAvatar } from '../avatar/loader.js';
 import { animateDefaultAvatar, createDefaultAvatar, setAvatarColor, setAvatarExpression } from '../player/avatar.js';
 import { setFigureStroke } from '../player/stroke.js';
 import type { NetworkAdapter, PeerBody, PlayerState, WorldMeshHandle } from '../types.js';
+import { easeYaw } from './follow.js';
 import { isRoomFullSignal, probeRoom } from './roomFull.js';
 
 /** The relay WorldMesh hosts (workers/presence). Worlds can point at their own. */
@@ -353,9 +354,7 @@ export class Presence implements NetworkAdapter {
       remote.root.position.lerp(remote.target, blend);
       this.place?.(remote.root.position, remote.grounded);
 
-      let delta = remote.targetYaw - remote.yaw;
-      delta = Math.atan2(Math.sin(delta), Math.cos(delta));
-      remote.yaw += delta * blend;
+      remote.yaw = easeYaw(remote.yaw, remote.targetYaw, blend);
       remote.root.rotation.y = remote.yaw;
 
       const moved = Math.hypot(remote.root.position.x - before.x, remote.root.position.z - before.z);
@@ -923,8 +922,8 @@ function dropBubble(remote: Remote): void {
   remote.bubble = null;
 }
 
-/** A white speech bubble. One line, cut off if they wrote a novel. */
-function createSpeechBubble(text: string): Sprite {
+/** A white speech bubble. One line, cut off if they wrote a novel. Its bottom edge sits at the sprite's position. */
+export function createSpeechBubble(text: string): Sprite {
   const scale = 2;
   const font = `600 ${20 * scale}px system-ui, -apple-system, sans-serif`;
   const canvas = document.createElement('canvas');
@@ -956,7 +955,11 @@ function createSpeechBubble(text: string): Sprite {
   return sprite;
 }
 
-function createNameTag(text: string): Sprite {
+/**
+ * The tag drawn over another player's head, as on the relay. 'Guest' is drawn
+ * dimmer. Centred on its position; the relay puts it 2.15 m above the feet.
+ */
+export function createNameTag(text: string): Sprite {
   const scale = 2; // Canvas pixels per CSS pixel, for crisp text.
   const font = `600 ${22 * scale}px system-ui, -apple-system, sans-serif`;
   const canvas = document.createElement('canvas');
