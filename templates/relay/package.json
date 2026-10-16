@@ -1,0 +1,50 @@
+{
+  "name": "worldmesh-relay",
+  "private": true,
+  "type": "module",
+  "description": "Your own WorldMesh presence relay: multiplayer for WorldMesh worlds and cities, on your Cloudflare account.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260929.1",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.142.0"
+  },
+  "cloudflare": {
+    "bindings": {
+      "ROOMS": {
+        "description": "One Durable Object per room. It keeps no positions or chat, only the last state of shared objects (a lift, a door) and each room's active minutes today."
+      },
+      "WORLD_ROOMS": {
+        "description": "`on`: a room per world, picked from the page's Origin. `off`: named rooms only."
+      },
+      "MAX_WORLD_PEERS": {
+        "description": "People at once in one world's room. Default `16`."
+      },
+      "WORLD_DAILY_MINUTES": {
+        "description": "Minutes each world's room may be active per UTC day. `0`: no limit. Anyone can point a world at your relay, so set this if you want to cap worlds that aren't yours."
+      },
+      "OWN_ORIGINS": {
+        "description": "Your own worlds, exempt from the daily limit: comma-separated origins such as `https://forest.example`, or `*.example.net` for every subdomain."
+      },
+      "ALLOWED_ORIGINS": {
+        "description": "The only worlds this relay serves, written like `OWN_ORIGINS`. Any other world is refused, so nobody else's traffic lands on your bill. Empty: every world."
+      },
+      "NAMED_ROOMS": {
+        "description": "Named rooms (`/room/<name>`), comma-separated, such as `lobby` for a city's own lobby. Empty: none."
+      },
+      "MAX_ROOM_PEERS": {
+        "description": "People at once in one named room. Default `64`."
+      },
+      "JOIN_LIMIT": {
+        "description": "WebSocket joins per IP address per minute."
+      },
+      "READ_LIMIT": {
+        "description": "Occupancy reads per IP address per minute."
+      }
+    }
+  }
+}

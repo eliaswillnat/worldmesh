@@ -95,7 +95,7 @@ createWorldMesh({ scene, camera, renderer, multiplayer: true });</code></pre>
       <h2>Good to know</h2>
       <ul>
         <li>Only Three.js worlds can use the runtime. Worlds made with other engines can still be listed if they use the standard controls.</li>
-        <li>Multiplayer on the WorldMesh relay is free within limits: up to 16 people in a world at once, and 240 active minutes per world each day (UTC; only time when someone is moving counts). After that, new visitors are single-player until midnight UTC. Busier worlds run their own relay and pass <code>multiplayer: { server: 'wss://…' }</code>.</li>
+        <li>Multiplayer on the WorldMesh relay is free within limits: up to 16 people in a world at once, and 240 active minutes per world each day (UTC; only time when someone is moving counts). After that, new visitors are single-player until midnight UTC. Busier worlds run their own relay: <a href="https://deploy.workers.cloudflare.com/?url=https://github.com/eliaswillnat/worldmesh/tree/main/templates/relay">deploy it to your Cloudflare account in one click</a> (no daily limit; <a href="https://github.com/eliaswillnat/worldmesh/tree/main/templates/relay">settings and manual steps</a>), then pass <code>multiplayer: { server: 'wss://…' }</code>.</li>
         <li>See the <a href="/terms">terms</a> and what multiplayer shares in the <a href="/privacy">privacy policy</a>.</li>
       </ul>
     </main>
