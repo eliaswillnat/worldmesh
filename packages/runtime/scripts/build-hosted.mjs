@@ -4,7 +4,7 @@
 //
 //   node packages/runtime/scripts/build-hosted.mjs <dir>
 //
-// writes <dir>/<protocol>/index.js (re-checked on every load, so fixes spread at once)
+// writes <dir>/<protocol>/index.js (loadWorldMesh asks for a new ?v= every 5 minutes)
 // and <dir>/<protocol>/c/*.js (content-hashed chunks, cached for good);
 // apps/hub/public/_headers sets both. See docs/publishing.md.
 import { readFileSync } from 'node:fs';

@@ -93,11 +93,11 @@ How it is built and served:
   `dist/`, with the glTF and VRM loaders as lazy chunks, into
   `apps/hub/dist/runtime/<protocol>/`. Every `three` import reads the world's
   copy, which `loadWorldMesh` leaves at `globalThis[Symbol.for('worldmesh.three')]`.
-- `apps/hub/public/_headers` serves `index.js` with CORS, re-checked by
-  browsers on every load (`max-age=0, must-revalidate`; a 304 while it is
-  unchanged), and the content-hashed chunks under `c/` with CORS, cached for
-  good. Not a short `max-age` instead: the zone's Browser Cache TTL (4 hours)
-  would raise it to 4 hours.
+- `apps/hub/public/_headers` serves `index.js` and the content-hashed chunks
+  under `c/` with CORS; the chunks are cached for good. `loadWorldMesh` asks
+  for `index.js?v=<5-minute slot>`, so a browser uses a copy at most 5
+  minutes old. Cache headers can't do that here: the zone's Browser Cache TTL
+  stretches any `max-age` under 4 hours on a `.js` file to 4 hours, even 0.
   `_routes.json` keeps `/runtime/*` away from Pages Functions, so worlds
   loading it cost no function requests.
 - A page opened before a deploy keeps the old runtime until it reloads, and
@@ -116,7 +116,7 @@ Before merging a runtime change:
 If a release turns out broken, roll the hub back: Cloudflare → Workers &
 Pages → `worldmesh-hub` → Deployments → the previous one → **Rollback to this
 deployment** (instant), or revert the merge on `main`. Worlds pick it up
-the next time they are opened. A release that throws while starting needs no rollback to
+within 5 minutes. A release that throws while starting needs no rollback to
 keep worlds working: they fall back to their bundled copy by themselves.
 
 Protocol bumps: the build writes only the current protocol's directory, and

@@ -12,6 +12,12 @@ export const HOSTED_RUNTIME_URL = `https://worldmesh.net/runtime/${WORLDMESH_PRO
 /** Where the hosted runtime picks up the world's own Three.js (scripts/build-hosted.mjs). */
 const THREE_KEY = Symbol.for('worldmesh.three');
 const DEFAULT_TIMEOUT_MS = 8000;
+/**
+ * The runtime is asked for at a new URL this often, which bounds how long a
+ * browser keeps an old one. Cache headers can't: worldmesh.net's Browser
+ * Cache TTL stretches any shorter max-age on a .js file to 4 hours.
+ */
+const REFRESH_MS = 5 * 60_000;
 
 export interface LoadWorldMeshOptions {
   /** Run the runtime from here instead: a preview or a self-hosted copy. */
@@ -70,7 +76,7 @@ async function importHosted(url: string, timeoutMs: number): Promise<HostedRunti
   const fallback = `using the copy bundled with this world (${WORLDMESH_VERSION})`;
   try {
     // Left to the browser: bundlers must not try to resolve or inline it.
-    const imported = import(/* webpackIgnore: true */ /* @vite-ignore */ url) as Promise<HostedRuntime>;
+    const imported = import(/* webpackIgnore: true */ /* @vite-ignore */ refreshed(url)) as Promise<HostedRuntime>;
     const runtime = await Promise.race([imported, timeout]);
     if (!runtime) {
       console.info(`[WorldMesh] ${url} took longer than ${timeoutMs} ms; ${fallback}.`);
@@ -87,4 +93,11 @@ async function importHosted(url: string, timeoutMs: number): Promise<HostedRunti
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** `url` with `v` set to the current REFRESH_MS slot, e.g. `…/index.js?v=5867331`. */
+function refreshed(url: string): string {
+  const fresh = new URL(url, globalThis.location?.href);
+  fresh.searchParams.set('v', String(Math.floor(Date.now() / REFRESH_MS)));
+  return fresh.href;
 }
