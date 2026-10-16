@@ -11,13 +11,15 @@
   Access-Control-Allow-Origin: *
 
 # The runtime loadWorldMesh runs (packages/runtime/scripts/build-hosted.mjs),
-# imported by worlds on other origins. The entry is re-checked every few
-# minutes, so a fix or a rollback reaches every world quickly; the chunks it
+# imported by worlds on other origins. Browsers re-check the entry on every
+# load (a 304 while unchanged), so a fix or a rollback reaches every world at
+# once. Not a few minutes: the zone's Browser Cache TTL (4 hours) raises any
+# shorter max-age to its own, and leaves only max-age=0 alone. The chunks it
 # names are content-hashed and never change.
 /runtime/1/index.js
   Access-Control-Allow-Origin: *
   Cross-Origin-Resource-Policy: cross-origin
-  Cache-Control: public, max-age=300
+  Cache-Control: public, max-age=0, must-revalidate
 
 /runtime/1/c/*
   Access-Control-Allow-Origin: *
