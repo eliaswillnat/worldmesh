@@ -43,6 +43,7 @@ edited in the dashboard.
 | `MAX_WORLD_PEERS` | `16` | People at once in one world's room. Past it, visitors see “World is full”. |
 | `WORLD_DAILY_MINUTES` | `0` | Minutes each world's room may be active per UTC day (only while someone moves). `0`: no limit. |
 | `OWN_ORIGINS` | | Worlds exempt from that limit: origins, or `*.example.net` for every https subdomain. |
+| `ALLOWED_ORIGINS` | | The only worlds served, written like `OWN_ORIGINS`. Empty: every world. |
 | `NAMED_ROOMS` | | Named rooms (`/room/<name>`), e.g. `lobby` for a city's own lobby. |
 | `MAX_ROOM_PEERS` | `64` | People at once in one named room. |
 
@@ -52,10 +53,20 @@ edited in the dashboard.
 
 Anyone who knows the address can point a world at your relay. Each world gets
 its own room, and a page cannot join another site's room from a browser, but
-the traffic counts against your account. To keep other worlds small, set
-`WORLD_DAILY_MINUTES` (e.g. `"240"`) and list your own worlds in
-`OWN_ORIGINS`. To refuse a world outright, set the secret `BLOCKED_ORIGINS`
-(comma-separated origins):
+the traffic counts against your account.
+
+To serve only your own worlds, list them in `ALLOWED_ORIGINS`:
+
+```toml
+ALLOWED_ORIGINS = "https://forest.example,*.example.net"
+```
+
+Any other world is refused (403) and its visitors stay single-player. Occupancy
+reads leave unlisted worlds out. Leave it empty to serve every world.
+
+To let other worlds in but keep them small, set `WORLD_DAILY_MINUTES`
+(e.g. `"240"`) and list your own worlds in `OWN_ORIGINS`. To refuse one world
+outright, set the secret `BLOCKED_ORIGINS` (comma-separated origins):
 
 ```bash
 npx wrangler secret put BLOCKED_ORIGINS
