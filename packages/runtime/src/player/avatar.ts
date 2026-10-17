@@ -78,6 +78,8 @@ export interface AvatarMotion {
   /** Horizontal speed in metres per second. */
   speed: number;
   grounded: boolean;
+  /** Flying holds still, standing, instead of walking or falling. */
+  flying?: boolean;
   /** Direction of travel as a yaw, used to turn the body in third person. */
   heading?: number;
 }
@@ -350,6 +352,19 @@ export function setAvatarExpression(avatar: Object3D, expression: string): void 
   rig.face.map = faceTexture(expression, rig.blinking);
 }
 
+/** The head tips no further than this up or down, so it never folds into the body. */
+const HEAD_PITCH_MAX = 0.7;
+
+/**
+ * Tip the head of an avatar made by `createDefaultAvatar` up (positive) or
+ * down, in radians, to show where its owner is looking. Custom avatars are ignored.
+ */
+export function setAvatarHeadPitch(avatar: Object3D, pitch: number): void {
+  const rig = avatar.userData[RIG_KEY] as AvatarRig | undefined;
+  if (!rig || !Number.isFinite(pitch)) return;
+  rig.head.rotation.x = MathUtils.clamp(pitch, -HEAD_PITCH_MAX, HEAD_PITCH_MAX);
+}
+
 export function getAvatarExpression(avatar: Object3D): AvatarExpression | null {
   const rig = avatar.userData[RIG_KEY] as AvatarRig | undefined;
   return rig ? rig.expression : null;
@@ -367,9 +382,9 @@ export function animateDefaultAvatar(avatar: Object3D, motion: AvatarMotion): bo
   if (motion.dt <= 0) return false;
 
   const blend = 1 - Math.exp(-motion.dt * 10);
-  const walking = motion.grounded ? MathUtils.clamp(motion.speed / 4.5, 0, 1) : 0;
+  const walking = motion.grounded && !motion.flying ? MathUtils.clamp(motion.speed / 4.5, 0, 1) : 0;
   rig.stride += (walking - rig.stride) * blend;
-  rig.air += ((motion.grounded ? 0 : 1) - rig.air) * blend;
+  rig.air += ((motion.grounded || motion.flying ? 0 : 1) - rig.air) * blend;
 
   // Steps get longer, not just faster, as speed rises.
   const before = footfalls(rig.phase);
@@ -386,7 +401,7 @@ export function animateDefaultAvatar(avatar: Object3D, motion: AvatarMotion): bo
   rig.torso.position.y = Math.abs(Math.cos(rig.phase)) * 0.045 * rig.stride;
   rig.head.rotation.z = Math.sin(rig.phase) * 0.04 * rig.stride;
   // A foot lands where the legs are furthest apart and the body is lowest.
-  const landed = motion.grounded && rig.stride > 0.15 && footfalls(rig.phase) !== before;
+  const landed = motion.grounded && !motion.flying && rig.stride > 0.15 && footfalls(rig.phase) !== before;
 
   rig.blinkTimer -= motion.dt;
   if (rig.blinkTimer <= 0) {

@@ -2,7 +2,7 @@ import { CanvasTexture, Group, Mesh, MeshBasicMaterial, Sprite, SpriteMaterial, 
 import { Footsteps } from '../audio/footsteps.js';
 import { parseAvatarShare, type SignedAvatarShare } from '../avatar/descriptor.js';
 import { loadAvatarModel, type LoadedAvatar } from '../avatar/loader.js';
-import { animateDefaultAvatar, createDefaultAvatar, setAvatarColor, setAvatarExpression } from '../player/avatar.js';
+import { animateDefaultAvatar, createDefaultAvatar, setAvatarColor, setAvatarExpression, setAvatarHeadPitch } from '../player/avatar.js';
 import { setFigureStroke } from '../player/stroke.js';
 import type { NetworkAdapter, PeerBody, PlayerState, WorldMeshHandle } from '../types.js';
 import { easeYaw } from './follow.js';
@@ -131,6 +131,9 @@ interface Remote {
   vertical: number;
   /** Standing on something (floor, platform, step) rather than in the air. */
   grounded: boolean;
+  /** Where they are looking up or down, and where their head is drawn, eased toward it. */
+  targetHead: number;
+  head: number;
   /** Body colour currently applied, '' for the default. */
   color: string;
   /** Text currently drawn on the tag. */
@@ -168,6 +171,8 @@ interface PeerState {
   k?: string;
   /** The avatar they wear (welcome only). */
   v?: WireAvatar;
+  /** Head pitch while they look around in first person, radians up; absent when level. */
+  h?: number;
 }
 
 /** An avatar on the wire: a signed link (SignedAvatarShare). No `u` means the default body. */
@@ -312,7 +317,9 @@ export class Presence implements NetworkAdapter {
     if (now - this.lastSent < 1000 / SEND_RATE) return;
 
     const [x, y, z] = state.position;
-    const payload = JSON.stringify({ t: 's', p: [round(x), round(y), round(z)], r: round(state.facing), e: state.expression, n: this.getName() ?? '', a: this.getAlias() ?? '', k: this.getColor() ?? '', g: state.onGround || state.flying ? 1 : 0 });
+    // In first person the head follows the camera, so everyone else sees where they look.
+    const head = this.world?.getViewMode() === 'first' ? round(state.pitch) : 0;
+    const payload = JSON.stringify({ t: 's', p: [round(x), round(y), round(z)], r: round(state.facing), e: state.expression, n: this.getName() ?? '', a: this.getAlias() ?? '', k: this.getColor() ?? '', g: state.onGround || state.flying ? 1 : 0, ...(head ? { h: head } : {}) });
     if (payload === this.lastPayload) {
       if (now - this.lastSent < KEEPALIVE_MS) return;
       socket.send('ping');
@@ -395,6 +402,8 @@ export class Presence implements NetworkAdapter {
 
       remote.yaw = easeYaw(remote.yaw, remote.targetYaw, blend);
       remote.root.rotation.y = remote.yaw;
+      remote.head += (remote.targetHead - remote.head) * blend;
+      setAvatarHeadPitch(remote.body, remote.head);
 
       const moved = Math.hypot(remote.root.position.x - before.x, remote.root.position.z - before.z);
       remote.speed += (moved / Math.max(dt, 1e-4) - remote.speed) * blend;
@@ -672,6 +681,8 @@ export class Presence implements NetworkAdapter {
         steps: this.listener ? new Footsteps() : null,
         vertical: 0,
         grounded: true,
+        targetHead: 0,
+        head: 0,
         color: '',
         label: GUEST,
         tag,
@@ -693,6 +704,7 @@ export class Presence implements NetworkAdapter {
     remote.grounded = g === 0 || g === 1 ? g === 1 : p[1] < 0.05 || Math.abs(p[1] - remote.target.y) < GROUND_HOLD;
     remote.target.set(p[0], p[1], p[2]);
     remote.targetYaw = yaw;
+    remote.targetHead = typeof state.h === 'number' && Number.isFinite(state.h) ? state.h : 0;
     if (typeof expression === 'string') setAvatarExpression(remote.body, expression);
     const color = typeof state.k === 'string' && COLOR.test(state.k) ? state.k.toLowerCase() : '';
     if (color !== remote.color) {
