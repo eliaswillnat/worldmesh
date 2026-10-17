@@ -241,9 +241,9 @@ function vrmAnimator(vrm: import('@pixiv/three-vrm').VRM): (motion: AvatarMotion
   return (motion) => {
     if (motion.dt <= 0) return;
     const blend = 1 - Math.exp(-motion.dt * 10);
-    const walking = motion.grounded ? MathUtils.clamp(motion.speed / 4.5, 0, 1) : 0;
+    const walking = motion.grounded && !motion.flying ? MathUtils.clamp(motion.speed / 4.5, 0, 1) : 0;
     stride += (walking - stride) * blend;
-    air += ((motion.grounded ? 0 : 1) - air) * blend;
+    air += ((motion.grounded || motion.flying ? 0 : 1) - air) * blend;
     phase += motion.dt * (4 + motion.speed * 1.2) * (stride > 0.01 ? 1 : 0);
     const swing = Math.sin(phase) * 0.6 * stride;
 

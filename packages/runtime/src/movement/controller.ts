@@ -1,4 +1,6 @@
 import { Vector3 } from 'three';
+
+const UP = new Vector3(0, 1, 0);
 import type { Input } from '../controls/input.js';
 import type { Abilities, MovementTuning, PeerBody } from '../types.js';
 import type { CollisionWorld } from './collision.js';
@@ -41,6 +43,18 @@ const MOUNT_SLACK = 0.12;
  */
 const HEAD_STICK = 0.45;
 
+/** Two jump presses this close together toggle flight, as in Minecraft. */
+const DOUBLE_TAP = 0.3;
+
+/** Fast flying (Ctrl, or double-tap forward) multiplies the fly speed by this. */
+const FLY_FAST = 2;
+
+/** Room left between the head and a ceiling flown up into. */
+const HEAD_GAP = 0.05;
+
+/** Coming down onto the floor faster than this ends a flight. */
+const LAND_SPEED = 0.5;
+
 export interface ControllerOptions {
   input: Input;
   collision: CollisionWorld;
@@ -63,6 +77,8 @@ export class MovementController {
   onGround = false;
   crouching = false;
   flying = false;
+  /** Flying fast: until the player stops moving or the flight ends. */
+  flyingFast = false;
   /** Current standing height, shrinks while crouching. */
   currentHeight: number;
   /** Other people's bodies, which this player walks into rather than through, and can stand on. */
@@ -85,6 +101,10 @@ export class MovementController {
   private mount: { x: number; z: number; head: number; reach: number } | null = null;
   /** Seconds left to stay planted after landing on someone. */
   private headStick = 0;
+  /** Seconds since the last jump press that could start a double tap. */
+  private sinceJumpTap = Infinity;
+  /** Seconds since the last forward press that could start a double tap. */
+  private sinceForwardTap = Infinity;
 
   constructor(options: ControllerOptions) {
     this.input = options.input;
@@ -110,14 +130,21 @@ export class MovementController {
     this.jumpsUsed = 0;
     this.dashTime = 0;
     this.headStick = 0;
+    this.sinceJumpTap = Infinity;
+    this.sinceForwardTap = Infinity;
+    this.flyingFast = false;
   }
 
   /** Advance one simulation step. `yaw` is the camera heading in radians. */
   step(dt: number, yaw: number, controlsEnabled: boolean): void {
     this.headStick = Math.max(0, this.headStick - dt);
+    this.sinceJumpTap += dt;
+    this.sinceForwardTap += dt;
     const axis = controlsEnabled && this.headStick === 0 ? this.input.getMoveAxis() : { x: 0, z: 0 };
+    let jumpTap = controlsEnabled && this.input.consume('jump');
 
-    this.updateModes(controlsEnabled);
+    if (this.updateModes(controlsEnabled, jumpTap)) jumpTap = false;
+    this.updateFlyingFast(controlsEnabled, axis.x !== 0 || axis.z !== 0);
 
     // Rotate local input into world space using the camera heading.
     const sin = Math.sin(yaw);
@@ -132,15 +159,27 @@ export class MovementController {
     if (this.flying) {
       this.stepFlying(dt, targetX, targetZ, controlsEnabled);
     } else {
-      this.stepGrounded(dt, targetX, targetZ, controlsEnabled);
+      this.stepGrounded(dt, targetX, targetZ, jumpTap);
     }
 
     this.stepDash(dt, controlsEnabled, wishX, wishZ, yaw);
     this.applyMotion(dt);
   }
 
-  private updateModes(controlsEnabled: boolean): void {
-    if (this.abilities.flying && controlsEnabled && this.input.consume('fly')) {
+  /** Says whether `jumpTap` was used up toggling flight. */
+  private updateModes(controlsEnabled: boolean, jumpTap: boolean): boolean {
+    let toggle = this.abilities.flying && controlsEnabled && this.input.consume('fly');
+    let tapUsed = false;
+    if (this.abilities.flying && jumpTap) {
+      if (this.sinceJumpTap < DOUBLE_TAP) {
+        toggle = !toggle;
+        tapUsed = true;
+        this.sinceJumpTap = Infinity;
+      } else {
+        this.sinceJumpTap = 0;
+      }
+    }
+    if (toggle) {
       this.flying = !this.flying;
       if (this.flying) {
         this.velocity.y = 0;
@@ -153,16 +192,35 @@ export class MovementController {
     const targetHeight = this.crouching ? this.baseHeight * 0.55 : this.baseHeight;
     // Smooth so the camera does not snap between eye heights.
     this.currentHeight += (targetHeight - this.currentHeight) * 0.35;
+    return tapUsed;
+  }
+
+  /**
+   * As in Minecraft: hold Ctrl while flying any way, or double-tap forward,
+   * to go faster, until the player stops moving or the flight ends.
+   */
+  private updateFlyingFast(controlsEnabled: boolean, moving: boolean): void {
+    const tapped = controlsEnabled && this.input.consume('forward');
+    if (!this.flying || !moving) {
+      this.flyingFast = false;
+      if (tapped) this.sinceForwardTap = 0;
+      return;
+    }
+    if (tapped) {
+      if (this.sinceForwardTap < DOUBLE_TAP) this.flyingFast = true;
+      this.sinceForwardTap = tapped && !this.flyingFast ? 0 : Infinity;
+    }
+    if (controlsEnabled && this.input.isDown('flyFast')) this.flyingFast = true;
   }
 
   private currentSpeed(): number {
     const tuning = this.tuning;
-    if (this.flying) return tuning.flySpeed;
+    if (this.flying) return tuning.flySpeed * (this.flyingFast ? FLY_FAST : 1);
     if (this.crouching) return tuning.crouchSpeed;
     return this.input.isDown('sprint') ? tuning.sprintSpeed : tuning.walkSpeed;
   }
 
-  private stepGrounded(dt: number, targetX: number, targetZ: number, controlsEnabled: boolean): void {
+  private stepGrounded(dt: number, targetX: number, targetZ: number, jumpTap: boolean): void {
     const tuning = this.tuning;
     const accel = this.onGround ? tuning.groundAccel : tuning.airAccel;
     const blend = 1 - Math.exp(-accel * dt);
@@ -172,7 +230,7 @@ export class MovementController {
     this.velocity.y -= tuning.gravity * dt;
     if (this.velocity.y < -tuning.maxFallSpeed) this.velocity.y = -tuning.maxFallSpeed;
 
-    if (controlsEnabled && this.input.consume('jump')) {
+    if (jumpTap) {
       const maxJumps = this.abilities.doubleJump ? 2 : 1;
       if (this.onGround) {
         this.velocity.y = tuning.jumpSpeed;
@@ -193,7 +251,9 @@ export class MovementController {
     this.velocity.z += (targetZ - this.velocity.z) * blend;
 
     const up = controlsEnabled && this.input.isDown('jump') ? 1 : 0;
-    const down = controlsEnabled && this.abilities.crouching && this.input.isDown('crouch') ? 1 : 0;
+    // Shift goes down, as in Minecraft; so does crouch where the world has it.
+    const crouch = this.abilities.crouching && this.input.isDown('crouch');
+    const down = controlsEnabled && (crouch || this.input.isDown('sprint')) ? 1 : 0;
     const targetY = (up - down) * this.tuning.flySpeed;
     this.velocity.y += (targetY - this.velocity.y) * blend;
     this.onGround = false;
@@ -257,6 +317,7 @@ export class MovementController {
 
     const previousY = this.position.y;
     this.position.y += this.velocity.y * dt;
+    if (this.flying && this.velocity.y > 0) this.stopAtCeiling(previousY);
 
     // Sample from where the feet *were*, and look down far enough to cover the
     // distance just fallen. Sampling from the new position would miss the floor
@@ -274,11 +335,14 @@ export class MovementController {
     if (head > ground.y) ground.y = head;
 
     if (this.flying) {
-      if (this.position.y < ground.y) {
+      if (this.position.y >= ground.y) return;
+      if (this.velocity.y > -LAND_SPEED) {
         this.position.y = ground.y;
         this.velocity.y = Math.max(0, this.velocity.y);
+        return;
       }
-      return;
+      // Flying down onto the floor lands, as in Minecraft.
+      this.flying = false;
     }
 
     if (this.position.y <= ground.y + 1e-3 && this.velocity.y <= 0) {
@@ -295,6 +359,22 @@ export class MovementController {
     } else {
       this.onGround = false;
     }
+  }
+
+  /**
+   * Flying up bumps the head on whatever is overhead (a glass roof, say)
+   * instead of passing through. Only while flying, so jumps in existing
+   * worlds behave as they always have.
+   */
+  private stopAtCeiling(previousY: number): void {
+    const half = this.currentHeight / 2;
+    const origin = this.scratch.set(this.position.x, previousY + half, this.position.z);
+    const far = half + (this.position.y - previousY) + HEAD_GAP;
+    const distance = this.collision.castDistance(origin, UP, far);
+    if (distance >= far) return;
+    const highest = origin.y + distance - HEAD_GAP - this.currentHeight;
+    this.position.y = Math.max(previousY, Math.min(this.position.y, highest));
+    this.velocity.y = 0;
   }
 
   /**

@@ -649,6 +649,14 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     roughness: 0.08,
     metalness: 0.4,
   });
+  // The dome: light glass, so the sky shows through and the hall shows from on top.
+  const domeGlassMaterial = new MeshStandardMaterial({
+    transparent: true,
+    depthWrite: false,
+    side: DoubleSide,
+    roughness: 0.05,
+    metalness: 0.2,
+  });
   // The gallery floors: thicker glass than the rails, so the deck still reads as a floor.
   const deckGlassMaterial = new MeshStandardMaterial({
     transparent: true,
@@ -668,6 +676,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const upper: Mesh[] = [];
   const departures = createDepartureBoard();
   scene.add(departures.group);
+  // Never drawn, so kept out of the scene; the board sits at the origin.
+  const boardColliders = departures.colliders.map((geometry) => new Mesh(geometry, colliderMaterial));
   let flights: Flight[] = [];
   const cityMaterials = createCityMaterials(renderer.capabilities.getMaxAnisotropy());
   let disposed = false;
@@ -1039,6 +1049,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     // Held upright, look further down so the floor fills the tall screen instead of the sky.
     view: { mode: 'third', yaw: padYaw(), distance: 5.5, pitch: window.innerWidth < window.innerHeight ? -0.32 : -0.15 },
     vr: true,
+    // Minecraft-style flight: double-tap Space.
+    abilities: { flying: true },
     ui: { title: 'WorldMesh', badge: false, crosshair: false, deferLockPanel: true, moveBeforeLock: true },
     network: presence,
     // Empty doors are closed: their faces stop you like the wall does.
@@ -1054,6 +1066,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       ...cityColliders,
       ...upper,
       ...lifts.colliders,
+      ...boardColliders,
     ],
     onUpdate: (dt, handle) => {
       time += dt;
@@ -2108,6 +2121,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     // Clear by day with the sky behind it; a faint smoked sheen at night.
     glassMaterial.color.set(light ? 0xe4eef9 : 0x9aa8bf);
     glassMaterial.opacity = light ? 0.22 : 0.1;
+    domeGlassMaterial.color.set(light ? 0xe4eef9 : 0x9aa8bf);
+    domeGlassMaterial.opacity = light ? 0.15 : 0.07;
     deckGlassMaterial.color.set(light ? 0xd6e4f2 : 0x8fa4c4);
     deckGlassMaterial.opacity = light ? 0.38 : 0.2;
     departures.setTheme(light);
@@ -2497,13 +2512,21 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     upper.length = 0;
     const upperColliders = [...galleries.colliders.map((g) => (g.index ? g.toNonIndexed() : g)), ...shafts.colliders];
     if (upperColliders.length) upper.push(mergeInto(upperColliders, colliderMaterial));
+    // The drum's top and the dome's glass, to land on when flying.
+    upper.push(new Mesh(rim.clone(), colliderMaterial), new Mesh(dome.collider, colliderMaterial));
     lifts.setLifts(liftPlan);
-    const glazing = new Mesh(mergeGeometries([dome.glass, ...galleries.glass].map((g) => (g.index ? g.toNonIndexed() : g))), glassMaterial);
-    for (const geometry of [dome.glass, ...galleries.glass]) geometry.dispose();
     // Drawn after the opaque hall, so the rails and the dome stay see-through.
-    glazing.renderOrder = 3;
-    scene.add(glazing);
-    trim.push(glazing);
+    const domeGlass = new Mesh(dome.glass, domeGlassMaterial);
+    domeGlass.renderOrder = 3;
+    scene.add(domeGlass);
+    trim.push(domeGlass);
+    if (galleries.glass.length) {
+      const glazing = new Mesh(mergeGeometries(galleries.glass.map((g) => (g.index ? g.toNonIndexed() : g))), glassMaterial);
+      for (const geometry of galleries.glass) geometry.dispose();
+      glazing.renderOrder = 3;
+      scene.add(glazing);
+      trim.push(glazing);
+    }
     if (galleries.decks.length) {
       const decks = new Mesh(mergeGeometries(galleries.decks), deckGlassMaterial);
       for (const geometry of galleries.decks) geometry.dispose();
@@ -2774,6 +2797,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     innerWallMaterial.dispose();
     gateFrameMaterial.dispose();
     glassMaterial.dispose();
+    domeGlassMaterial.dispose();
     deckGlassMaterial.dispose();
     colliderMaterial.dispose();
     for (const mesh of upper) mesh.geometry.dispose();

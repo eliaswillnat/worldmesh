@@ -1,4 +1,4 @@
-import { Group, Mesh, Object3D, type Vector3 } from 'three';
+import { Group, MathUtils, Mesh, Object3D, Vector3 } from 'three';
 import type { LoadedAvatar } from '../avatar/loader.js';
 import type { PlayerOptions } from '../types.js';
 import { setFigureStroke } from './stroke.js';
@@ -9,6 +9,13 @@ import {
   type AvatarExpression,
   type AvatarMotion,
 } from './avatar.js';
+
+/** Flying at full speed leans the body this far into the direction of travel, in radians. */
+const FLY_PITCH = 0.6;
+const FLY_ROLL = 0.45;
+/** Horizontal speed that gets that lean, in m/s (the default fly speed). Fast flying leans further, up to half again. */
+const FLY_LEAN_SPEED = 12;
+const FLY_LEAN_MAX = 1.5;
 
 export interface PlayerAvatarOptions extends PlayerOptions {
   height: number;
@@ -35,6 +42,11 @@ export class Player {
   /** The body the world started with, kept aside while an external avatar is shown. */
   private baseBody: Object3D | null = null;
   private external: LoadedAvatar | null = null;
+  /** Current flying lean: forward (pitch) and sideways (roll), eased. */
+  private leanPitch = 0;
+  private leanRoll = 0;
+  private pivot = new Vector3();
+  private turned = new Vector3();
 
   constructor(options: PlayerAvatarOptions) {
     this.height = options.height;
@@ -49,6 +61,8 @@ export class Player {
 
     this.root = new Group();
     this.root.name = 'worldmesh:player';
+    // Turn to face first, then lean in the body's own frame.
+    this.root.rotation.order = 'YXZ';
     this.isDefaultAvatar = !options.avatar;
 
     const body = options.avatar ?? createDefaultAvatar(options.height);
@@ -102,8 +116,12 @@ export class Player {
       this.facing += delta * (1 - Math.exp(-12 * motion.dt));
     }
     if (!this.root) return null;
-    this.root.position.copy(feet);
     this.root.rotation.y = this.facing;
+    this.lean(motion, currentHeight);
+    // Lean about the middle of the body, not the feet, so the head does not swing out.
+    this.pivot.set(0, currentHeight / 2, 0);
+    this.turned.copy(this.pivot).applyEuler(this.root.rotation);
+    this.root.position.copy(feet).add(this.pivot).sub(this.turned);
     if (this.external) {
       if (motion) this.external.animate(motion);
       return null;
@@ -113,6 +131,29 @@ export class Player {
       if (motion && this.baseBody) return animateDefaultAvatar(this.baseBody, motion);
     }
     return null;
+  }
+
+  /**
+   * Flying tips the body into its direction of travel, further the faster it
+   * goes: forward when flying ahead, sideways when strafing. Eases back upright
+   * on landing.
+   */
+  private lean(motion: AvatarMotion | undefined, currentHeight: number): void {
+    if (!this.root) return;
+    let pitch = 0;
+    let roll = 0;
+    if (motion?.flying && motion.heading !== undefined && currentHeight > 0) {
+      const delta = motion.heading - this.facing;
+      const amount = Math.min(FLY_LEAN_MAX, motion.speed / FLY_LEAN_SPEED);
+      // Positive x tips the head back and positive z tips it left, so ahead is negative.
+      pitch = -Math.cos(delta) * amount * FLY_PITCH;
+      roll = Math.sin(delta) * amount * FLY_ROLL;
+    }
+    const blend = motion ? 1 - Math.exp(-6 * motion.dt) : 1;
+    this.leanPitch = MathUtils.lerp(this.leanPitch, pitch, blend);
+    this.leanRoll = MathUtils.lerp(this.leanRoll, roll, blend);
+    this.root.rotation.x = this.leanPitch;
+    this.root.rotation.z = this.leanRoll;
   }
 
   setExpression(expression: AvatarExpression): void {

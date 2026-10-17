@@ -27,7 +27,9 @@ Optional, and only active when the world declares the matching ability:
 | --- | --- | --- |
 | `Space` in mid-air | Second jump | `doubleJump` |
 | `C` | Crouch (descend while flying) | `crouching` |
-| `F` | Toggle flight | `flying` |
+| `F`, or double-tap `Space` | Toggle flight; flying down onto the floor lands | `flying` |
+| `Shift` while flying | Descend | `flying` |
+| `Ctrl` + a move key, or double-tap `W` | Fly twice as fast, until you stop moving | `flying` |
 | `Q` | Dash | `dash` |
 
 ## Rules a world should not break

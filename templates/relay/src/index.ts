@@ -16,9 +16,9 @@ import { chatRejection } from './chatFilter';
  * visitors of the same space see each other.
  *
  * Protocol (JSON text frames):
- *   server → client  { t: 'welcome', id, peers: [{ id, p, r, e, n, a, g, k }] }
- *   client → server  { t: 's', p: [x, y, z], r: yaw, e?: expression, n?: username, a?: alias, g?: grounded, k?: '#rrggbb' }
- *   server → client  { t: 's', id, p, r, e, n, a, g?, k }   another peer moved ('' n and a = guest; g 1 on the ground, 0 in the air; '' k = default colour)
+ *   server → client  { t: 'welcome', id, peers: [{ id, p, r, e, n, a, g, k, h? }] }
+ *   client → server  { t: 's', p: [x, y, z], r: yaw, e?: expression, n?: username, a?: alias, g?: grounded, k?: '#rrggbb', h?: head pitch }
+ *   server → client  { t: 's', id, p, r, e, n, a, g?, k, h? }   another peer moved ('' n and a = guest; g 1 on the ground, 0 in the air; '' k = default colour; h radians up, absent = level)
  *   client → server  { t: 'c', m, l? }         a short line of chat, and the language the sender's device reads ('ja')
  *   server → client  { t: 'c', id, m, l? }     that line, for everyone else, who can offer to translate it
  *   server → client  { t: 'leave', id }        another peer left
@@ -106,6 +106,8 @@ interface Peer {
   g?: 0 | 1;
   /** Body colour, '#rrggbb', or '' for the default. */
   k: string;
+  /** How far the head tips up (radians, negative down) while they look around in first person; absent when level. */
+  h?: number;
   /** False until the peer has sent its first position. */
   seen: boolean;
   /** Last time this peer sent a chat line, so they cannot flood the room. */
@@ -172,6 +174,8 @@ const AVATAR_SIGNATURE = /^[A-Za-z0-9_-]{86}$/;
 const AVATAR_MIN_MS = 1000;
 /** Anything further than this from the origin is nonsense, not a position. */
 const MAX_COORD = 10_000;
+/** Head pitch is a look up or down, never a flip: a little over straight up. */
+const MAX_HEAD = 1.6;
 const EXPRESSION = /^[a-z]{1,16}$/;
 /** Same shape as workers/auth USERNAME_PATTERN. */
 const USERNAME = /^[a-z][a-z0-9_]{2,29}$/;
@@ -497,9 +501,9 @@ export class Room extends DurableObject<Env> {
       .map((ws) => ws.deserializeAttachment() as Peer | null)
       .filter((other): other is Peer => !!other?.seen);
     const avatars = await this.avatarsOf(seen);
-    const peers = seen.map(({ id, p, r, e, n, a, g, k }) => {
+    const peers = seen.map(({ id, p, r, e, n, a, g, k, h }) => {
       const v = avatars.get(id);
-      return { id, p, r, e, n: n ?? '', a: a ?? '', g, k: k ?? '', ...(v ? { v } : {}) };
+      return { id, p, r, e, n: n ?? '', a: a ?? '', g, k: k ?? '', h, ...(v ? { v } : {}) };
     });
     const now = Date.now();
     const objects = [...this.shared].map(([k, { v, at }]) => ({ k, v, ms: Math.max(0, now - at) }));
@@ -518,7 +522,7 @@ export class Room extends DurableObject<Env> {
     if (message.length > MAX_AVATAR_MESSAGE_BYTES) return;
     if ((ws.deserializeAttachment() as Peer | null)?.watch) return;
 
-    let data: { t?: unknown; p?: unknown; r?: unknown; e?: unknown; n?: unknown; a?: unknown; g?: unknown; k?: unknown; m?: unknown; u?: unknown; f?: unknown; i?: unknown; x?: unknown; s?: unknown };
+    let data: { t?: unknown; p?: unknown; r?: unknown; e?: unknown; n?: unknown; a?: unknown; g?: unknown; k?: unknown; h?: unknown; m?: unknown; u?: unknown; f?: unknown; i?: unknown; x?: unknown; s?: unknown };
     try {
       data = JSON.parse(message);
     } catch {
@@ -562,10 +566,11 @@ export class Room extends DurableObject<Env> {
     peer.a = typeof data.a === 'string' && ALIAS.test(data.a) ? data.a : '';
     peer.g = data.g === 0 || data.g === 1 ? data.g : undefined;
     peer.k = typeof data.k === 'string' && COLOR.test(data.k.toLowerCase()) ? data.k.toLowerCase() : '';
+    peer.h = typeof data.h === 'number' && Number.isFinite(data.h) && data.h !== 0 ? round(Math.max(-MAX_HEAD, Math.min(MAX_HEAD, data.h))) : undefined;
     peer.seen = true;
     ws.serializeAttachment(peer);
 
-    this.broadcast(JSON.stringify({ t: 's', id: peer.id, p: peer.p, r: peer.r, e: peer.e, n: peer.n ?? '', a: peer.a ?? '', g: peer.g, k: peer.k ?? '' }), ws);
+    this.broadcast(JSON.stringify({ t: 's', id: peer.id, p: peer.p, r: peer.r, e: peer.e, n: peer.n ?? '', a: peer.a ?? '', g: peer.g, k: peer.k ?? '', h: peer.h }), ws);
   }
 
   async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {

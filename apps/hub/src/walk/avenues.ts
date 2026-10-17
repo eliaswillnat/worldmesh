@@ -336,7 +336,7 @@ function dressBlock(faces: WallFace[], doors: Map<number, FacadeDoor[]>, out: Dr
  * Every block of the plan: walls, cornice and roof (solid), dressed as
  * storefronts (trim: a shade off the walls, so the piers and panels read
  * in any light), the lines of light (glow), a sign for each of the first `doors`
- * slots, and one collider per block (its walls and piers), so a step only
+ * slots, and one collider per block (its walls, roof and piers), so a step only
  * tests what is near it.
  */
 export function buildAvenues(
@@ -362,7 +362,8 @@ export function buildAvenues(
     const crown = blockOutline(block, plan.halfAvenue, CORNICE_OUT);
     solid.push(prismWalls(crown, BLOCK_HEIGHT - CORNICE_HEIGHT, BLOCK_HEIGHT));
     solid.push(prismRoof(crown, BLOCK_HEIGHT));
-    const own: BufferGeometry[] = [prismWalls(footprint, 0, BLOCK_HEIGHT)];
+    // The roof too, so someone flying over can land on it.
+    const own: BufferGeometry[] = [prismWalls(footprint, 0, BLOCK_HEIGHT), prismRoof(crown, BLOCK_HEIGHT)];
     dressBlock(blockFaces(block, plan.halfAvenue), byWall.get(`${block.ring}:${block.sector}`) ?? new Map(), { trim, glow, colliders: own, signs });
     colliders.push(mergeAll(own));
   }
