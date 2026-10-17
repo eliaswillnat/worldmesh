@@ -20,6 +20,8 @@ const EXACT = new Set([
   '/about.html',
   '/creators',
   '/creators.html',
+  '/music-credits',
+  '/music-credits.html',
   '/privacy',
   '/privacy.html',
   '/terms',
