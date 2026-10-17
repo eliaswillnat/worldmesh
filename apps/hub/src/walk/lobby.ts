@@ -858,6 +858,38 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     },
   });
   const feet = new Vector3();
+  const cameraRay = new Raycaster();
+  const cameraEye = new Vector3();
+  const cameraBack = new Vector3();
+  const faceNormal = new Vector3();
+  /**
+   * A world's doorway is open (walk in and you go through), so it is no
+   * collider and the camera's boom would pass it, stopping only at the
+   * backstop inside the wall: from there the door's face hides the figure.
+   * Pull the camera in to just this side of any door face behind them, as a
+   * wall would. Not for the door being walked through, which the camera follows.
+   */
+  function keepCameraOutOfDoorways(feet: Vector3): void {
+    // The boom runs from straight above the feet (the eye) back to the camera.
+    cameraBack.set(0, 0, 1).applyQuaternion(camera.quaternion);
+    const flat = cameraBack.x * cameraBack.x + cameraBack.z * cameraBack.z;
+    if (flat < 1e-4) return;
+    const boom = ((camera.position.x - feet.x) * cameraBack.x + (camera.position.z - feet.z) * cameraBack.z) / flat;
+    if (boom <= 0.05) return;
+    cameraEye.copy(camera.position).addScaledVector(cameraBack, -boom);
+    const faces: Mesh[] = [];
+    for (const door of doors.values()) if (!door.passable) faces.push(door.face);
+    cameraRay.set(cameraEye, cameraBack);
+    cameraRay.far = boom + 0.3;
+    for (const hit of cameraRay.intersectObjects(faces, false)) {
+      // Only from the hall side: a face seen from behind is past the wall anyway.
+      if (!hit.face || faceNormal.copy(hit.face.normal).transformDirection(hit.object.matrixWorld).dot(cameraBack) > 0) continue;
+      // Like the camera rig: 0.3 short of the surface, but never past it, however close they stand.
+      const pulled = Math.max(hit.distance - 0.3, hit.distance * 0.5);
+      if (pulled < boom) camera.position.copy(cameraEye).addScaledVector(cameraBack, pulled);
+      return;
+    }
+  }
   /**
    * The visitor's character (Avatar Wallet), shown in the lobby as well, so
    * the figure walking through a door is already the one the world shows.
@@ -1103,6 +1135,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         if (!warping && !emerging && door.contains(x, z)) enter(door);
       }
       walkThrough.update();
+      if (world.getViewMode() === 'third' && !renderer.xr.isPresenting) keepCameraOutOfDoorways(feet.set(x, y, z));
       let near: Door | null = null;
       let nearest = EMPTY_DOOR_REACH;
       for (const door of [...emptyDoors, ...galleryDoors]) {

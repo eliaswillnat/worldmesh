@@ -276,6 +276,8 @@ export class Door {
   private backstop: Mesh<PlaneGeometry, MeshBasicMaterial>;
   /** Solid parts: the frame, and the backstop behind the doorway. */
   readonly blockers: Mesh[];
+  /** Being walked through right now (setPassable): the camera may follow into the doorway. */
+  passable = false;
   private geometries: BufferGeometry[] = [];
   private label: Mesh<PlaneGeometry, MeshBasicMaterial>;
   private drawLabel: (light: boolean) => void;
@@ -527,6 +529,7 @@ export class Door {
    * (walkThrough), instead of the backstop stopping them just inside it.
    */
   setPassable(passable: boolean): void {
+    this.passable = passable;
     this.backstop.position.z = passable ? -PASSABLE_BACKSTOP : -(REACH + 0.08);
     this.backstop.updateMatrixWorld();
   }
