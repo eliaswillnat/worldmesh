@@ -46,6 +46,7 @@ edited in the dashboard.
 | `ALLOWED_ORIGINS` | | The only worlds served, written like `OWN_ORIGINS`. Empty: every world. |
 | `NAMED_ROOMS` | | Named rooms (`/room/<name>`), e.g. `lobby` for a city's own lobby. |
 | `MAX_ROOM_PEERS` | `64` | People at once in one named room. |
+| `VOICE` | `off` | `on`: push-to-talk voice for worlds that turn it on (`voice: true` on `Presence`), handed only to people within 45 m of whoever is talking. 16 KB a second per talker while they hold the button. |
 
 `JOIN_LIMIT` and `READ_LIMIT` limit joins and occupancy reads per IP address.
 

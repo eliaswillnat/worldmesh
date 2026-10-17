@@ -1,5 +1,5 @@
 import { CanvasTexture, Group, Mesh, MeshBasicMaterial, Sprite, SpriteMaterial, Vector3, type Object3D, type Scene } from 'three';
-import { Footsteps } from '../audio/footsteps.js';
+import { Footsteps, sharedAudio } from '../audio/footsteps.js';
 import { parseAvatarShare, type SignedAvatarShare } from '../avatar/descriptor.js';
 import { loadAvatarModel, type LoadedAvatar } from '../avatar/loader.js';
 import { animateDefaultAvatar, createDefaultAvatar, setAvatarColor, setAvatarExpression } from '../player/avatar.js';
@@ -7,6 +7,8 @@ import { setFigureStroke } from '../player/stroke.js';
 import type { NetworkAdapter, PeerBody, PlayerState, WorldMeshHandle } from '../types.js';
 import { easeYaw } from './follow.js';
 import { isRoomFullSignal, probeRoom } from './roomFull.js';
+import { Microphone, VoiceStream, type MicState } from './voice.js';
+import { readVoiceFrame } from './voiceCodec.js';
 
 /** The relay WorldMesh hosts (workers/presence). Worlds can point at their own. */
 export const DEFAULT_PRESENCE_SERVER = 'wss://relay.worldmesh.net';
@@ -74,6 +76,16 @@ export interface PresenceOptions {
    * platform, which they reported a moment ago from a little lower down.
    */
   place?: (position: Vector3, grounded: boolean) => void;
+  /**
+   * Push-to-talk: hear everyone nearby who holds their talk button, from
+   * where they stand, and let this visitor talk with `talk()`. Off by
+   * default. Needs a relay that carries voice (`VOICE = "on"`); on one that
+   * does not, `talk()` reports 'unavailable'. Voices are heard from
+   * `listener` when set, otherwise from the camera.
+   */
+  voice?: boolean;
+  /** Where this visitor's own push-to-talk stands, for the button that drives it. */
+  onMic?: (state: MicState) => void;
 }
 
 /** An avatar as it goes to everyone else in the room: a link the hub signed. */
@@ -131,6 +143,10 @@ interface Remote {
   /** What they just said, stuck above their head until it runs out. */
   bubble: Sprite | null;
   bubbleLeft: number;
+  /** Their voice, once they have talked within earshot. */
+  voice: VoiceStream | null;
+  /** Sound bars over their head while their voice comes through. */
+  talkIcon: Sprite | null;
 }
 
 /**
@@ -170,7 +186,7 @@ interface WireAvatar {
 }
 
 type ServerMessage =
-  | { t: 'welcome'; id: string; peers: (PeerState & { id: string })[]; objects?: { k: string; v: unknown; ms: number }[] }
+  | { t: 'welcome'; id: string; peers: (PeerState & { id: string })[]; objects?: { k: string; v: unknown; ms: number }[]; voice?: number }
   | ({ t: 'v'; id: string } & WireAvatar)
   | { t: 'o'; id: string; k: string; v: unknown }
   | ({ t: 's'; id: string } & PeerState)
@@ -211,6 +227,12 @@ export class Presence implements NetworkAdapter {
   private keptAvatars = new WeakMap<Object3D, LoadedAvatar>();
   /** The world this draws into, once attached: avatars are readied for its renderer before they go on. */
   private world: WorldMeshHandle | null = null;
+  /** This visitor's microphone, from the first press of the talk button. */
+  private mic: Microphone | null = null;
+  /** The relay said in its welcome that it carries voice. */
+  private voiceRelayed = false;
+  private readonly heard = new Vector3();
+  private readonly voiceAt = new Vector3();
 
   readonly url: string;
   private onCount: (count: number | null) => void;
@@ -228,6 +250,8 @@ export class Presence implements NetworkAdapter {
   private listener: (() => Vector3 | null) | null;
   private onShared: NonNullable<PresenceOptions['onShared']>;
   private place: PresenceOptions['place'];
+  private voice: boolean;
+  private onMic: (state: MicState) => void;
 
   constructor(options: PresenceOptions) {
     this.url = options.url;
@@ -246,6 +270,8 @@ export class Presence implements NetworkAdapter {
     this.listener = options.listener ?? null;
     this.onShared = options.onShared ?? (() => {});
     this.place = options.place;
+    this.voice = options.voice === true;
+    this.onMic = options.onMic ?? (() => {});
     this.group.name = 'worldmesh:remote-players';
     options.scene.add(this.group);
   }
@@ -317,6 +343,29 @@ export class Presence implements NetworkAdapter {
   }
 
   /**
+   * Press (true) and let go of (false) the talk button. While it is held,
+   * everyone nearby hears this visitor's microphone; nothing goes out
+   * otherwise. The first press asks the browser for the microphone. Needs
+   * `voice: true`; `onMic` says how it is going.
+   */
+  talk(held: boolean): void {
+    if (!this.voice || this.closed) return;
+    if (held && this.welcomed && !this.voiceRelayed) {
+      this.onMic('unavailable');
+      return;
+    }
+    this.mic ??= new Microphone((frame) => this.sendVoice(frame), (state) => this.onMic(state));
+    this.mic.hold(held);
+  }
+
+  private sendVoice(frame: Uint8Array): void {
+    const socket = this.socket;
+    // The relay takes voice only from someone it has seen standing somewhere.
+    if (!socket || socket.readyState !== WebSocket.OPEN || !this.selfId || !this.stateSent || !this.voiceRelayed) return;
+    socket.send(frame);
+  }
+
+  /**
    * Set shared state everyone in the room sees, e.g. where a lift is going.
    * Values are flat objects of numbers. The write comes back through
    * `onShared` like everyone else's. False when not connected.
@@ -372,6 +421,8 @@ export class Presence implements NetworkAdapter {
         remote.steps.update(dt, remote.speed, remote.grounded, footfall, remote.vertical);
       }
 
+      if (remote.voice) this.placeVoice(remote);
+
       if (remote.bubble) {
         remote.bubbleLeft -= dt;
         remote.bubble.material.opacity = remote.bubbleLeft < 1 ? Math.max(0, remote.bubbleLeft) : 1;
@@ -404,6 +455,8 @@ export class Presence implements NetworkAdapter {
 
   detach(): void {
     this.closed = true;
+    this.mic?.dispose();
+    this.mic = null;
     window.clearTimeout(this.reconnectTimer);
     window.removeEventListener('pagehide', this.handlePageHide);
     window.removeEventListener('pageshow', this.handlePageShow);
@@ -425,6 +478,7 @@ export class Presence implements NetworkAdapter {
     }
     this.socket = socket;
     this.welcomed = false;
+    if (this.voice) socket.binaryType = 'arraybuffer';
 
     listenForHandshakeRefuse(socket, (signal) => {
       if (this.socket !== socket || this.welcomed) return;
@@ -432,7 +486,10 @@ export class Presence implements NetworkAdapter {
     });
 
     socket.addEventListener('message', (event) => {
-      if (typeof event.data !== 'string') return;
+      if (typeof event.data !== 'string') {
+        if (this.voice && event.data instanceof ArrayBuffer) this.hear(event.data);
+        return;
+      }
       let message: ServerMessage;
       try {
         message = JSON.parse(event.data) as ServerMessage;
@@ -537,6 +594,7 @@ export class Presence implements NetworkAdapter {
         this.stateSent = false;
         this.avatarSent = null;
         this.avatarSentAt = 0;
+        this.voiceRelayed = message.voice === 1;
         this.leaveFull();
         for (const peer of message.peers) {
           if (peer.v) this.pendingAvatars.set(peer.id, peer.v);
@@ -570,6 +628,7 @@ export class Presence implements NetworkAdapter {
           remote.avatarLoad = null;
           if (kept) {
             dropBubble(remote);
+            dropVoice(remote);
             if (remote.external) this.keptAvatars.set(remote.root, remote.external);
           } else disposeRemote(remote);
         }
@@ -626,6 +685,8 @@ export class Presence implements NetworkAdapter {
         appear: 0,
         bubble: null,
         bubbleLeft: 0,
+        voice: null,
+        talkIcon: null,
       };
       this.remotes.set(id, remote);
       setFigureOpacity(root, 0);
@@ -664,6 +725,46 @@ export class Presence implements NetworkAdapter {
       remote.root.position.copy(remote.target);
       remote.yaw = yaw;
     }
+  }
+
+  /** A frame of someone's voice, handed on by the relay because they are within earshot. */
+  private hear(data: ArrayBuffer): void {
+    const frame = readVoiceFrame(data);
+    if (!frame || frame.id === this.selfId) return;
+    const remote = this.remotes.get(frame.id);
+    if (!remote) return;
+    if (!remote.voice) {
+      const audio = sharedAudio();
+      if (!audio) return;
+      remote.voice = new VoiceStream(audio.context);
+    }
+    remote.voice.play(frame.samples);
+  }
+
+  /** Their voice from where they stand this frame, and the sound bars over them while it comes through. */
+  private placeVoice(remote: Remote): void {
+    const voice = remote.voice!;
+    const camera = this.world?.camera ?? null;
+    const heard = this.listener?.() ?? (camera ? camera.getWorldPosition(this.heard) : null);
+    const position = remote.root.position;
+    let pan = 0;
+    if (camera) {
+      // Sideways from where the camera looks: their voice comes from that side.
+      const local = this.voiceAt.copy(position).applyMatrix4(camera.matrixWorldInverse);
+      pan = (local.x / Math.max(1, Math.hypot(local.x, local.z))) * 0.8;
+    }
+    voice.place(heard ? voiceLoudness(heard, position) : 1, pan);
+
+    const talking = performance.now() - voice.heardAt < TALKING_MS;
+    if (talking && !remote.talkIcon) {
+      remote.talkIcon = createTalkIcon();
+      remote.talkIcon.position.y = TAG_HEIGHT + 0.16;
+      remote.root.add(remote.talkIcon);
+    }
+    const icon = remote.talkIcon;
+    if (!icon) return;
+    icon.visible = talking;
+    if (talking) icon.scale.setScalar(TALK_ICON_SIZE * (1 + voice.level * 0.25));
   }
 
   private clearRemotes(): void {
@@ -767,6 +868,7 @@ export class Presence implements NetworkAdapter {
   // Leave the room promptly when the tab navigates away (e.g. through a door),
   // and rejoin if the browser restores the page from its back/forward cache.
   private handlePageHide = (): void => {
+    this.mic?.hold(false);
     window.clearTimeout(this.reconnectTimer);
     this.disconnect();
   };
@@ -801,6 +903,7 @@ function takeOffAvatar(remote: Remote): void {
 }
 
 function disposeRemote(remote: Remote): void {
+  dropVoice(remote);
   remote.avatarLoad?.abort();
   remote.avatarLoad = null;
   takeOffAvatar(remote);
@@ -931,6 +1034,48 @@ function dropBubble(remote: Remote): void {
   remote.bubble = null;
 }
 
+/** Stop playing someone's voice and take the sound bars off them. */
+function dropVoice(remote: Remote): void {
+  remote.voice?.dispose();
+  remote.voice = null;
+  const icon = remote.talkIcon;
+  if (!icon) return;
+  icon.material.map?.dispose();
+  icon.material.dispose();
+  icon.removeFromParent();
+  remote.talkIcon = null;
+}
+
+/** Someone counts as talking this long after their last frame. */
+const TALKING_MS = 300;
+/** Width and height of the sound bars over someone talking, in metres. */
+const TALK_ICON_SIZE = 0.24;
+
+/** Sound bars in a dark disc, like the name tag. Its bottom edge sits at the sprite's position. */
+function createTalkIcon(): Sprite {
+  const size = 96;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const context = canvas.getContext('2d')!;
+  context.fillStyle = 'rgba(0, 0, 0, 0.55)';
+  context.beginPath();
+  context.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+  context.fill();
+  context.fillStyle = '#ffffff';
+  const bar = 10;
+  for (const [x, height] of [[27, 28], [48, 48], [69, 28]]) {
+    context.beginPath();
+    context.roundRect(x - bar / 2, (size - height) / 2, bar, height, bar / 2);
+    context.fill();
+  }
+  const sprite = new Sprite(new SpriteMaterial({ map: new CanvasTexture(canvas), depthWrite: false, transparent: true }));
+  sprite.scale.setScalar(TALK_ICON_SIZE);
+  sprite.center.set(0.5, 0);
+  sprite.name = 'worldmesh:talking';
+  return sprite;
+}
+
 /** A white speech bubble. One line, cut off if they wrote a novel. Its bottom edge sits at the sprite's position. */
 export function createSpeechBubble(text: string): Sprite {
   const scale = 2;
@@ -1009,6 +1154,20 @@ function earshot(listener: Vector3 | null, source: Vector3): number {
   // Eased to zero at the edge so walking out of earshot does not cut a step off.
   const edge = 1 - distance / EARSHOT;
   return (1 / (1 + distance / 8)) * Math.min(1, edge * 4);
+}
+
+/**
+ * Voices carry this far, in metres. The relay hands them on a little further
+ * (VOICE_RANGE in templates/relay), so they fade out here rather than cut off.
+ */
+const VOICE_EARSHOT = 40;
+
+/** How loud someone talking at `source` is to a listener: full within 4 m, half at 16 m, nothing past earshot. */
+function voiceLoudness(listener: Vector3, source: Vector3): number {
+  const distance = listener.distanceTo(source);
+  if (distance >= VOICE_EARSHOT) return 0;
+  const edge = 1 - distance / VOICE_EARSHOT;
+  return (1 / (1 + Math.max(0, distance - 4) / 12)) * Math.min(1, edge * 4);
 }
 
 function disposeObject(root: Object3D): void {

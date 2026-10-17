@@ -39,6 +39,9 @@
       "MAX_ROOM_PEERS": {
         "description": "People at once in one named room. Default `64`."
       },
+      "VOICE": {
+        "description": "`on`: push-to-talk voice, handed only to people standing near whoever is talking. `off`: none."
+      },
       "JOIN_LIMIT": {
         "description": "WebSocket joins per IP address per minute."
       },

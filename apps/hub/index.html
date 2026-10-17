@@ -1272,6 +1272,63 @@
         html.walking .walk-chat-btn { display: flex; align-items: center; justify-content: center; }
         html.chatting .walk-chat-btn { display: none; }
       }
+      /* Push-to-talk on touch: hold it, above the chat button. Red while your voice goes out. */
+      .walk-talk-btn {
+        display: none;
+        position: fixed;
+        bottom: calc(max(16px, env(safe-area-inset-bottom)) + 200px);
+        left: max(16px, env(safe-area-inset-left));
+        width: 48px; height: 48px;
+        border-radius: 50%;
+        border: 1.5px solid rgba(255, 255, 255, 0.32);
+        background: rgba(0, 0, 0, 0.35);
+        color: #fff;
+        cursor: pointer;
+        z-index: 4;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-touch-callout: none;
+        -webkit-tap-highlight-color: transparent;
+        backdrop-filter: blur(6px);
+        -webkit-backdrop-filter: blur(6px);
+      }
+      .walk-talk-btn svg { width: 22px; height: 22px; flex: none; display: block; }
+      .walk-talk-btn.held { background: rgba(255, 255, 255, 0.22); transform: scale(0.92); }
+      .walk-talk-btn.held[data-mic="live"] { background: #e5484d; border-color: #e5484d; }
+      @media (pointer: coarse) {
+        html.walking .walk-talk-btn { display: flex; align-items: center; justify-content: center; }
+        html.chatting .walk-talk-btn { display: none; }
+      }
+      html.walking[data-walk-theme="light"] .walk-talk-btn:not(.held) { background: rgba(8, 11, 16, 0.65); }
+      /* Over your own head while you talk: sound bars, or a short note when the microphone cannot. */
+      .walk-talk {
+        position: absolute;
+        z-index: 3;
+        transform: translate(-50%, -100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        min-width: 36px;
+        height: 36px;
+        box-sizing: border-box;
+        padding: 0 12px;
+        border-radius: 18px;
+        color: #fff;
+        background: rgba(0, 0, 0, 0.55);
+        font: 600 14px/1 "Urbanist", ui-sans-serif, system-ui, sans-serif;
+        white-space: nowrap;
+        pointer-events: none;
+        opacity: 0;
+      }
+      .walk-talk.visible { opacity: 1; }
+      .walk-talk[data-mic="live"] { padding: 0 11px; }
+      .walk-talk span { width: 4px; height: 14px; border-radius: 2px; background: #fff; animation: walk-talk-bar 0.9s ease-in-out infinite; }
+      .walk-talk span:nth-child(2) { height: 20px; animation-delay: -0.3s; }
+      .walk-talk span:nth-child(3) { animation-delay: -0.6s; }
+      @keyframes walk-talk-bar { 50% { transform: scaleY(0.45); } }
+      @media (prefers-reduced-motion: reduce) { .walk-talk span { animation: none; } }
       /* Typing must not count as pausing, so the click-to-enter panel stays hidden. */
       html.chatting .wm-lock { display: none !important; }
       html.walking[data-walk-theme="light"] .walk-add-prompt {

@@ -152,6 +152,16 @@ Peer-to-peer WebRTC was considered and left out: it still needs a server to
 introduce peers, relays some traffic anyway, does not scale past a handful of
 people, and shows every visitor everyone else's IP address.
 
+Push-to-talk voice (the hub lobby: hold `T`, or the mic button on touch)
+goes the same way, through the relay, for the same reason. While the button
+is held, the runtime sends 80 ms frames of 16 kHz μ-law up the presence
+socket (`src/net/voice.ts`, `src/net/voiceCodec.ts`): 16 KB a second, nothing
+otherwise, and no codec the browser has to support. The relay hands each
+frame only to people within 45 m of the speaker, who hear it from where the
+speaker stands. A relay carries voice only with `VOICE = "on"` (the lobby's
+does; the free relay for worlds does not), and a world turns it on with
+`voice: true` on `Presence`.
+
 ### The overlay lives in the runtime
 
 The click-to-enter panel, the control legend, the crosshair, the interact

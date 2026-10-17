@@ -32,6 +32,12 @@ import { chatRejection } from './chatFilter';
  *
  *   client → server  'ping'                    keep-alive while standing still; the room answers 'pong' without waking up
  *
+ * Push-to-talk voice (only with VOICE = "on"; the welcome then carries `voice: 1`), binary frames:
+ *   client → server  [1, ...samples]                      80 ms of 16 kHz μ-law while the talk button is held
+ *   server → client  [1, ...id (8 ASCII bytes), ...samples]   the same, from a peer within VOICE_RANGE metres
+ *   Nothing is stored or listened to; frames go only to people standing near enough to hear them.
+ *   The runtime's side is packages/runtime/src/net/voiceCodec.ts.
+ *
  * Shared state is the one thing the room remembers: the latest value per key,
  * so someone walking in sees the lift where everyone else does. Sending it
  * back to the sender too gives every client the same order of writes, so two
@@ -68,6 +74,8 @@ interface Env {
   MAX_WORLD_PEERS?: string;
   /** People at once in one named room, such as the hub lobby. Unset or not a positive whole number: 64. */
   MAX_ROOM_PEERS?: string;
+  /** "on": hand push-to-talk voice on to people nearby. Anything else: voice frames are dropped. */
+  VOICE?: string;
   /** Per-IP limits on WebSocket joins and on plain reads (occupancy, full probes). */
   JOIN_LIMIT?: RateLimit;
   READ_LIMIT?: RateLimit;
@@ -160,6 +168,16 @@ const SHARED_KEY = /^[a-z0-9:_-]{1,32}$/;
 const MAX_SHARED_KEYS = 32;
 /** Shortest gap between two shared-state writes from one peer. */
 const SHARED_MIN_MS = 80;
+/** First byte of a voice frame, and the sender id put after it (packages/runtime/src/net/voiceCodec.ts). */
+const VOICE_KIND = 1;
+const VOICE_ID_BYTES = 8;
+/** A frame is 1281 bytes; anything much bigger is not one. */
+const MAX_VOICE_BYTES = 2048;
+/** Voice goes to people this many metres from the speaker at most. Clients fade it out a little closer (40 m). */
+const VOICE_RANGE = 45;
+/** One talker is 16 KB a second; a little over that is allowed for frames arriving in clumps. */
+const VOICE_BYTES_PER_S = 20_000;
+const VOICE_BURST_BYTES = 8_000;
 /** Public occupancy reads are counts only; never peer names. */
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -420,6 +438,8 @@ export class Room extends DurableObject<Env> {
   private activeAt = 0;
   private pendingActiveMs = 0;
   private flushedAt = 0;
+  /** Voice each socket may still send right now, in bytes, and when that was worked out. Forgotten when the room sleeps, which is fine. */
+  private voiceBudget = new WeakMap<WebSocket, { bytes: number; at: number }>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -457,13 +477,18 @@ export class Room extends DurableObject<Env> {
     });
     const now = Date.now();
     const objects = [...this.shared].map(([k, { v, at }]) => ({ k, v, ms: Math.max(0, now - at) }));
-    server.send(JSON.stringify({ t: 'welcome', id: peer.id, peers, objects }));
+    const voice = this.env.VOICE === 'on' ? { voice: 1 } : {};
+    server.send(JSON.stringify({ t: 'welcome', id: peer.id, peers, objects, ...voice }));
 
     return new Response(null, { status: 101, webSocket: client });
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
-    if (typeof message !== 'string' || message.length > MAX_AVATAR_MESSAGE_BYTES) return;
+    if (typeof message !== 'string') {
+      if (this.env.VOICE === 'on') await this.relayVoice(ws, message);
+      return;
+    }
+    if (message.length > MAX_AVATAR_MESSAGE_BYTES) return;
 
     let data: { t?: unknown; p?: unknown; r?: unknown; e?: unknown; n?: unknown; a?: unknown; g?: unknown; k?: unknown; m?: unknown; u?: unknown; f?: unknown; i?: unknown; x?: unknown; s?: unknown };
     try {
@@ -621,6 +646,46 @@ export class Room extends DurableObject<Env> {
     peer.chatAt = now;
     ws.serializeAttachment(peer);
     this.broadcast(JSON.stringify({ t: 'c', id: peer.id, m: text }), ws);
+  }
+
+  /**
+   * A frame of someone talking, handed on with their id to everyone standing
+   * within VOICE_RANGE of them. Never stored, never looked into beyond its
+   * first byte; at most one person's worth of voice a second per socket.
+   */
+  private async relayVoice(ws: WebSocket, message: ArrayBuffer): Promise<void> {
+    const bytes = new Uint8Array(message);
+    if (bytes.length < 2 || bytes.length > MAX_VOICE_BYTES || bytes[0] !== VOICE_KIND) return;
+    const peer = ws.deserializeAttachment() as Peer | null;
+    if (!peer?.seen) return;
+
+    const now = Date.now();
+    const budget = this.voiceBudget.get(ws) ?? { bytes: VOICE_BURST_BYTES, at: now };
+    budget.bytes = Math.min(VOICE_BURST_BYTES, budget.bytes + ((now - budget.at) / 1000) * VOICE_BYTES_PER_S);
+    budget.at = now;
+    this.voiceBudget.set(ws, budget);
+    if (budget.bytes < bytes.length) return;
+    budget.bytes -= bytes.length;
+    await this.countActivity();
+
+    const frame = new Uint8Array(1 + VOICE_ID_BYTES + bytes.length - 1);
+    frame[0] = VOICE_KIND;
+    frame.fill(0x20, 1, 1 + VOICE_ID_BYTES);
+    frame.set(new TextEncoder().encode(peer.id).subarray(0, VOICE_ID_BYTES), 1);
+    frame.set(bytes.subarray(1), 1 + VOICE_ID_BYTES);
+    const [x, y, z] = peer.p;
+    for (const socket of this.ctx.getWebSockets()) {
+      if (socket === ws) continue;
+      const other = socket.deserializeAttachment() as Peer | null;
+      if (!other?.seen) continue;
+      const [ox, oy, oz] = other.p;
+      if (Math.hypot(ox - x, oy - y, oz - z) > VOICE_RANGE) continue;
+      try {
+        socket.send(frame);
+      } catch {
+        // The socket is closing; its own close handler cleans up.
+      }
+    }
   }
 
   /**
