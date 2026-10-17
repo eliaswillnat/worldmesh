@@ -16,6 +16,11 @@ export class Arrival {
   private current: Object3D | null = null;
   private time = 0;
 
+  /** The warp has not finished yet. */
+  get running(): boolean {
+    return this.target !== null;
+  }
+
   /** Arrive as whatever figure `figure` returns (it may still be loading: it is asked again each frame). */
   start(figure: () => Object3D | null): void {
     this.target = figure;
