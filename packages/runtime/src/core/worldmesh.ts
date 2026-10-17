@@ -37,11 +37,12 @@ const DEFAULT_HUB = 'https://worldmesh.net/';
 const FOV_RETURN = 1.5;
 /**
  * Set by a host that draws the world live in one of its doorways (Doorway,
- * docs/specs/doorway.md §3.1). The world stays offline, shows no UI, takes no
- * input, and draws only when the host sends a camera (`doorway:view`), from
- * that camera carried through the doorway onto its spawn point. When the
- * visitor walks through (`doorway:enter`), it takes over from their pose
- * and goes online, without reloading (§4).
+ * docs/specs/doorway.md §3.1). The world only watches its room (everyone in
+ * it is drawn, nobody sees the visitor), shows no UI, takes no input, and
+ * draws only when the host sends a camera (`doorway:view`), from that camera
+ * carried through the doorway onto its spawn point. When the visitor walks
+ * through (`doorway:enter`), it takes over from their pose and joins the
+ * room, without reloading (§4).
  */
 export const DOORWAY_VIEW_PARAM = 'doorway-view';
 /** Metres from the doorway back to the spawn point in a live view, and where a walk-in lands. */
@@ -224,16 +225,30 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   const viewStart = performance.now();
   /** The host's latest view, not drawn yet. */
   let pendingView: DoorwayView | null = null;
-  if (viewing) serveDoorwayView();
-  else goOnline();
+  if (viewing) {
+    serveDoorwayView();
+    watchOnline();
+  } else goOnline();
 
   if (!viewing) startAvatar();
   if (vrEnabled && !viewing) void offerVr();
 
   return handle;
 
+  /**
+   * Live doorway view: watch the room, so the people in it show through the
+   * doorway, without joining it. Walked into, goOnline joins on the same
+   * connection. A world's own network adapter waits for the walk-in.
+   */
+  function watchOnline(): void {
+    if (options.network) return;
+    network = createMultiplayer(true);
+    network?.attach(handle);
+  }
+
   function goOnline(): void {
-    network = options.network ?? createMultiplayer();
+    const watched = network instanceof Presence && network.watching ? network : null;
+    if (!watched) network = options.network ?? createMultiplayer();
     if (network instanceof Presence) {
       const presence = network;
       presence.setOnFull((full) => {
@@ -244,13 +259,14 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
         events.emit('room:full', { full });
       });
     }
-    network?.attach(handle);
+    if (watched) watched.join();
+    else network?.attach(handle);
     const bodies = network?.bodies?.bind(network);
     if (bodies) controller.bodies = () => bodies();
   }
 
   /**
-   * Drawn live in a host's doorway (DOORWAY_VIEW_PARAM): offline, no overlay,
+   * Drawn live in a host's doorway (DOORWAY_VIEW_PARAM): only watching, no overlay,
    * no input, no body of its own (the visitor's is in the host). The world
    * keeps running (water, animations) and draws, once a frame, the latest
    * view the host sent; none sent, nothing drawn. Ready once the player has
@@ -803,12 +819,13 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     cameraRig.resize(width, viewHeight);
   }
 
-  function createMultiplayer(): Presence | undefined {
+  function createMultiplayer(watch = false): Presence | undefined {
     if (!options.multiplayer) return undefined;
     const server = (options.multiplayer === true ? undefined : options.multiplayer.server) ?? DEFAULT_PRESENCE_SERVER;
     return new Presence({
       url: `${server.replace(/\/$/, '')}/world`,
       scene,
+      watch,
       onCount: (count) => events.emit('players', { count }),
       getAvatar: () => sharedAvatar.get(),
       // Other players' avatars are shown only from links this world's hub signed.

@@ -199,7 +199,7 @@ export interface WorldMeshEvents {
   'vr:exit': Record<string, never>;
 }
 
-/** Someone else's body, an upright cylinder the local player cannot walk through. */
+/** Someone else's body, an upright cylinder the local player cannot walk through and can stand on. */
 export interface PeerBody {
   /** Feet position in world space. */
   x: number;

@@ -1916,7 +1916,8 @@
       html.walking .wm-lock .wm-lock-cta,
       html.walking .wm-lock .walk-pause-actions .walk-gallery,
       html.walking .wm-lock .walk-pause-actions .walk-discord,
-      html.walking .wm-lock .walk-pause-actions .walk-private {
+      html.walking .wm-lock .walk-pause-actions .walk-private,
+      html.walking .wm-lock .walk-pause-actions .walk-music {
         box-sizing: border-box;
         width: var(--pause-w);
         height: var(--pause-h);
@@ -1942,7 +1943,8 @@
       }
       html.walking .wm-lock .walk-pause-actions .walk-gallery:hover,
       html.walking .wm-lock .walk-pause-actions .walk-discord:hover,
-      html.walking .wm-lock .walk-pause-actions .walk-private:hover {
+      html.walking .wm-lock .walk-pause-actions .walk-private:hover,
+      html.walking .wm-lock .walk-pause-actions .walk-music:hover {
         background: var(--pause-hover);
         border-color: var(--pause-fg);
       }
@@ -1963,6 +1965,21 @@
         transform: none;
       }
       html.walking .wm-lock .walk-pause-actions { gap: 10px; margin-top: 0; }
+      /* Music off: the switch dims; the song (or the credits link) sits just beneath it. */
+      html.walking .wm-lock .walk-pause-actions .walk-music[aria-pressed="false"] { opacity: 0.6; }
+      html.walking .wm-lock .walk-pause-actions .walk-now-playing {
+        max-width: var(--pause-w);
+        margin-top: -4px;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        font: 500 12px/1.4 "Urbanist", ui-sans-serif, system-ui, sans-serif;
+        color: var(--pause-fg);
+        opacity: 0.7;
+        text-decoration: none;
+      }
+      html.walking .wm-lock .walk-pause-actions .walk-now-playing:hover,
+      html.walking .wm-lock .walk-pause-actions .walk-now-playing:focus-visible { opacity: 1; text-decoration: underline; }
       html.walking .wm-lock .walk-pause-actions .walk-private svg { width: 18px; height: 18px; }
       html.walking .wm-lock .walk-pause-actions .walk-private[aria-pressed="true"] {
         color: #bfe9ff;
@@ -2220,7 +2237,7 @@
       <ul class="card-grid" id="demo-worlds"></ul>
 
       <footer>
-        <a href="/about">About</a> · <a href="/protocol">Protocol</a> · <a href="/build-a-city">Build a city</a> · <a href="/creators">Connect your world</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="https://discord.gg/cJYFfyVheP" target="_blank" rel="noopener noreferrer">Discord</a>
+        <a href="/about">About</a> · <a href="/protocol">Protocol</a> · <a href="/build-a-city">Build a city</a> · <a href="/creators">Connect your world</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="/music-credits">Music credits</a> · <a href="https://discord.gg/cJYFfyVheP" target="_blank" rel="noopener noreferrer">Discord</a>
       </footer>
     </main>
     <script type="module" src="/src/main.ts"></script>

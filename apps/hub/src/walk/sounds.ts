@@ -1,7 +1,7 @@
 let context: AudioContext | null = null;
 
-/** The lobby's one audio context, made on first use and woken if the browser suspended it. */
-function audio(): AudioContext | null {
+/** The lobby's one audio context, made on first use and woken if the browser suspended it. Shared with the lobby music. */
+export function audio(): AudioContext | null {
   if (typeof AudioContext === 'undefined') return null;
   if (!context) {
     context = new AudioContext();

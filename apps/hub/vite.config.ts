@@ -35,5 +35,9 @@ export default defineConfig({
   // build output so edits show up with `npm run dev:runtime` watching.
   resolve: { dedupe: ['three'] },
   optimizeDeps: { exclude: ['@worldmesh/runtime'] },
-  build: { target: 'es2022' },
+  build: {
+    target: 'es2022',
+    // /music-credits is built from src/music/tracks.ts, so it is a page of its own here, not in public/.
+    rolldownOptions: { input: { main: 'index.html', 'music-credits': 'music-credits.html' } },
+  },
 });
