@@ -145,7 +145,9 @@ nothing.
   small worlds can try multiplayer without a server. Its limits:
   - **16 people per world** at once (64 in the hub lobby, which has its own
     relay). Visitors past that see a full-screen “World is full” / “Lobby is
-    full” overlay instead of joining silently alone.
+    full” overlay instead of joining silently alone. Hub visitors watching
+    through a live door don't count: up to 32 watch each room besides its
+    people, unseen and sending nothing.
   - **240 active minutes per world per day** (UTC). Minutes count only while
     someone in the room is moving; empty rooms and people standing still
     count nothing. Past that, people already in the world stay, new visitors
