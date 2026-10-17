@@ -20,9 +20,9 @@ export interface PresenceOptions {
   /**
    * Only watch the room: draw everyone in it without joining. Nobody sees
    * this visitor, it takes no one's place, and it sends nothing (a live
-   * doorway view). Everyone is drawn in the default body, with no avatar
-   * downloads. `join()` makes it an ordinary member. Relays too old to know
-   * watching are left alone, rather than joined as an invisible peer.
+   * doorway view). Everyone is drawn as they are, avatars included.
+   * `join()` makes it an ordinary member. Relays too old to know watching
+   * are left alone, rather than joined as an invisible peer.
    */
   watch?: boolean;
   /** Players in the room including this one, or null while disconnected. */
@@ -994,7 +994,7 @@ export class Presence implements NetworkAdapter {
    * A new link to the same avatar only replaces the link; it is not reloaded.
    */
   private wear(remote: Remote, avatar: WireAvatar): void {
-    const wanted = this.showAvatars && this.verifyAvatar && !this.watchOnly ? parseAvatarShare(avatar) : null;
+    const wanted = this.showAvatars && this.verifyAvatar ? parseAvatarShare(avatar) : null;
     if (!wanted) {
       if (!remote.avatarId) return;
       remote.avatarId = '';
