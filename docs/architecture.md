@@ -161,6 +161,9 @@ frame only to people within 45 m of the speaker, who hear it from where the
 speaker stands. A relay carries voice only with `VOICE = "on"` (the lobby's
 does; the free relay for worlds does not), and a world turns it on with
 `voice: true` on `Presence`.
+Nobody filters what is said out loud, so each visitor can mute anyone who
+has talked: aim at them and click, or tap them (`Presence.setMuted`, on this
+device only; a signed-in visitor stays muted when they reconnect).
 
 ### The overlay lives in the runtime
 

@@ -13,6 +13,7 @@ import {
   setAvatarColor,
   setStrokeOpacity,
   type MicState,
+  type PeerPick,
   type Vec3Tuple,
 } from '@worldmesh/runtime';
 import {
@@ -540,6 +541,11 @@ const floorShader = {
   `,
 };
 
+/** People further than this are not picked for muting: their voice has faded out anyway. */
+const PEER_PICK_RANGE = 45;
+/** How long "muted" stays up after a click or tap. */
+const PEER_NOTE_MS = 2500;
+
 /** What the badge over your head says while the microphone is not carrying your voice. */
 const TALK_NOTES: Record<MicState, string> = {
   off: '',
@@ -707,6 +713,12 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         // Push-to-talk (hold T, or the mic button on touch): heard by everyone nearby.
         voice: true,
         onMic: (state) => showMic(state),
+        // On touch there is no aiming prompt: say once how muting works.
+        onVoice: () => {
+          if (!isTouch || muteHintShown) return;
+          muteHintShown = true;
+          notePeer('Tap someone talking to mute them');
+        },
         // Someone arriving warps in as we do.
         onArrive: (x, z) => {
           if (!spawnPads.pads.some((spot) => Math.hypot(x - spot.x, z - spot.z) < ARRIVE_RADIUS)) return;
@@ -938,6 +950,19 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     if (focused) activateBillboard(focused);
   });
   if (adsEnabled) container.appendChild(adPrompt);
+  // Muting someone's voice: the prompt while aiming at them, and the note after.
+  const peerPrompt = document.createElement('button');
+  peerPrompt.type = 'button';
+  peerPrompt.className = 'walk-add-prompt walk-peer-prompt';
+  peerPrompt.addEventListener('click', (event) => {
+    event.stopPropagation();
+    if (peerFocus) toggleMute(peerFocus);
+  });
+  if (presence) container.appendChild(peerPrompt);
+  let peerFocus: PeerPick | null = null;
+  let sincePeerFocus = 0;
+  let peerNoteUntil = 0;
+  let muteHintShown = false;
   let focused: BillboardHit | null = null;
   let sinceFocus = 0;
   let adModal: { close(): void } | null = null;
@@ -1024,6 +1049,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         addPrompt.classList.toggle('visible', near !== null);
       }
       updateBillboardFocus(dt, near !== null);
+      updatePeerFocus(dt, near !== null);
       billboards?.update(dt, camera);
       floorUniforms.uPlayer.value.set(x, z);
       // The sky is centred on the camera, so it stays around it however high the towers take them.
@@ -1567,6 +1593,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const handlePointerDown = (event: PointerEvent) => {
     pressAt = { x: event.clientX, y: event.clientY, time: performance.now() };
     if (document.pointerLockElement !== renderer.domElement || adModal || claimModal || event.button !== 0) return;
+    // Someone who has talked, where the camera looks: mute or unmute them.
+    if (peerFocus) {
+      toggleMute(peerFocus);
+      return;
+    }
     // A click aims where the camera looks: a tower door there, or a billboard.
     const hit = billboardAt(0, 0);
     if (hit) activateBillboard(hit);
@@ -1583,9 +1614,50 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     const rect = renderer.domElement.getBoundingClientRect();
     const ndcX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     const ndcY = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    const peer = peerAt(ndcX, ndcY);
+    if (peer) {
+      toggleMute(peer);
+      return;
+    }
     const hit = billboardAt(ndcX, ndcY);
     if (hit) activateBillboard(hit);
   };
+
+  /** Someone who has talked within earshot, at a point on screen, unless a wall stands in front of them. */
+  function peerAt(ndcX: number, ndcY: number): PeerPick | null {
+    if (!presence) return null;
+    raycaster.setFromCamera(pointer.set(ndcX, ndcY), camera);
+    raycaster.far = PEER_PICK_RANGE;
+    const peer = presence.pickPeer(raycaster.ray, PEER_PICK_RANGE);
+    if (!peer?.talked) return null;
+    const wallAt = raycaster.intersectObjects([...wall, ...trim], false)[0]?.distance ?? Infinity;
+    return peer.distance < wallAt ? peer : null;
+  }
+
+  function toggleMute(peer: PeerPick): void {
+    presence?.setMuted(peer.id, !peer.muted);
+    peerFocus = null;
+    notePeer(peer.muted ? `${peer.label} unmuted` : `${peer.label} muted · ${isTouch ? 'tap' : 'click'} again to unmute`);
+  }
+
+  /** A short line in the peer prompt, kept up a moment over the aiming prompt. */
+  function notePeer(text: string): void {
+    peerPrompt.textContent = text;
+    peerPrompt.classList.add('visible');
+    peerNoteUntil = performance.now() + PEER_NOTE_MS;
+  }
+
+  /** Follow where the camera looks a few times a second: "Click to mute" over someone who has talked. */
+  function updatePeerFocus(dt: number, doorPrompt: boolean): void {
+    sincePeerFocus += dt;
+    if (sincePeerFocus < FOCUS_INTERVAL) return;
+    sincePeerFocus = 0;
+    const active = !isTouch && !adModal && !claimModal && !warping && !chatting && !doorPrompt && !focused && document.pointerLockElement === renderer.domElement;
+    peerFocus = active ? peerAt(0, 0) : null;
+    if (performance.now() < peerNoteUntil) return;
+    peerPrompt.classList.toggle('visible', !!peerFocus);
+    if (peerFocus) peerPrompt.textContent = `Click to ${peerFocus.muted ? 'unmute' : 'mute'} ${peerFocus.label}`;
+  }
 
   /** The billboard at a point on screen, unless a wall or tower is in front of it. */
   function billboardAt(ndcX: number, ndcY: number): BillboardHit | null {
@@ -2524,6 +2596,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     claimModal?.close();
     billboards?.dispose();
     adPrompt.remove();
+    peerPrompt.remove();
     window.removeEventListener('pageshow', handlePageShow);
     window.removeEventListener('resize', handleResize);
     renderer.domElement.removeEventListener('pointerdown', handlePointerDown);

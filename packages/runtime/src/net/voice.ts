@@ -14,8 +14,8 @@ export type MicState = 'off' | 'starting' | 'live' | 'denied' | 'unavailable';
  * starts at once. Then it is closed and the browser's recording light goes off.
  */
 const KEEP_OPEN_MS = 20_000;
-/** Keep sending this long after letting go: the last word is still on its way through the audio thread. */
-const TAIL_MS = 180;
+/** Keep sending this long after letting go, in seconds: the last word is still on its way through the microphone. */
+const TAIL_S = 0.18;
 /** A press longer than this is a stuck key or finger: let go. */
 const MAX_TALK_MS = 60_000;
 /** Samples the audio thread gathers before handing them over: about 43 ms at 48 kHz. */
@@ -23,7 +23,11 @@ const CAPTURE_BLOCK = 2048;
 /** A leftover shorter than this (10 ms) is not worth a frame of its own. */
 const MIN_FLUSH = 160;
 
-/** Copies the microphone off the audio thread in blocks. Loaded from a blob, so no file has to be served next to the runtime. */
+/**
+ * Copies the microphone off the audio thread in blocks, each with the audio
+ * clock time it starts at. Loaded from a blob, so no file has to be served
+ * next to the runtime.
+ */
 const WORKLET = `class WorldMeshMic extends AudioWorkletProcessor {
   constructor() { super(); this.block = new Float32Array(${CAPTURE_BLOCK}); this.length = 0; }
   process(inputs) {
@@ -32,7 +36,8 @@ const WORKLET = `class WorldMeshMic extends AudioWorkletProcessor {
       for (let i = 0; i < input.length; i++) {
         this.block[this.length++] = input[i];
         if (this.length === this.block.length) {
-          this.port.postMessage(this.block, [this.block.buffer]);
+          const at = currentTime + (i + 1 - this.block.length) / sampleRate;
+          this.port.postMessage({ samples: this.block, at }, [this.block.buffer]);
           this.block = new Float32Array(${CAPTURE_BLOCK});
           this.length = 0;
         }
@@ -74,7 +79,15 @@ function loadWorklet(context: AudioContext): Promise<boolean> {
 export class Microphone {
   private held = false;
   private heldAt = 0;
-  private tailUntil = 0;
+  /**
+   * When on the audio clock the voice goes out from and until. Blocks are
+   * judged by when they were recorded, not when the page gets round to
+   * them: on a busy phone they arrive late, and words said while the button
+   * was down still go out.
+   */
+  private onAirFrom = Infinity;
+  private onAirUntil = -Infinity;
+  private context: AudioContext | null = null;
   private state: MicState = 'off';
   private stream: MediaStream | null = null;
   private nodes: AudioNode[] = [];
@@ -101,12 +114,15 @@ export class Microphone {
     if (held) {
       this.heldAt = performance.now();
       // Inside the press: browsers let audio start only from a gesture.
-      sharedAudio();
+      const audio = sharedAudio();
+      // Before the microphone is open, everything it records once it is counts.
+      this.onAirFrom = this.context ? this.context.currentTime : audio ? audio.context.currentTime : 0;
+      this.onAirUntil = Infinity;
       if (this.stream) this.set('live');
       else void this.open();
       return;
     }
-    this.tailUntil = performance.now() + TAIL_MS;
+    this.onAirUntil = (this.context?.currentTime ?? 0) + TAIL_S;
     if (this.state === 'live' || this.state === 'starting') this.set('off');
     this.closeTimer = window.setTimeout(() => this.close(), KEEP_OPEN_MS);
   }
@@ -169,28 +185,32 @@ export class Microphone {
     let tap: AudioNode;
     if (await loadWorklet(context)) {
       const node = new AudioWorkletNode(context, 'worldmesh-mic', { channelCount: 1, channelCountMode: 'explicit' });
-      node.port.onmessage = (event: MessageEvent<Float32Array>) => this.capture(event.data);
+      node.port.onmessage = (event: MessageEvent<{ samples: Float32Array; at: number }>) => this.capture(event.data.samples, event.data.at);
       tap = node;
     } else {
       // Older browsers, and pages whose content policy blocks blob worklets.
       const node = context.createScriptProcessor(CAPTURE_BLOCK, 1, 1);
-      node.onaudioprocess = (event) => this.capture(event.inputBuffer.getChannelData(0));
+      node.onaudioprocess = (event) => this.capture(event.inputBuffer.getChannelData(0), event.playbackTime);
       tap = node;
     }
     source.connect(tap);
     tap.connect(sink);
     this.nodes = [source, tap, sink];
+    this.context = context;
   }
 
-  private capture(samples: Float32Array): void {
+  /** A block of microphone samples, recorded from `at` on the audio clock. */
+  private capture(samples: Float32Array, at: number): void {
     const downsampler = this.downsampler;
-    if (!downsampler) return;
-    const now = performance.now();
-    if (this.held && now - this.heldAt > MAX_TALK_MS) this.hold(false);
-    if (!this.held && now >= this.tailUntil) {
+    const context = this.context;
+    if (!downsampler || !context) return;
+    if (this.held && performance.now() - this.heldAt > MAX_TALK_MS) this.hold(false);
+    const end = at + samples.length / context.sampleRate;
+    if (at >= this.onAirUntil) {
       this.flush();
       return;
     }
+    if (end <= this.onAirFrom) return;
     downsampler.push(samples, (sample) => {
       this.frame[1 + this.filled++] = encodeMuLaw(sample);
       if (this.filled === VOICE_FRAME) {
@@ -210,6 +230,7 @@ export class Microphone {
   private close(): void {
     // Also when the microphone goes away mid-press (unplugged): the next press opens it again.
     this.held = false;
+    this.onAirUntil = -Infinity;
     this.flush();
     this.stream?.getTracks().forEach((track) => track.stop());
     this.stream = null;
@@ -225,6 +246,7 @@ export class Microphone {
     }
     this.nodes = [];
     this.downsampler = null;
+    this.context = null;
   }
 
   private set(state: MicState): void {
@@ -245,6 +267,8 @@ export class VoiceStream {
   level = 0;
   /** performance.now() of their latest frame. */
   heardAt = -Infinity;
+  /** Muted by this visitor: frames still count as talking, but are not played. */
+  muted = false;
   private readonly gain: GainNode;
   private readonly pan: StereoPannerNode | null;
   private nextAt = 0;
@@ -265,7 +289,7 @@ export class VoiceStream {
     for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
     this.level = Math.min(1, Math.sqrt(sum / Math.max(1, data.length)) * 5);
     const context = this.context;
-    if (context.state !== 'running' || data.length === 0) return;
+    if (this.muted || context.state !== 'running' || data.length === 0) return;
     const now = context.currentTime;
     if (this.nextAt < now + 0.02) this.nextAt = now + JITTER_S;
     else if (this.nextAt > now + MAX_AHEAD_S) return;
@@ -281,7 +305,7 @@ export class VoiceStream {
   /** How loud they are here (0 to 1), and from which side (-1 left to 1 right). */
   place(loudness: number, pan: number): void {
     const now = this.context.currentTime;
-    this.gain.gain.setTargetAtTime(loudness, now, 0.05);
+    this.gain.gain.setTargetAtTime(this.muted ? 0 : loudness, now, 0.05);
     this.pan?.pan.setTargetAtTime(Math.max(-1, Math.min(1, pan)), now, 0.05);
   }
 

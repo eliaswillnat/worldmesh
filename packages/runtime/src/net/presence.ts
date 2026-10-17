@@ -1,4 +1,4 @@
-import { CanvasTexture, Group, Mesh, MeshBasicMaterial, Sprite, SpriteMaterial, Vector3, type Object3D, type Scene } from 'three';
+import { Box3, CanvasTexture, Group, Mesh, MeshBasicMaterial, Sprite, SpriteMaterial, Vector3, type Object3D, type Ray, type Scene } from 'three';
 import { Footsteps, sharedAudio } from '../audio/footsteps.js';
 import { parseAvatarShare, type SignedAvatarShare } from '../avatar/descriptor.js';
 import { loadAvatarModel, type LoadedAvatar } from '../avatar/loader.js';
@@ -86,6 +86,20 @@ export interface PresenceOptions {
   voice?: boolean;
   /** Where this visitor's own push-to-talk stands, for the button that drives it. */
   onMic?: (state: MicState) => void;
+  /** Someone's voice reached this visitor for the first time since they arrived. */
+  onVoice?: (id: string, label: string) => void;
+}
+
+/** Someone a ray passes through (`Presence.pickPeer`). */
+export interface PeerPick {
+  id: string;
+  /** What their name tag says: '@username', a made-up name, or 'Guest'. */
+  label: string;
+  /** They have talked within earshot since this visitor joined, so muting them means something. */
+  talked: boolean;
+  muted: boolean;
+  /** How far along the ray they are, to tell whether a wall stands in front. */
+  distance: number;
 }
 
 /** An avatar as it goes to everyone else in the room: a link the hub signed. */
@@ -147,6 +161,8 @@ interface Remote {
   voice: VoiceStream | null;
   /** Sound bars over their head while their voice comes through. */
   talkIcon: Sprite | null;
+  /** This visitor muted them. */
+  muted: boolean;
 }
 
 /**
@@ -232,6 +248,11 @@ export class Presence implements NetworkAdapter {
   /** The relay said in its welcome that it carries voice. */
   private voiceRelayed = false;
   private readonly heard = new Vector3();
+  /** Muted people by presence id, and signed-in ones by '@username' too, so a reconnect does not unmute them. */
+  private readonly mutedIds = new Set<string>();
+  private readonly mutedNames = new Set<string>();
+  private readonly pickBox = new Box3();
+  private readonly pickPoint = new Vector3();
   private readonly voiceAt = new Vector3();
 
   readonly url: string;
@@ -252,6 +273,7 @@ export class Presence implements NetworkAdapter {
   private place: PresenceOptions['place'];
   private voice: boolean;
   private onMic: (state: MicState) => void;
+  private onVoice: (id: string, label: string) => void;
 
   constructor(options: PresenceOptions) {
     this.url = options.url;
@@ -272,6 +294,7 @@ export class Presence implements NetworkAdapter {
     this.place = options.place;
     this.voice = options.voice === true;
     this.onMic = options.onMic ?? (() => {});
+    this.onVoice = options.onVoice ?? (() => {});
     this.group.name = 'worldmesh:remote-players';
     options.scene.add(this.group);
   }
@@ -363,6 +386,51 @@ export class Presence implements NetworkAdapter {
     // The relay takes voice only from someone it has seen standing somewhere.
     if (!socket || socket.readyState !== WebSocket.OPEN || !this.selfId || !this.stateSent || !this.voiceRelayed) return;
     socket.send(frame);
+  }
+
+  /**
+   * Who this ray passes through first, if anyone: the figure, name tag
+   * included. Walls are the caller's to check, with `distance`.
+   */
+  pickPeer(ray: Ray, far = Infinity): PeerPick | null {
+    let best: PeerPick | null = null;
+    for (const [id, remote] of this.remotes) {
+      const { x, y, z } = remote.root.position;
+      this.pickBox.min.set(x - PICK_RADIUS, y, z - PICK_RADIUS);
+      this.pickBox.max.set(x + PICK_RADIUS, y + PICK_HEIGHT, z + PICK_RADIUS);
+      if (!ray.intersectBox(this.pickBox, this.pickPoint)) continue;
+      const distance = ray.origin.distanceTo(this.pickPoint);
+      if (distance > far || (best && distance >= best.distance)) continue;
+      best = { id, label: remote.label, talked: !!remote.voice, muted: remote.muted, distance };
+    }
+    return best;
+  }
+
+  /**
+   * Stop hearing someone (true), or hear them again (false). Only for this
+   * visitor; nobody else is told. Someone signed in stays muted when they
+   * reconnect; a guest comes back as someone new.
+   */
+  setMuted(id: string, muted: boolean): void {
+    const remote = this.remotes.get(id);
+    const name = remote?.label.startsWith('@') ? remote.label : '';
+    if (muted) {
+      this.mutedIds.add(id);
+      if (name) this.mutedNames.add(name);
+    } else {
+      this.mutedIds.delete(id);
+      if (name) this.mutedNames.delete(name);
+    }
+    if (remote) this.refreshMute(id, remote);
+  }
+
+  private refreshMute(id: string, remote: Remote): void {
+    const muted = this.mutedIds.has(id) || (remote.label.startsWith('@') && this.mutedNames.has(remote.label));
+    if (remote.voice) remote.voice.muted = muted;
+    if (muted === remote.muted) return;
+    remote.muted = muted;
+    // Drawn again, struck through or not, the next time they talk.
+    dropTalkIcon(remote);
   }
 
   /**
@@ -687,6 +755,7 @@ export class Presence implements NetworkAdapter {
         bubbleLeft: 0,
         voice: null,
         talkIcon: null,
+        muted: false,
       };
       this.remotes.set(id, remote);
       setFigureOpacity(root, 0);
@@ -714,6 +783,7 @@ export class Presence implements NetworkAdapter {
       remote.tag = createNameTag(label);
       remote.tag.position.y = TAG_HEIGHT;
       remote.root.add(remote.tag);
+      this.refreshMute(id, remote);
     }
     // A long jump is a teleport or respawn, not a sprint: do not animate it.
     if (remote.root.position.distanceTo(remote.target) > 6) {
@@ -737,6 +807,8 @@ export class Presence implements NetworkAdapter {
       const audio = sharedAudio();
       if (!audio) return;
       remote.voice = new VoiceStream(audio.context);
+      remote.voice.muted = remote.muted;
+      this.onVoice(frame.id, remote.label);
     }
     remote.voice.play(frame.samples);
   }
@@ -757,7 +829,7 @@ export class Presence implements NetworkAdapter {
 
     const talking = performance.now() - voice.heardAt < TALKING_MS;
     if (talking && !remote.talkIcon) {
-      remote.talkIcon = createTalkIcon();
+      remote.talkIcon = createTalkIcon(remote.muted);
       remote.talkIcon.position.y = TAG_HEIGHT + 0.16;
       remote.root.add(remote.talkIcon);
     }
@@ -1038,6 +1110,10 @@ function dropBubble(remote: Remote): void {
 function dropVoice(remote: Remote): void {
   remote.voice?.dispose();
   remote.voice = null;
+  dropTalkIcon(remote);
+}
+
+function dropTalkIcon(remote: Remote): void {
   const icon = remote.talkIcon;
   if (!icon) return;
   icon.material.map?.dispose();
@@ -1048,11 +1124,14 @@ function dropVoice(remote: Remote): void {
 
 /** Someone counts as talking this long after their last frame. */
 const TALKING_MS = 300;
+/** The box a figure is picked by: a little wider than the body, up to the top of the name tag. */
+const PICK_RADIUS = 0.45;
+const PICK_HEIGHT = 2.3;
 /** Width and height of the sound bars over someone talking, in metres. */
 const TALK_ICON_SIZE = 0.24;
 
-/** Sound bars in a dark disc, like the name tag. Its bottom edge sits at the sprite's position. */
-function createTalkIcon(): Sprite {
+/** Sound bars in a dark disc, like the name tag; dimmed and struck through for someone muted. Its bottom edge sits at the sprite's position. */
+function createTalkIcon(muted: boolean): Sprite {
   const size = 96;
   const canvas = document.createElement('canvas');
   canvas.width = size;
@@ -1062,12 +1141,21 @@ function createTalkIcon(): Sprite {
   context.beginPath();
   context.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
   context.fill();
-  context.fillStyle = '#ffffff';
+  context.fillStyle = muted ? 'rgba(255, 255, 255, 0.45)' : '#ffffff';
   const bar = 10;
   for (const [x, height] of [[27, 28], [48, 48], [69, 28]]) {
     context.beginPath();
     context.roundRect(x - bar / 2, (size - height) / 2, bar, height, bar / 2);
     context.fill();
+  }
+  if (muted) {
+    context.strokeStyle = '#ffffff';
+    context.lineWidth = 8;
+    context.lineCap = 'round';
+    context.beginPath();
+    context.moveTo(24, 24);
+    context.lineTo(72, 72);
+    context.stroke();
   }
   const sprite = new Sprite(new SpriteMaterial({ map: new CanvasTexture(canvas), depthWrite: false, transparent: true }));
   sprite.scale.setScalar(TALK_ICON_SIZE);

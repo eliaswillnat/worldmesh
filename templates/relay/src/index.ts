@@ -175,9 +175,9 @@ const VOICE_ID_BYTES = 8;
 const MAX_VOICE_BYTES = 2048;
 /** Voice goes to people this many metres from the speaker at most. Clients fade it out a little closer (40 m). */
 const VOICE_RANGE = 45;
-/** One talker is 16 KB a second; a little over that is allowed for frames arriving in clumps. */
+/** One talker is 16 KB a second. A little over that is allowed, and a burst of about a second and a half, for a slow phone that sends its frames in clumps. */
 const VOICE_BYTES_PER_S = 20_000;
-const VOICE_BURST_BYTES = 8_000;
+const VOICE_BURST_BYTES = 24_000;
 /** Public occupancy reads are counts only; never peer names. */
 const CORS = {
   'Access-Control-Allow-Origin': '*',
