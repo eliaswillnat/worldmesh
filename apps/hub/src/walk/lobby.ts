@@ -610,7 +610,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   let newestFigure: Object3D | null = null;
   // Everyone else's figures, so one stepping through a portal can be warped out.
   const figures = new Set<Object3D>();
-  const departing: Array<{ root: Object3D; time: number; axis: Vector3; from: Vector3; left: boolean; drift: number }> = [];
+  const departing: Array<{ root: Object3D; time: number; axis: Vector3; from: Vector3; left: boolean; drift: number; duration: number }> = [];
   const throughAxis = new Vector3();
   // Coming out of a world happens as the page loads, often before presence
   // has connected: hold the warp until it can be shared.
@@ -734,7 +734,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         listener: () => listenerPoint.fromArray(world.getState().position),
         // Someone leaving, by a door or by closing the page: the same sound as our own leaving.
         // One warping out through a door is kept until the warp has played out; one
-        // closing the page warps out where they stand, up and down like an arrival.
+        // closing the page warps out where they stand, up and down and as quick as an arrival.
         onDepart: (x, z, root) => {
           playWarpSound(false, 0, loudnessAt(x, z));
           const entry = departing.find((candidate) => candidate.root === root);
@@ -749,7 +749,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
             return false;
           }
           if (!root.visible) return false;
-          departing.push({ root, time: 0, axis: UP_AXIS, from: root.position.clone(), left: true, drift: 0 });
+          departing.push({ root, time: 0, axis: UP_AXIS, from: root.position.clone(), left: true, drift: 0, duration: LEAVE_TIME });
           return true;
         },
       })
@@ -1319,7 +1319,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       }
     }
     if (figure && !departing.some((entry) => entry.root === figure)) {
-      departing.push({ root: figure, time: 0, axis: door.through(new Vector3()), from: figure.position.clone(), left: false, drift: OTHER_LEAVE_DRIFT });
+      departing.push({ root: figure, time: 0, axis: door.through(new Vector3()), from: figure.position.clone(), left: false, drift: OTHER_LEAVE_DRIFT, duration: OTHER_LEAVE_TIME });
     }
   }
 
@@ -1332,7 +1332,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         departing.splice(i, 1);
         continue;
       }
-      const t = Math.min(1, entry.time / OTHER_LEAVE_TIME);
+      const t = Math.min(1, entry.time / entry.duration);
       const amount = 1 - t * t * (3 - 2 * t);
       // Carried on into the portal as they smear through it, quickening as they go.
       // (`axis` points out of the door into the hall, so in is against it.)
