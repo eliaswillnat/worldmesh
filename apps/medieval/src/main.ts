@@ -33,6 +33,7 @@ const world = createWorldMesh({
     moveBeforeLock: true,
     title: 'Medieval Village - Demo',
     badge: false,
+    crosshair: false,
     hubUrl:
       import.meta.env.VITE_WORLDMESH_HUB ??
       (import.meta.env.DEV
