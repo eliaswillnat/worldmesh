@@ -145,7 +145,9 @@ nothing.
   small worlds can try multiplayer without a server. Its limits:
   - **16 people per world** at once (64 in the hub lobby, which has its own
     relay). Visitors past that see a full-screen “World is full” / “Lobby is
-    full” overlay instead of joining silently alone.
+    full” overlay instead of joining silently alone. Hub visitors watching
+    through a live door don't count: up to 32 watch each room besides its
+    people, unseen and sending nothing.
   - **240 active minutes per world per day** (UTC). Minutes count only while
     someone in the room is moving; empty rooms and people standing still
     count nothing. Past that, people already in the world stay, new visitors
@@ -198,7 +200,8 @@ them.) The rest is the adapter's:
   ease it toward each position they report, animate it, and remove and dispose
   of it when they leave. Return where they stand from `bodies()` (feet
   position, 0.35 m radius, 1.8 m tall, as the relay does) and the visitor walks
-  into them rather than through them. The relay client's own pieces are
+  into them rather than through them. A jump that reaches their shoulders sets
+  the visitor down on their head. The relay client's own pieces are
   exported: `createDefaultAvatar`, `animateDefaultAvatar`,
   `setAvatarExpression`, `setFigureStroke`, `createNameTag`,
   `createSpeechBubble` and `easeYaw`.

@@ -113,6 +113,8 @@ export interface LobbyOptions {
   color?: string | null;
   /** Called with how many people are in the lobby, or null while offline. */
   onPresenceCount?: (count: number | null) => void;
+  /** Called when this visitor walks into the hall (true) or out of it to the avenues (false). */
+  onHall?: (inside: boolean) => void;
   /**
    * Called right before the page navigates into a world, with where to put
    * the visitor if they come back: just outside that door, facing the room.
@@ -257,10 +259,10 @@ const GATE_WIDTH = DOOR_WIDTH;
 const GATE_HEIGHT = DOOR_HEIGHT;
 /** The frame round each exit's mouth on the outside. */
 const GATE_MOUTH_FRAME = 0.6;
-/** The lining through the wall, round the opening, as seen from the hall. */
-const GATE_FRAME = FRAME;
-/** Half the exit's width in the hall, lining included. */
-const GATE_HALF_SPAN = GATE_WIDTH / 2 + GATE_FRAME;
+/** The reveal lining the passage through the wall: hidden behind the hall's face, so the exit has no frame inside. */
+const GATE_REVEAL = 0.1;
+/** Half the room each exit takes along the hall's wall: doors and piers keep this far from its centre. */
+const GATE_HALF_SPAN = GATE_WIDTH / 2 + FRAME;
 
 /** Gate angles around the hall, starting at +Z. */
 function gateAngles(): number[] {
@@ -327,6 +329,8 @@ const LEAVE_TIME = 0.12;
 const OTHER_LEAVE_TIME = 0.9;
 /** How far their figure is carried on through the doorway as it warps out, in metres. */
 const OTHER_LEAVE_DRIFT = 1.4;
+/** Someone closing the page warps out up and down, where they stand. */
+const UP_AXIS = new Vector3(0, 1, 0);
 /** A portal or figure this close to where someone went through is the one they used. */
 const WARP_MATCH = 3;
 /** Seconds after which a figure that warped out but never left is shown again. */
@@ -366,6 +370,13 @@ const GHOST_GLOW = 0x5cc8ff;
  * do not set it off.
  */
 const ARRIVE_RADIUS = 1.5;
+/**
+ * A pad is taken while someone else stands this close to its centre: the
+ * dais is about a metre out from it, and a body beside it would still clip.
+ */
+const PAD_CLEAR = 1.4;
+/** Still this close to the pad's centre: not walked off it yet, so can still be moved to a free one. */
+const PAD_SETTLE = 0.4;
 /** Billboards further than this are not picked by the crosshair or a tap. */
 const BILLBOARD_RANGE = 95;
 /** How often the billboard under the crosshair is looked up, in seconds. */
@@ -593,10 +604,25 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   // Placed now, not at the first render: the first steps already stand on a pad.
   spawnPads.object.updateMatrixWorld(true);
   // Every visitor arrives on one of the pads round the middle of the hall, chosen at
-  // random, facing the middle, which is left clear for the hologram.
+  // random among those nobody stands on, facing the middle, which is left clear for
+  // the hologram. Nobody is known yet on the first one: settleOnPad moves off it if
+  // the room turns out to have someone there.
   let spawnPad = Math.floor(Math.random() * spawnPads.pads.length);
   const padSpawn = (): Vec3Tuple => [spawnPads.pads[spawnPad].x, 0, spawnPads.pads[spawnPad].z];
   const padYaw = () => Math.atan2(spawnPads.pads[spawnPad].x, spawnPads.pads[spawnPad].z);
+  /** How far the nearest other visitor stands from pad `index`'s centre. */
+  const padRoom = (index: number): number => {
+    const { x, z } = spawnPads.pads[index];
+    return Math.min(Infinity, ...(presence?.bodies() ?? []).map((body) => Math.hypot(body.x - x, body.z - z)));
+  };
+  /** A pad nobody else stands on, at random; with every one taken, the one with the most room. */
+  const pickPad = (): number => {
+    const room = spawnPads.pads.map((_, index) => padRoom(index));
+    const free = room.flatMap((space, index) => (space >= PAD_CLEAR ? [index] : []));
+    return free.length ? free[Math.floor(Math.random() * free.length)] : room.indexOf(Math.max(...room));
+  };
+  /** Just arrived on a pad and not yet checked against who else is in the room. */
+  let settling = false;
   // The local figure warping in on arrival.
   const arrival = new Arrival();
   /** Other visitors' figures warping in as they arrive. */
@@ -604,7 +630,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   let newestFigure: Object3D | null = null;
   // Everyone else's figures, so one stepping through a portal can be warped out.
   const figures = new Set<Object3D>();
-  const departing: Array<{ root: Object3D; time: number; axis: Vector3; from: Vector3; left: boolean }> = [];
+  const departing: Array<{ root: Object3D; time: number; axis: Vector3; from: Vector3; left: boolean; drift: number }> = [];
   const throughAxis = new Vector3();
   // Coming out of a world happens as the page loads, often before presence
   // has connected: hold the warp until it can be shared.
@@ -687,7 +713,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     ? new Presence({
         url: `${options.presenceEndpoint.replace(/\/$/, '')}/room/lobby`,
         scene,
-        onCount: (count) => options.onPresenceCount?.(count),
+        onCount: (count) => {
+          options.onPresenceCount?.(count);
+          // In the room now, with everyone in it: step off a pad someone already stands on.
+          if (count !== null && settling) settleOnPad();
+        },
         getName: () => (alias ? null : options.playerName?.() ?? null),
         getAlias: () => alias,
         // Private mode keeps the default colour, so nothing ties the alias back to this visitor.
@@ -742,12 +772,24 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         // Everyone else's footsteps, jumps and landings, heard from where we stand.
         listener: () => listenerPoint.fromArray(world.getState().position),
         // Someone leaving, by a door or by closing the page: the same sound as our own leaving.
-        // One warping out through a door is kept until the warp has played out.
+        // One warping out through a door is kept until the warp has played out; one
+        // closing the page warps out where they stand, up and down like an arrival.
         onDepart: (x, z, root) => {
           playWarpSound(false, 0, loudnessAt(x, z));
           const entry = departing.find((candidate) => candidate.root === root);
-          if (entry) entry.left = true;
-          return !!entry;
+          if (entry) {
+            entry.left = true;
+            return true;
+          }
+          // Gone before their own arrival had shown them: nothing to warp out.
+          const arriving = arrivals.findIndex((candidate) => candidate.root === root);
+          if (arriving >= 0) {
+            arrivals.splice(arriving, 1);
+            return false;
+          }
+          if (!root.visible) return false;
+          departing.push({ root, time: 0, axis: UP_AXIS, from: root.position.clone(), left: true, drift: 0 });
+          return true;
         },
       })
     : undefined;
@@ -888,6 +930,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const cityColliders: Mesh[] = [];
   let nearEmpty: Door | null = null;
   let time = 0;
+  /** Whether this visitor is in the hall, as last reported to `onHall`. */
+  let inHall: boolean | null = null;
   let warping = false;
   /** Lobby clock when this visitor started warping out through a door; negative = not leaving. */
   let leavingAt = -1;
@@ -1035,6 +1079,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         callPrompt.classList.remove('visible');
       }
       const [x, y, z] = handle.getState().position;
+      const inside = Math.hypot(x, z) < HALL_RADIUS;
+      if (inside !== inHall) {
+        inHall = inside;
+        options.onHall?.(inside);
+      }
       // Only doors on the floor they are standing on.
       const level = (door: Door) => Math.abs(y - door.group.position.y) < 1;
       if (exitDoor && !emerging) {
@@ -1448,7 +1497,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       }
     }
     if (figure && !departing.some((entry) => entry.root === figure)) {
-      departing.push({ root: figure, time: 0, axis: door.through(new Vector3()), from: figure.position.clone(), left: false });
+      departing.push({ root: figure, time: 0, axis: door.through(new Vector3()), from: figure.position.clone(), left: false, drift: OTHER_LEAVE_DRIFT });
     }
   }
 
@@ -1465,7 +1514,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       const amount = 1 - t * t * (3 - 2 * t);
       // Carried on into the portal as they smear through it, quickening as they go.
       // (`axis` points out of the door into the hall, so in is against it.)
-      entry.root.position.copy(entry.from).addScaledVector(entry.axis, -OTHER_LEAVE_DRIFT * t * t);
+      entry.root.position.copy(entry.from).addScaledVector(entry.axis, -entry.drift * t * t);
       setLocalAppear(entry.root, amount, entry.axis);
       for (const child of entry.root.children) {
         if (child instanceof Sprite) child.material.opacity = amount;
@@ -1551,6 +1600,9 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   // Keyboard: E at a tower door, lift or elevator, or next to an empty door.
   // The runtime reports E as a plain interaction when no portal of its own is in reach.
   world.on('respawn', () => {
+    // The runtime puts us back on the first pad: take a free one instead.
+    spawnPad = pickPad();
+    world.teleport(padSpawn(), padYaw());
     aimSpawn();
   });
   world.on('interact', () => {
@@ -1814,7 +1866,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     handleResize();
     if (returnTo) emerge(returnTo);
     else {
-      world.respawn();
+      spawnPad = pickPad();
+      world.teleport(padSpawn(), padYaw());
       triggerSpawnFx();
     }
   };
@@ -1904,6 +1957,30 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     if (ghost) ghost.shimmer(time, 0);
     else setLocalAppear(world.avatar, 0);
     aimSpawn();
+    settling = true;
+  }
+
+  /**
+   * Arrived where someone else already stands (the room's welcome came after
+   * the pad was picked): warp in again on a free pad, unless already walked off.
+   */
+  function settleOnPad(): void {
+    settling = false;
+    const [x, , z] = world.getState().position;
+    const pad = spawnPads.pads[spawnPad];
+    if (Math.hypot(x - pad.x, z - pad.z) > PAD_SETTLE || padRoom(spawnPad) >= PAD_CLEAR) return;
+    const next = pickPad();
+    if (next === spawnPad) return;
+    spawnPad = next;
+    world.teleport(padSpawn(), padYaw());
+    // Still warping in: start the warp over on the new pad, its sound already playing.
+    if (arrival.running) {
+      arrival.start(() => world.avatar);
+      aimSpawn();
+    } else {
+      triggerSpawnFx();
+      settling = false;
+    }
   }
 
   /** Look across the pad towards the middle of the hall, and turn the body toward the camera. */
@@ -1997,7 +2074,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       ghost?.restore();
       ghost = alias ? makeGhost(world.avatar) : null;
       void loadCharacter();
-      spawnPad = Math.floor(Math.random() * spawnPads.pads.length);
+      spawnPad = pickPad();
       world.teleport(padSpawn(), padYaw());
       triggerSpawnFx();
       presence?.rejoin();
@@ -2248,10 +2325,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
     // Inner drum: faces the hall, open at each doorway and exit. The cut follows
     // the frame's rounded top, not a rectangle.
+    // The exits are cut to their clear opening: they have no frame on this side.
     const doorCorner = frameOuterCorner(DOOR_WIDTH, DOOR_HEIGHT, FRAME);
-    const gateCorner = frameOuterCorner(GATE_WIDTH, GATE_HEIGHT, GATE_FRAME);
+    const mouthCorner = openingCorner(GATE_WIDTH, GATE_HEIGHT);
     const openings = [
-      ...gateAngles().map((angle) => ({ angle, span: GATE_HALF_SPAN, top: GATE_HEIGHT + GATE_FRAME, corner: gateCorner })),
+      ...gateAngles().map((angle) => ({ angle, span: GATE_WIDTH / 2, top: GATE_HEIGHT, corner: mouthCorner })),
       ...angles.map((angle) => ({ angle, span: DOOR_HALF_SPAN, top: DOOR_TOP, corner: doorCorner })),
     ].sort((a, b) => a.angle - b.angle);
     openings.forEach((opening, i) => {
@@ -2270,7 +2348,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     // the gate's frame outside.
     const gateOuter = GATE_WIDTH / 2 / outer;
     const gateStep = (Math.PI * 2) / GATE_COUNT;
-    const mouthCorner = openingCorner(GATE_WIDTH, GATE_HEIGHT);
     for (const angle of gateAngles()) {
       shell(outer, angle + gateOuter, gateStep - gateOuter * 2, 0, false);
       const head = new Mesh(
@@ -2281,33 +2358,42 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       wall.push(head);
     }
 
-    // Each exit is lined right through the wall, from just proud of the hall's
+    // Each exit is lined right through the wall, from just behind the hall's
     // face to where the gate's frame outside begins (its back is 5 cm inside
     // the outer face), so the way out is one clean passage. Running on into
     // that frame would put two surfaces in the same place, and they flicker.
-    // The lining is solid, like a door frame.
-    const liningFront = 0.25;
-    const liningDepth = liningFront + WALL_THICKNESS - 0.05;
+    // The lining is the wall's own colour, and its front follows the drum's
+    // curve 1 cm behind the face, so from the hall the exit is a plain cut
+    // with no frame. It is solid, so nobody walks into the wall.
+    const liningDepth = WALL_THICKNESS - 0.05;
+    const liningGeometry = doorFrameGeometry(GATE_WIDTH, GATE_HEIGHT, GATE_REVEAL, liningDepth);
+    liningGeometry.translate(0, 0, -liningDepth / 2);
+    const liningPositions = liningGeometry.getAttribute('position');
+    for (let i = 0; i < liningPositions.count; i++) {
+      if (liningPositions.getZ(i) < -liningDepth / 2) continue;
+      const x = liningPositions.getX(i);
+      liningPositions.setZ(i, radius - Math.sqrt(radius * radius - x * x) - 0.01);
+    }
     for (const angle of gateAngles()) {
       const mouth = new Group();
       mouth.position.set(Math.sin(angle) * radius, 0, Math.cos(angle) * radius);
       mouth.rotation.y = Math.atan2(-Math.sin(angle), -Math.cos(angle));
-      const lining = new Mesh(doorFrameGeometry(GATE_WIDTH, GATE_HEIGHT, GATE_FRAME, liningDepth), gateFrameMaterial);
-      lining.position.z = liningFront - liningDepth / 2;
+      const lining = new Mesh(liningGeometry.clone(), innerWallMaterial);
       mouth.add(lining);
       scene.add(mouth);
       gateMouths.push(mouth);
       wall.push(lining);
-      // Wayfinding, as in a terminal: on the wall above the exit, clear of its lining.
+      // Wayfinding, as in a terminal: on the wall above the exit.
       const avenue = createAvenueSign(String.fromCharCode(65 + gateMouths.length - 1));
       avenue.draw(light);
       avenue.mesh.userData.ownMaterial = true;
-      const signY = GATE_HEIGHT + GATE_FRAME + 0.25 + 0.625;
+      const signY = GATE_HEIGHT + FRAME + 0.25 + 0.625;
       avenue.mesh.position.set(0, signY, 0.04);
       mouth.add(avenue.mesh);
       trim.push(avenue.mesh);
       gateLabelDraw.push(avenue.draw);
     }
+    liningGeometry.dispose();
 
     floorUniforms.uHall.value = radius;
     // In front of everything standing on the wall's foot (its ribs reach

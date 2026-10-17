@@ -39,6 +39,9 @@
       "MAX_ROOM_PEERS": {
         "description": "People at once in one named room. Default `64`."
       },
+      "MAX_WATCHERS": {
+        "description": "Live doorway views watching one room at once, unseen, besides its people. Default `32`; `0` turns watching off."
+      },
       "VOICE": {
         "description": "`on`: push-to-talk voice, handed only to people standing near whoever is talking. `off`: none."
       },

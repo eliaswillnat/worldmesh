@@ -72,10 +72,12 @@ A world passes an array of meshes as `colliders`. The controller casts one ray
 down to find the floor and four rays forward (at ankle, hip, chest and shoulder
 height) to slide along walls. That is roughly 100 lines and no dependency.
 
-It is deliberately not a physics engine. It cannot do moving platforms, ragdolls
-or stacked dynamic bodies. It can do *walk around a world someone generated with
-an AI tool*, which is the actual requirement. Worlds that need more can drive
-`world.update()` themselves from their own physics step.
+It is deliberately not a physics engine. It cannot do moving platforms or
+ragdolls. Other people are the exception: you slide along them, and a jump
+that reaches their shoulders sets you down on their head. It can do *walk
+around a world someone generated with an AI tool*, which is the actual
+requirement. Worlds that need more can drive `world.update()` themselves from
+their own physics step.
 
 Ground sampling starts from where the feet **were**, not where they are, and
 looks down far enough to cover the distance just fallen — otherwise a fast
