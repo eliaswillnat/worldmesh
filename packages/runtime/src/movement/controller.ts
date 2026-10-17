@@ -25,6 +25,22 @@ export const DEFAULT_TUNING: MovementTuning = {
  */
 const SEPARATE_SPEED = 1.5;
 
+/**
+ * A normal jump peaks about 1.2 m and another person is about 1.8 m tall, so
+ * a jump that reaches their shoulders is close enough to hop the rest of the
+ * way onto their head.
+ */
+const MOUNT_REACH = 0.7;
+
+/** Still counts as jumping into someone when you are just brushing their side. */
+const MOUNT_SLACK = 0.12;
+
+/**
+ * After landing on someone, ignore steering briefly. Otherwise the same
+ * forward hold that made the jump walks you off their head immediately.
+ */
+const HEAD_STICK = 0.45;
+
 export interface ControllerOptions {
   input: Input;
   collision: CollisionWorld;
@@ -49,7 +65,7 @@ export class MovementController {
   flying = false;
   /** Current standing height, shrinks while crouching. */
   currentHeight: number;
-  /** Other people's bodies, which this player walks into rather than through. */
+  /** Other people's bodies, which this player walks into rather than through, and can stand on. */
   bodies: (() => Iterable<PeerBody>) | null = null;
 
   readonly tuning: MovementTuning;
@@ -65,6 +81,10 @@ export class MovementController {
   private dashDirection = new Vector3();
   private scratch = new Vector3();
   private groundProbe = new Vector3();
+  /** Set for this step when a jump should finish on someone's head. */
+  private mount: { x: number; z: number; head: number; reach: number } | null = null;
+  /** Seconds left to stay planted after landing on someone. */
+  private headStick = 0;
 
   constructor(options: ControllerOptions) {
     this.input = options.input;
@@ -89,11 +109,13 @@ export class MovementController {
     this.crouching = false;
     this.jumpsUsed = 0;
     this.dashTime = 0;
+    this.headStick = 0;
   }
 
   /** Advance one simulation step. `yaw` is the camera heading in radians. */
   step(dt: number, yaw: number, controlsEnabled: boolean): void {
-    const axis = controlsEnabled ? this.input.getMoveAxis() : { x: 0, z: 0 };
+    this.headStick = Math.max(0, this.headStick - dt);
+    const axis = controlsEnabled && this.headStick === 0 ? this.input.getMoveAxis() : { x: 0, z: 0 };
 
     this.updateModes(controlsEnabled);
 
@@ -156,9 +178,11 @@ export class MovementController {
         this.velocity.y = tuning.jumpSpeed;
         this.jumpsUsed = 1;
         this.onGround = false;
+        this.headStick = 0;
       } else if (this.jumpsUsed < maxJumps) {
         this.velocity.y = tuning.jumpSpeed * 0.9;
         this.jumpsUsed++;
+        this.headStick = 0;
       }
     }
   }
@@ -229,6 +253,7 @@ export class MovementController {
     }
     this.position.x += resolved.x;
     this.position.z += resolved.z;
+    this.hopOntoHead();
 
     const previousY = this.position.y;
     this.position.y += this.velocity.y * dt;
@@ -244,6 +269,9 @@ export class MovementController {
       stepHeight,
       fallDistance + 4,
     );
+    const floor = ground.y;
+    const head = this.highestHead(previousY, stepHeight);
+    if (head > ground.y) ground.y = head;
 
     if (this.flying) {
       if (this.position.y < ground.y) {
@@ -254,6 +282,12 @@ export class MovementController {
     }
 
     if (this.position.y <= ground.y + 1e-3 && this.velocity.y <= 0) {
+      // Dropping onto someone from above (a hop already planted itself).
+      if (!this.onGround && head > floor) {
+        this.headStick = HEAD_STICK;
+        this.velocity.x *= 0.2;
+        this.velocity.z *= 0.2;
+      }
       this.position.y = ground.y;
       this.velocity.y = 0;
       this.onGround = true;
@@ -266,20 +300,36 @@ export class MovementController {
   /**
    * Bend this step's horizontal `move` so the player does not end up inside
    * anyone else. Walking into someone stops at their edge and slides round
-   * them; already overlapping, the gap may only grow. Says whether `move`
-   * changed, and whether that includes drifting out of someone.
+   * them; already overlapping, the gap may only grow. A jump into their upper
+   * body is remembered so the player can hop onto their head. Says whether
+   * `move` changed, and whether that includes drifting out of someone.
    */
   private keepApart(move: Vector3, dt: number): 'clear' | 'blocked' | 'separating' {
+    this.mount = null;
     if (!this.bodies) return 'clear';
     const { x, y, z } = this.position;
     let result: 'clear' | 'blocked' | 'separating' = 'clear';
     for (const body of this.bodies()) {
-      // Only bodies at the same height block: jumping over someone is fine.
-      if (body.y >= y + this.currentHeight || y >= body.y + body.height) continue;
+      const head = body.y + body.height;
+      // Entirely above us, or we are already clear of their head: no wall.
+      if (body.y >= y + this.currentHeight || y >= head) continue;
+      if (!Number.isFinite(head) || !Number.isFinite(body.x) || !Number.isFinite(body.z)) continue;
       const reach = this.radius + body.radius;
       const nowX = x - body.x;
       const nowZ = z - body.z;
       const now = Math.hypot(nowX, nowZ);
+      // Jumping into their shoulders hops you onto their head instead of
+      // sliding back down. Falling hard still glances off.
+      const mounting =
+        !this.flying &&
+        this.velocity.y > -2 &&
+        y >= head - MOUNT_REACH &&
+        now < reach + MOUNT_SLACK &&
+        !(now >= reach && move.x * nowX + move.z * nowZ > 0);
+      if (mounting && (this.mount === null || head > this.mount.head)) {
+        this.mount = { x: body.x, z: body.z, head, reach };
+      }
+      if (mounting && now < reach) continue;
       if (now >= reach + Math.hypot(move.x, move.z)) continue;
       let awayX = nowX + move.x;
       let awayZ = nowZ + move.z;
@@ -298,5 +348,55 @@ export class MovementController {
       if (result !== 'separating') result = now < reach ? 'separating' : 'blocked';
     }
     return result;
+  }
+
+  /**
+   * Finish a jump on the head chosen in `keepApart`. Step in from the rim so
+   * the landing is not balanced on the exact edge, and shed most of the run-up
+   * so you stay put long enough to enjoy it.
+   */
+  private hopOntoHead(): void {
+    const mount = this.mount;
+    this.mount = null;
+    if (!mount) return;
+    const dx = this.position.x - mount.x;
+    const dz = this.position.z - mount.z;
+    const dist = Math.hypot(dx, dz);
+    const inset = mount.reach * 0.72;
+    if (dist > inset && dist > 1e-4) {
+      const scale = inset / dist;
+      this.position.x = mount.x + dx * scale;
+      this.position.z = mount.z + dz * scale;
+    }
+    this.position.y = mount.head;
+    this.velocity.x = 0;
+    this.velocity.z = 0;
+    this.velocity.y = 0;
+    this.onGround = true;
+    this.jumpsUsed = 0;
+    this.headStick = HEAD_STICK;
+  }
+
+  /**
+   * The highest other person's head under the feet this step, so you land on
+   * them when falling from above and stay there while they shift a little.
+   * `-Infinity` when nobody is underfoot.
+   */
+  private highestHead(previousY: number, stepHeight: number): number {
+    if (!this.bodies) return -Infinity;
+    let best = -Infinity;
+    const { x, y, z } = this.position;
+    for (const body of this.bodies()) {
+      const head = body.y + body.height;
+      if (!Number.isFinite(head) || !Number.isFinite(body.x) || !Number.isFinite(body.z)) continue;
+      // Above where the feet were: someone beside us, not a floor.
+      if (head > previousY + stepHeight) continue;
+      // Already dropped past them.
+      if (y < head - 0.15 && previousY < head) continue;
+      const reach = this.radius + body.radius;
+      if (Math.hypot(x - body.x, z - body.z) > reach) continue;
+      if (head > best) best = head;
+    }
+    return best;
   }
 }

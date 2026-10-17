@@ -200,7 +200,8 @@ them.) The rest is the adapter's:
   ease it toward each position they report, animate it, and remove and dispose
   of it when they leave. Return where they stand from `bodies()` (feet
   position, 0.35 m radius, 1.8 m tall, as the relay does) and the visitor walks
-  into them rather than through them. The relay client's own pieces are
+  into them rather than through them. A jump that reaches their shoulders sets
+  the visitor down on their head. The relay client's own pieces are
   exported: `createDefaultAvatar`, `animateDefaultAvatar`,
   `setAvatarExpression`, `setFigureStroke`, `createNameTag`,
   `createSpeechBubble` and `easeYaw`.
