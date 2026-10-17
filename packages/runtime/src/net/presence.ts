@@ -15,6 +15,14 @@ export interface PresenceOptions {
   /** Full WebSocket URL of the room, e.g. `wss://relay.example/world`. */
   url: string;
   scene: Scene;
+  /**
+   * Only watch the room: draw everyone in it without joining. Nobody sees
+   * this visitor, it takes no one's place, and it sends nothing (a live
+   * doorway view). Everyone is drawn in the default body, with no avatar
+   * downloads. `join()` makes it an ordinary member. Relays too old to know
+   * watching are left alone, rather than joined as an invisible peer.
+   */
+  watch?: boolean;
   /** Players in the room including this one, or null while disconnected. */
   onCount?: (count: number | null) => void;
   getName?: () => string | null;
@@ -94,6 +102,8 @@ const KEEPALIVE_MS = 30_000;
 /** After the relay says this world used today's free allowance, try again this much later. */
 const ALLOWANCE_RETRY_MS = 30 * 60_000;
 const MAX_BACKOFF_MS = 30_000;
+/** Query parameter asking the relay to let this socket only watch the room. */
+const WATCH_PARAM = 'watch';
 
 interface Remote {
   /** Holds the body, name tag and bubble; moved and turned as one. */
@@ -170,7 +180,7 @@ interface WireAvatar {
 }
 
 type ServerMessage =
-  | { t: 'welcome'; id: string; peers: (PeerState & { id: string })[]; objects?: { k: string; v: unknown; ms: number }[] }
+  | { t: 'welcome'; id: string; peers: (PeerState & { id: string })[]; objects?: { k: string; v: unknown; ms: number }[]; w?: number }
   | ({ t: 'v'; id: string } & WireAvatar)
   | { t: 'o'; id: string; k: string; v: unknown }
   | ({ t: 's'; id: string } & PeerState)
@@ -211,6 +221,7 @@ export class Presence implements NetworkAdapter {
   private keptAvatars = new WeakMap<Object3D, LoadedAvatar>();
   /** The world this draws into, once attached: avatars are readied for its renderer before they go on. */
   private world: WorldMeshHandle | null = null;
+  private watchOnly: boolean;
 
   readonly url: string;
   private onCount: (count: number | null) => void;
@@ -231,6 +242,7 @@ export class Presence implements NetworkAdapter {
 
   constructor(options: PresenceOptions) {
     this.url = options.url;
+    this.watchOnly = options.watch === true;
     this.onCount = options.onCount ?? (() => {});
     this.onFull = options.onFull ?? (() => {});
     this.getName = options.getName ?? (() => null);
@@ -248,6 +260,30 @@ export class Presence implements NetworkAdapter {
     this.place = options.place;
     this.group.name = 'worldmesh:remote-players';
     options.scene.add(this.group);
+  }
+
+  /** Only watching the room (`watch`), not in it. */
+  get watching(): boolean {
+    return this.watchOnly;
+  }
+
+  /**
+   * Stop only watching and join the room. Everyone drawn stays where they
+   * are while the new connection is made; the relay's welcome then says who
+   * is still here, and in which avatars.
+   */
+  join(): void {
+    if (!this.watchOnly || this.closed) return;
+    this.watchOnly = false;
+    window.clearTimeout(this.reconnectTimer);
+    this.probeId += 1;
+    const socket = this.socket;
+    this.socket = null;
+    this.selfId = null;
+    this.welcomed = false;
+    socket?.close(1000, 'joining');
+    this.backoff = 1000;
+    this.connect();
   }
 
   /** Late-bind the full-room overlay (createWorldMesh wires this after constructing Presence). */
@@ -270,7 +306,7 @@ export class Presence implements NetworkAdapter {
 
   sendLocalState(state: PlayerState): void {
     const socket = this.socket;
-    if (!socket || socket.readyState !== WebSocket.OPEN || !this.selfId) return;
+    if (!socket || socket.readyState !== WebSocket.OPEN || !this.selfId || this.watchOnly) return;
 
     const now = performance.now();
     if (now - this.lastSent < 1000 / SEND_RATE) return;
@@ -296,7 +332,7 @@ export class Presence implements NetworkAdapter {
    */
   private sendAvatar(): void {
     const socket = this.socket;
-    if (!socket || socket.readyState !== WebSocket.OPEN || !this.selfId || !this.stateSent) return;
+    if (!socket || socket.readyState !== WebSocket.OPEN || !this.selfId || !this.stateSent || this.watchOnly) return;
     const avatar = parseAvatarShare(this.getAvatar());
     const key = avatar ? `${avatar.i} ${avatar.u} ${avatar.x}` : '';
     // Nothing to say on a fresh connection when there is no avatar.
@@ -312,7 +348,7 @@ export class Presence implements NetworkAdapter {
   say(text: string): void {
     const socket = this.socket;
     const line = text.replace(/[\u0000-\u001f]/g, '').trim().slice(0, 80);
-    if (!line || !socket || socket.readyState !== WebSocket.OPEN) return;
+    if (!line || !socket || socket.readyState !== WebSocket.OPEN || this.watchOnly) return;
     socket.send(JSON.stringify({ t: 'c', m: line }));
   }
 
@@ -323,7 +359,7 @@ export class Presence implements NetworkAdapter {
    */
   share(key: string, value: Record<string, number>): boolean {
     const socket = this.socket;
-    if (!socket || socket.readyState !== WebSocket.OPEN || !this.selfId) return false;
+    if (!socket || socket.readyState !== WebSocket.OPEN || !this.selfId || this.watchOnly) return false;
     socket.send(JSON.stringify({ t: 'o', k: key, v: value }));
     return true;
   }
@@ -418,7 +454,7 @@ export class Presence implements NetworkAdapter {
 
     let socket: WebSocket;
     try {
-      socket = new WebSocket(this.url);
+      socket = new WebSocket(this.watchOnly ? watchUrl(this.url) : this.url);
     } catch {
       this.scheduleReconnect();
       return;
@@ -427,7 +463,7 @@ export class Presence implements NetworkAdapter {
     this.welcomed = false;
 
     listenForHandshakeRefuse(socket, (signal) => {
-      if (this.socket !== socket || this.welcomed) return;
+      if (this.socket !== socket || this.welcomed || this.watchOnly) return;
       if (isRoomFullSignal(signal)) this.enterFull();
     });
 
@@ -451,7 +487,9 @@ export class Presence implements NetworkAdapter {
       this.clearRemotes();
       this.onCount(null);
       if (this.full) return;
-      if (welcomed) {
+      // Turned away while watching (too many watching, or today's allowance
+      // used up): nothing to tell anyone, just look again later.
+      if (welcomed || this.watchOnly) {
         this.scheduleReconnect();
         return;
       }
@@ -529,6 +567,12 @@ export class Presence implements NetworkAdapter {
   private handleMessage(message: ServerMessage): void {
     switch (message.t) {
       case 'welcome':
+        if (this.watchOnly && message.w !== 1) {
+          // A relay that doesn't know watching took this socket as a peer: leave its place free.
+          window.clearTimeout(this.reconnectTimer);
+          this.disconnect();
+          return;
+        }
         this.selfId = message.id;
         this.welcomed = true;
         this.backoff = 1000;
@@ -538,8 +582,16 @@ export class Presence implements NetworkAdapter {
         this.avatarSent = null;
         this.avatarSentAt = 0;
         this.leaveFull();
+        // Anyone still drawn from watching who left in between.
+        for (const [id, remote] of this.remotes) {
+          if (message.peers.some((peer) => peer.id === id)) continue;
+          disposeRemote(remote);
+          this.remotes.delete(id);
+        }
         for (const peer of message.peers) {
-          if (peer.v) this.pendingAvatars.set(peer.id, peer.v);
+          const known = this.remotes.get(peer.id);
+          if (peer.v && known) this.wear(known, peer.v);
+          else if (peer.v) this.pendingAvatars.set(peer.id, peer.v);
           this.upsert(peer.id, peer, true);
         }
         for (const object of message.objects ?? []) this.shared(object.k, object.v, false, object.ms / 1000);
@@ -578,7 +630,7 @@ export class Presence implements NetworkAdapter {
         break;
       }
     }
-    this.onCount(this.remotes.size + 1);
+    this.onCount(this.remotes.size + (this.watchOnly ? 0 : 1));
   }
 
   private shared(key: unknown, value: unknown, self: boolean, age: number): void {
@@ -677,7 +729,7 @@ export class Presence implements NetworkAdapter {
    * A new link to the same avatar only replaces the link; it is not reloaded.
    */
   private wear(remote: Remote, avatar: WireAvatar): void {
-    const wanted = this.showAvatars && this.verifyAvatar ? parseAvatarShare(avatar) : null;
+    const wanted = this.showAvatars && this.verifyAvatar && !this.watchOnly ? parseAvatarShare(avatar) : null;
     if (!wanted) {
       if (!remote.avatarId) return;
       remote.avatarId = '';
@@ -781,6 +833,17 @@ export class Presence implements NetworkAdapter {
 
 function round(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+/** The room's URL asking only to watch it. */
+function watchUrl(url: string): string {
+  try {
+    const watch = new URL(url);
+    watch.searchParams.set(WATCH_PARAM, '1');
+    return watch.toString();
+  } catch {
+    return url;
+  }
 }
 
 /** Give up on someone else's avatar download after this long. */

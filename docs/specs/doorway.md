@@ -193,7 +193,10 @@ arrival view, at its own scale), draws from that camera, and posts
 `{ "type": "doorway:view-frame" }` after the first frame, before which the
 host keeps its cover. It SHOULD draw only `rect`, only when a view arrives,
 and nothing on the host's side of the doorway plane. A live view shows no UI,
-takes no input and joins no session.
+takes no input and joins no session as a participant. It MAY watch one, so the
+people inside show through the doorway, as long as nobody there sees the
+visitor and the visitor takes no one's place (the WorldMesh relay's `?watch`);
+walked through, it joins.
 
 It costs the host a second running page, so a host SHOULD run at most one,
 for the nearest door, only while it is close and on screen, and MAY keep the
