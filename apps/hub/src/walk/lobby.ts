@@ -253,10 +253,10 @@ const GATE_WIDTH = DOOR_WIDTH;
 const GATE_HEIGHT = DOOR_HEIGHT;
 /** The frame round each exit's mouth on the outside. */
 const GATE_MOUTH_FRAME = 0.6;
-/** The lining through the wall, round the opening, as seen from the hall. */
-const GATE_FRAME = FRAME;
-/** Half the exit's width in the hall, lining included. */
-const GATE_HALF_SPAN = GATE_WIDTH / 2 + GATE_FRAME;
+/** The reveal lining the passage through the wall: hidden behind the hall's face, so the exit has no frame inside. */
+const GATE_REVEAL = 0.1;
+/** Half the room each exit takes along the hall's wall: doors and piers keep this far from its centre. */
+const GATE_HALF_SPAN = GATE_WIDTH / 2 + FRAME;
 
 /** Gate angles around the hall, starting at +Z. */
 function gateAngles(): number[] {
@@ -2063,10 +2063,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
     // Inner drum: faces the hall, open at each doorway and exit. The cut follows
     // the frame's rounded top, not a rectangle.
+    // The exits are cut to their clear opening: they have no frame on this side.
     const doorCorner = frameOuterCorner(DOOR_WIDTH, DOOR_HEIGHT, FRAME);
-    const gateCorner = frameOuterCorner(GATE_WIDTH, GATE_HEIGHT, GATE_FRAME);
+    const mouthCorner = openingCorner(GATE_WIDTH, GATE_HEIGHT);
     const openings = [
-      ...gateAngles().map((angle) => ({ angle, span: GATE_HALF_SPAN, top: GATE_HEIGHT + GATE_FRAME, corner: gateCorner })),
+      ...gateAngles().map((angle) => ({ angle, span: GATE_WIDTH / 2, top: GATE_HEIGHT, corner: mouthCorner })),
       ...angles.map((angle) => ({ angle, span: DOOR_HALF_SPAN, top: DOOR_TOP, corner: doorCorner })),
     ].sort((a, b) => a.angle - b.angle);
     openings.forEach((opening, i) => {
@@ -2085,7 +2086,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     // the gate's frame outside.
     const gateOuter = GATE_WIDTH / 2 / outer;
     const gateStep = (Math.PI * 2) / GATE_COUNT;
-    const mouthCorner = openingCorner(GATE_WIDTH, GATE_HEIGHT);
     for (const angle of gateAngles()) {
       shell(outer, angle + gateOuter, gateStep - gateOuter * 2, 0, false);
       const head = new Mesh(
@@ -2096,33 +2096,42 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       wall.push(head);
     }
 
-    // Each exit is lined right through the wall, from just proud of the hall's
+    // Each exit is lined right through the wall, from just behind the hall's
     // face to where the gate's frame outside begins (its back is 5 cm inside
     // the outer face), so the way out is one clean passage. Running on into
     // that frame would put two surfaces in the same place, and they flicker.
-    // The lining is solid, like a door frame.
-    const liningFront = 0.25;
-    const liningDepth = liningFront + WALL_THICKNESS - 0.05;
+    // The lining is the wall's own colour, and its front follows the drum's
+    // curve 1 cm behind the face, so from the hall the exit is a plain cut
+    // with no frame. It is solid, so nobody walks into the wall.
+    const liningDepth = WALL_THICKNESS - 0.05;
+    const liningGeometry = doorFrameGeometry(GATE_WIDTH, GATE_HEIGHT, GATE_REVEAL, liningDepth);
+    liningGeometry.translate(0, 0, -liningDepth / 2);
+    const liningPositions = liningGeometry.getAttribute('position');
+    for (let i = 0; i < liningPositions.count; i++) {
+      if (liningPositions.getZ(i) < -liningDepth / 2) continue;
+      const x = liningPositions.getX(i);
+      liningPositions.setZ(i, radius - Math.sqrt(radius * radius - x * x) - 0.01);
+    }
     for (const angle of gateAngles()) {
       const mouth = new Group();
       mouth.position.set(Math.sin(angle) * radius, 0, Math.cos(angle) * radius);
       mouth.rotation.y = Math.atan2(-Math.sin(angle), -Math.cos(angle));
-      const lining = new Mesh(doorFrameGeometry(GATE_WIDTH, GATE_HEIGHT, GATE_FRAME, liningDepth), gateFrameMaterial);
-      lining.position.z = liningFront - liningDepth / 2;
+      const lining = new Mesh(liningGeometry.clone(), innerWallMaterial);
       mouth.add(lining);
       scene.add(mouth);
       gateMouths.push(mouth);
       wall.push(lining);
-      // Wayfinding, as in a terminal: on the wall above the exit, clear of its lining.
+      // Wayfinding, as in a terminal: on the wall above the exit.
       const avenue = createAvenueSign(String.fromCharCode(65 + gateMouths.length - 1));
       avenue.draw(light);
       avenue.mesh.userData.ownMaterial = true;
-      const signY = GATE_HEIGHT + GATE_FRAME + 0.25 + 0.625;
+      const signY = GATE_HEIGHT + FRAME + 0.25 + 0.625;
       avenue.mesh.position.set(0, signY, 0.04);
       mouth.add(avenue.mesh);
       trim.push(avenue.mesh);
       gateLabelDraw.push(avenue.draw);
     }
+    liningGeometry.dispose();
 
     floorUniforms.uHall.value = radius;
     // In front of everything standing on the wall's foot (its ribs reach
