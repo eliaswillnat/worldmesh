@@ -507,6 +507,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
         maxBytes: options.avatar?.maxBytes,
         signal: load.signal,
         data,
+        warmUp: { renderer, scene, camera },
       });
       if (disposed || load.signal.aborted) {
         loaded.dispose();

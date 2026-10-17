@@ -35,7 +35,7 @@ export {
   withAvatarTicket,
 } from './avatar/handoff.js';
 export { downloadAvatarModel, loadAvatarModel } from './avatar/loader.js';
-export type { LoadAvatarOptions, LoadedAvatar } from './avatar/loader.js';
+export type { AvatarWarmUp, LoadAvatarOptions, LoadedAvatar } from './avatar/loader.js';
 export { Overlay } from './ui/overlay.js';
 export { immersiveVrSupported, requestImmersiveVr, IMMERSIVE_VR } from './xr/session.js';
 export { deserializePlayerState, serializePlayerState } from './net/adapter.js';
