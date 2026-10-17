@@ -128,7 +128,8 @@ ensure_pages_domain() {
   fi
 }
 
-# The hub's Pages Functions get the preview directory and cover bucket.
+# The hub's Pages Functions get the preview directory and cover bucket, and
+# Workers AI for translating lobby chat (/api/translate).
 # APPROVE_SECRET is made once.
 configure_hub_project() {
   local project body has_approve
@@ -140,6 +141,7 @@ configure_hub_project() {
     {deployment_configs: {production: {
       compatibility_date: $date,
       kv_namespaces: {WORLDS: {namespace_id: $kv}},
+      ai_bindings: {AI: {}},
       env_vars: ({
         COVER_HOSTS: {type: "plain_text", value: $covers},
         NOTIFICATION_EMAIL: {type: "plain_text", value: $email}}

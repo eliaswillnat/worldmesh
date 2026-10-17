@@ -41,7 +41,8 @@ export { immersiveVrSupported, requestImmersiveVr, IMMERSIVE_VR } from './xr/ses
 export { deserializePlayerState, serializePlayerState } from './net/adapter.js';
 export { DEFAULT_PRESENCE_SERVER, Presence, createNameTag, createSpeechBubble } from './net/presence.js';
 export { easeYaw } from './net/follow.js';
-export type { PresenceOptions, SharedAvatar } from './net/presence.js';
+export type { BubbleMark, PeerPick, PresenceOptions, Said, SharedAvatar } from './net/presence.js';
+export type { MicState } from './net/voice.js';
 export { SharedAvatarLink, createShareVerifier, shareableAvatar } from './avatar/share.js';
 export { isOverAllowanceSignal, isRoomFullSignal, occupancyIsFull, occupancyProbeUrl, probeRoom, probeRoomFull, roomFullLabel } from './net/roomFull.js';
 export type { RoomProbe } from './net/roomFull.js';

@@ -12,6 +12,9 @@ import {
   setAvatarAppear,
   setAvatarColor,
   setStrokeOpacity,
+  type MicState,
+  type PeerPick,
+  type Said,
   type Vec3Tuple,
 } from '@worldmesh/runtime';
 import {
@@ -56,6 +59,7 @@ import { buildAvenues, dressHall } from './avenues';
 import { STOREFRONT_WIDTH } from './facade';
 import { playSendSound, playWarpSound } from './sounds';
 import { chatRejection } from '../../../../templates/relay/src/chatFilter';
+import { deviceLanguage, isForeign, translate } from './translate';
 import { fetchOccupancy } from './occupancy';
 import { Arrival } from './arrival';
 import { FLOOR_NAMES, Lifts, buildShafts, createColliderMaterial, mergeInto, planLifts } from './elevators';
@@ -550,6 +554,20 @@ const floorShader = {
   `,
 };
 
+/** People further than this are not picked for muting: their voice has faded out anyway. */
+const PEER_PICK_RANGE = 45;
+/** How long "muted" stays up after a click or tap. */
+const PEER_NOTE_MS = 2500;
+
+/** What the badge over your head says while the microphone is not carrying your voice. */
+const TALK_NOTES: Record<MicState, string> = {
+  off: '',
+  live: '',
+  starting: 'opening microphone',
+  denied: 'microphone blocked',
+  unavailable: 'voice is not available',
+};
+
 /**
  * Walk mode: the directory as a place. You arrive inside the citadel, a tall
  * round hall whose wall is lined with a door per listed world; walking into
@@ -724,6 +742,25 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
           if (key === 'warp' && !self && age < 2) seeWarp(value.x, value.y, value.z, value.o === 1);
         },
         place: (position, grounded) => lifts.ground(position, grounded),
+        // Push-to-talk (hold T, or the mic button on touch): heard by everyone nearby.
+        voice: true,
+        onMic: (state) => showMic(state),
+        // On touch there is no aiming prompt: say once how muting works.
+        onVoice: () => {
+          if (!isTouch || muteHintShown) return;
+          muteHintShown = true;
+          notePeer('Tap someone talking to mute them');
+        },
+        // Lines in another language get a 文A mark: click or tap the bubble to translate it.
+        language: deviceLanguage(),
+        isForeign: async (text, language) => {
+          const foreign = await isForeign(text, language);
+          if (foreign && isTouch && !translateHintShown) {
+            translateHintShown = true;
+            notePeer('Tap a 文A bubble to translate it');
+          }
+          return foreign;
+        },
         // Someone arriving warps in as we do.
         onArrive: (x, z) => {
           if (!spawnPads.pads.some((spot) => Math.hypot(x - spot.x, z - spot.z) < ARRIVE_RADIUS)) return;
@@ -969,6 +1006,22 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     if (focused) activateBillboard(focused);
   });
   if (adsEnabled) container.appendChild(adPrompt);
+  // Muting someone's voice: the prompt while aiming at them, and the note after.
+  const peerPrompt = document.createElement('button');
+  peerPrompt.type = 'button';
+  peerPrompt.className = 'walk-add-prompt walk-peer-prompt';
+  peerPrompt.addEventListener('click', (event) => {
+    event.stopPropagation();
+    if (peerFocus) actOn(peerFocus);
+  });
+  if (presence) container.appendChild(peerPrompt);
+  let peerFocus: PeerPick | null = null;
+  let sincePeerFocus = 0;
+  let peerNoteUntil = 0;
+  let muteHintShown = false;
+  let translateHintShown = false;
+  /** Lines on their way to a translation, so they are not asked for twice. */
+  const translating = new WeakSet<Said>();
   let focused: BillboardHit | null = null;
   let sinceFocus = 0;
   let adModal: { close(): void } | null = null;
@@ -1060,6 +1113,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         addPrompt.classList.toggle('visible', near !== null);
       }
       updateBillboardFocus(dt, near !== null);
+      updatePeerFocus(dt, near !== null);
       billboards?.update(dt, camera);
       floorUniforms.uPlayer.value.set(x, z);
       // The sky is centred on the camera, so it stays around it however high the towers take them.
@@ -1084,6 +1138,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       // space, so moving the plane does not move the lines.
       mirror.position.set(Math.round(x / 10) * 10, 0, Math.round(z / 10) * 10);
       placeChatBubble();
+      placeTalkBadge();
       // Last, with the camera where it will be drawn from: the worlds seen live through their doors.
       walkThrough.step(camera, feet.set(x, y, z));
       liveDoors.update(doors.values(), camera, feet, !renderer.xr.isPresenting);
@@ -1156,6 +1211,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     if (chatting) return;
     if (claimModal || adModal || warping) return;
     if (document.querySelector('.wm-overlay')?.getAttribute('data-locked') !== 'true') return;
+    talk(false);
     chatting = true;
     chatSaid.textContent = '';
     chatBubble.classList.add('saying');
@@ -1258,6 +1314,119 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     chatBubble.style.top = `${(-chatPoint.y * 0.5 + 0.5) * rect.height}px`;
     chatBubble.classList.add('visible');
   }
+  // Push-to-talk: hold T (the mic button on touch) and everyone nearby hears
+  // you, from where you stand, until you let go. A badge over your head says
+  // you are on air, like the sound bars over anyone else who is talking.
+  const talkBadge = document.createElement('div');
+  talkBadge.className = 'walk-talk';
+  talkBadge.setAttribute('role', 'status');
+  container.appendChild(talkBadge);
+  let talkHeld = false;
+  let micState: MicState = 'off';
+  let talkNoteUntil = 0;
+  const talkPoint = new Vector3();
+
+  function talk(held: boolean): void {
+    if (!presence || held === talkHeld) return;
+    if (held && (chatting || claimModal || adModal || warping)) return;
+    if (held && document.querySelector('.wm-overlay')?.getAttribute('data-locked') !== 'true') return;
+    talkHeld = held;
+    talkBtn?.classList.toggle('held', held);
+    presence.talk(held);
+  }
+
+  function showMic(state: MicState): void {
+    micState = state;
+    talkBadge.dataset.mic = state;
+    talkBtn?.setAttribute('data-mic', state);
+    if (state === 'live') talkBadge.innerHTML = '<span></span><span></span><span></span>';
+    else talkBadge.textContent = TALK_NOTES[state];
+    if (state === 'denied' || state === 'unavailable') talkNoteUntil = performance.now() + 4000;
+  }
+
+  const handleTalkKey = (event: KeyboardEvent) => {
+    if (event.code !== 'KeyT' || event.repeat) return;
+    const down = event.type === 'keydown';
+    const target = event.target;
+    if (down && target instanceof Element && target.closest('input, textarea, select, [contenteditable="true"]')) return;
+    talk(down);
+  };
+  window.addEventListener('keydown', handleTalkKey);
+  window.addEventListener('keyup', handleTalkKey);
+  // The key or finger can come up somewhere this page never hears of.
+  const releaseTalk = () => talk(false);
+  window.addEventListener('blur', releaseTalk);
+
+  let talkBtn: HTMLButtonElement | null = null;
+  let talkKey: HTMLElement | null = null;
+  if (presence && isTouch) {
+    const button = (talkBtn = document.createElement('button'));
+    button.type = 'button';
+    button.className = 'walk-talk-btn';
+    // Lucide's mic (ISC licence, https://lucide.dev).
+    button.innerHTML =
+      '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+      'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M12 19v3"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><rect x="9" y="2" width="6" height="13" rx="3"/></svg>';
+    button.title = 'Hold to talk';
+    button.setAttribute('aria-label', 'Hold to talk');
+    button.addEventListener('pointerdown', (event) => {
+      event.stopPropagation();
+      event.preventDefault();
+      button.setPointerCapture(event.pointerId);
+      talk(true);
+    });
+    // A thumb sliding on the held button is not looking around.
+    button.addEventListener('pointermove', (event) => event.stopPropagation());
+    for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+      button.addEventListener(type, (event) => {
+        event.stopPropagation();
+        talk(false);
+      });
+    }
+    // A long press would otherwise open the browser's own menu.
+    button.addEventListener('contextmenu', (event) => event.preventDefault());
+    container.appendChild(button);
+  } else if (presence) {
+    // On the pause screen's key list, with the runtime's own keys.
+    const keys = document.querySelector('.wm-keys');
+    if (keys) {
+      talkKey = document.createElement('div');
+      talkKey.className = 'wm-keys-item';
+      const badge = document.createElement('span');
+      badge.className = 'wm-key';
+      badge.textContent = 'T';
+      const text = document.createElement('span');
+      text.className = 'wm-key-desc';
+      text.textContent = 'Hold to talk';
+      talkKey.append(badge, text);
+      keys.appendChild(talkKey);
+    }
+  }
+
+  /** Over your own head while you talk, above your chat bubble if that is showing. */
+  function placeTalkBadge(): void {
+    // Paused (Esc) mid-sentence: the T key's release may never come.
+    if (talkHeld && document.querySelector('.wm-overlay')?.getAttribute('data-locked') !== 'true') talk(false);
+    const now = performance.now();
+    const show = (talkHeld && (micState === 'live' || micState === 'starting')) || now < talkNoteUntil;
+    if (!show) {
+      talkBadge.classList.remove('visible');
+      return;
+    }
+    const [x, y, z] = world.getState().position;
+    talkPoint.set(x, y + 2.45, z).project(camera);
+    if (talkPoint.z > 1) {
+      talkBadge.classList.remove('visible');
+      return;
+    }
+    const rect = renderer.domElement.getBoundingClientRect();
+    const above = chatBubble.classList.contains('visible') && !chatBubble.classList.contains('docked') ? chatBubble.offsetHeight + 8 : 0;
+    talkBadge.style.left = `${(talkPoint.x * 0.5 + 0.5) * rect.width}px`;
+    talkBadge.style.top = `${(-talkPoint.y * 0.5 + 0.5) * rect.height - above}px`;
+    talkBadge.classList.add('visible');
+  }
+
   // Warp in as soon as the world is running, before doors and towers finish building.
   if (!options.start) triggerSpawnFx();
 
@@ -1491,6 +1660,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const handlePointerDown = (event: PointerEvent) => {
     pressAt = { x: event.clientX, y: event.clientY, time: performance.now() };
     if (document.pointerLockElement !== renderer.domElement || adModal || claimModal || event.button !== 0) return;
+    // Someone where the camera looks: translate their line, or mute or unmute them.
+    if (peerFocus) {
+      actOn(peerFocus);
+      return;
+    }
     // A click aims where the camera looks: a tower door there, or a billboard.
     const hit = billboardAt(0, 0);
     if (hit) activateBillboard(hit);
@@ -1507,9 +1681,88 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     const rect = renderer.domElement.getBoundingClientRect();
     const ndcX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     const ndcY = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    const peer = peerAt(ndcX, ndcY);
+    if (peer) {
+      actOn(peer);
+      return;
+    }
     const hit = billboardAt(ndcX, ndcY);
     if (hit) activateBillboard(hit);
   };
+
+  /**
+   * Someone at a point on screen with something to do about them: a line
+   * to translate, or a voice to mute. Not through a wall.
+   */
+  function peerAt(ndcX: number, ndcY: number): PeerPick | null {
+    if (!presence) return null;
+    raycaster.setFromCamera(pointer.set(ndcX, ndcY), camera);
+    raycaster.far = PEER_PICK_RANGE;
+    const peer = presence.pickPeer(raycaster, PEER_PICK_RANGE);
+    if (!peer || (!peer.talked && !translatable(peer))) return null;
+    const wallAt = raycaster.intersectObjects([...wall, ...trim], false)[0]?.distance ?? Infinity;
+    return peer.distance < wallAt ? peer : null;
+  }
+
+  /** Their bubble is marked 文A and not translated (or being translated) yet: picked on the bubble, or on them when there is no voice to mute. */
+  function translatable(peer: PeerPick): boolean {
+    const said = peer.said;
+    return !!said?.foreign && said.translation === null && !translating.has(said) && (peer.onBubble || !peer.talked);
+  }
+
+  /** Clicked or tapped someone: translate their line, or mute or unmute them. */
+  function actOn(peer: PeerPick): void {
+    if (translatable(peer)) translateLine(peer);
+    else if (peer.talked) toggleMute(peer);
+  }
+
+  function translateLine(peer: PeerPick): void {
+    const said = peer.said;
+    if (!said || !presence) return;
+    peerFocus = null;
+    translating.add(said);
+    // Up until the translation is in: a phone downloading its own translator can take a few seconds.
+    notePeer('translating…', Infinity);
+    translate(said.text, said.language).then(
+      (translation) => {
+        translating.delete(said);
+        presence.showTranslation(peer.id, said.text, translation);
+        peerNoteUntil = 0;
+      },
+      () => {
+        translating.delete(said);
+        notePeer('could not translate this');
+      },
+    );
+  }
+
+  function toggleMute(peer: PeerPick): void {
+    presence?.setMuted(peer.id, !peer.muted);
+    peerFocus = null;
+    notePeer(peer.muted ? `${peer.label} unmuted` : `${peer.label} muted · ${isTouch ? 'tap' : 'click'} again to unmute`);
+  }
+
+  /** A short line in the peer prompt, kept up a moment (or until cleared) over the aiming prompt. */
+  function notePeer(text: string, ms = PEER_NOTE_MS): void {
+    peerPrompt.textContent = text;
+    peerPrompt.classList.add('visible');
+    peerNoteUntil = performance.now() + ms;
+  }
+
+  /** Follow where the camera looks a few times a second: "Click to translate" or "Click to mute" over someone. */
+  function updatePeerFocus(dt: number, doorPrompt: boolean): void {
+    sincePeerFocus += dt;
+    if (sincePeerFocus < FOCUS_INTERVAL) return;
+    sincePeerFocus = 0;
+    const active = !isTouch && !adModal && !claimModal && !warping && !chatting && !doorPrompt && !focused && document.pointerLockElement === renderer.domElement;
+    peerFocus = active ? peerAt(0, 0) : null;
+    if (performance.now() < peerNoteUntil) return;
+    peerPrompt.classList.toggle('visible', !!peerFocus);
+    if (!peerFocus) return;
+    peerPrompt.textContent = translatable(peerFocus)
+      ? `Click to translate what ${peerFocus.label} said`
+      : `Click to ${peerFocus.muted ? 'unmute' : 'mute'} ${peerFocus.label}`;
+  }
 
   /** The billboard at a point on screen, unless a wall or tower is in front of it. */
   function billboardAt(ndcX: number, ndcY: number): BillboardHit | null {
@@ -2482,6 +2735,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     claimModal?.close();
     billboards?.dispose();
     adPrompt.remove();
+    peerPrompt.remove();
     window.removeEventListener('pageshow', handlePageShow);
     window.removeEventListener('resize', handleResize);
     renderer.domElement.removeEventListener('pointerdown', handlePointerDown);
@@ -2499,6 +2753,12 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     document.documentElement.classList.remove('chatting');
     chatBubble.remove();
     chatBtn?.remove();
+    window.removeEventListener('keydown', handleTalkKey);
+    window.removeEventListener('keyup', handleTalkKey);
+    window.removeEventListener('blur', releaseTalk);
+    talkBadge.remove();
+    talkBtn?.remove();
+    talkKey?.remove();
     for (const mesh of [...wall, ...trim]) {
       if (mesh.userData.ownMaterial) {
         const material = mesh.material as MeshBasicMaterial;
