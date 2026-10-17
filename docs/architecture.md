@@ -165,6 +165,14 @@ Nobody filters what is said out loud, so each visitor can mute anyone who
 has talked: aim at them and click, or tap them (`Presence.setMuted`, on this
 device only; a signed-in visitor stays muted when they reconnect).
 
+Chat lines carry the language the sender's device reads (`l`, a primary
+subtag). The lobby marks a line 文A when it is probably not in the reader's
+language (the browser's own LanguageDetector when it is sure, otherwise the
+alphabet, otherwise the sender's language), and translates it on click or tap
+(`apps/hub/src/walk/translate.ts`): on the device where the browser can,
+otherwise through the hub's `/api/translate` on Workers AI. Nothing is
+translated unless someone asks.
+
 ### The overlay lives in the runtime
 
 The click-to-enter panel, the control legend, the crosshair, the interact

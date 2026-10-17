@@ -19,8 +19,8 @@ import { chatRejection } from './chatFilter';
  *   server → client  { t: 'welcome', id, peers: [{ id, p, r, e, n, a, g, k }] }
  *   client → server  { t: 's', p: [x, y, z], r: yaw, e?: expression, n?: username, a?: alias, g?: grounded, k?: '#rrggbb' }
  *   server → client  { t: 's', id, p, r, e, n, a, g?, k }   another peer moved ('' n and a = guest; g 1 on the ground, 0 in the air; '' k = default colour)
- *   client → server  { t: 'c', m }             a short line of chat
- *   server → client  { t: 'c', id, m }         that line, for everyone else
+ *   client → server  { t: 'c', m, l? }         a short line of chat, and the language the sender's device reads ('ja')
+ *   server → client  { t: 'c', id, m, l? }     that line, for everyone else, who can offer to translate it
  *   server → client  { t: 'leave', id }        another peer left
  *   client → server  { t: 'o', k, v }          shared state of something in the room (a lift, a door)
  *   server → client  { t: 'o', id, k, v }      that state, for everyone including the sender, in the order the room took it
@@ -162,6 +162,8 @@ const USERNAME = /^[a-z][a-z0-9_]{2,29}$/;
 /** Two capitalised words; cannot be mistaken for a username, which is lower case. */
 const ALIAS = /^[A-Z][a-z]{1,11} [A-Z][a-z]{1,11}$/;
 const COLOR = /^#[0-9a-f]{6}$/;
+/** A language as chat lines carry it: the primary subtag only, 'en', 'ja', 'fil'. */
+const LANGUAGE = /^[a-z]{2,3}$/;
 /** Keys of shared state, e.g. 'lift:0'. */
 const SHARED_KEY = /^[a-z0-9:_-]{1,32}$/;
 /** How many keys one room remembers. New keys past this are dropped. */
@@ -503,7 +505,7 @@ export class Room extends DurableObject<Env> {
     // Only avatar messages may be long.
     if (message.length > MAX_MESSAGE_BYTES) return;
     if (data?.t === 'c') {
-      this.relayChat(ws, data.m);
+      this.relayChat(ws, data.m, (data as { l?: unknown }).l);
       return;
     }
     if (data?.t === 'o') {
@@ -635,7 +637,7 @@ export class Room extends DurableObject<Env> {
   }
 
   /** One short line, forwarded unless it has blocked words or links. Nothing is stored. */
-  private relayChat(ws: WebSocket, raw: unknown): void {
+  private relayChat(ws: WebSocket, raw: unknown, lang: unknown): void {
     if (typeof raw !== 'string') return;
     const text = raw.replace(/[\u0000-\u001f]/g, '').trim().slice(0, 80);
     if (!text || chatRejection(text)) return;
@@ -645,7 +647,8 @@ export class Room extends DurableObject<Env> {
     if (now - peer.chatAt < 400) return;
     peer.chatAt = now;
     ws.serializeAttachment(peer);
-    this.broadcast(JSON.stringify({ t: 'c', id: peer.id, m: text }), ws);
+    const l = typeof lang === 'string' && LANGUAGE.test(lang) ? { l: lang } : {};
+    this.broadcast(JSON.stringify({ t: 'c', id: peer.id, m: text, ...l }), ws);
   }
 
   /**

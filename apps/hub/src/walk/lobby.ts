@@ -14,6 +14,7 @@ import {
   setStrokeOpacity,
   type MicState,
   type PeerPick,
+  type Said,
   type Vec3Tuple,
 } from '@worldmesh/runtime';
 import {
@@ -58,6 +59,7 @@ import { buildAvenues, dressHall } from './avenues';
 import { STOREFRONT_WIDTH } from './facade';
 import { playSendSound, playWarpSound } from './sounds';
 import { chatRejection } from '../../../../templates/relay/src/chatFilter';
+import { deviceLanguage, isForeign, translate } from './translate';
 import { fetchOccupancy } from './occupancy';
 import { Arrival } from './arrival';
 import { FLOOR_NAMES, Lifts, buildShafts, createColliderMaterial, mergeInto, planLifts } from './elevators';
@@ -719,6 +721,16 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
           muteHintShown = true;
           notePeer('Tap someone talking to mute them');
         },
+        // Lines in another language get a 文A mark: click or tap the bubble to translate it.
+        language: deviceLanguage(),
+        isForeign: async (text, language) => {
+          const foreign = await isForeign(text, language);
+          if (foreign && isTouch && !translateHintShown) {
+            translateHintShown = true;
+            notePeer('Tap a 文A bubble to translate it');
+          }
+          return foreign;
+        },
         // Someone arriving warps in as we do.
         onArrive: (x, z) => {
           if (!spawnPads.pads.some((spot) => Math.hypot(x - spot.x, z - spot.z) < ARRIVE_RADIUS)) return;
@@ -956,13 +968,16 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   peerPrompt.className = 'walk-add-prompt walk-peer-prompt';
   peerPrompt.addEventListener('click', (event) => {
     event.stopPropagation();
-    if (peerFocus) toggleMute(peerFocus);
+    if (peerFocus) actOn(peerFocus);
   });
   if (presence) container.appendChild(peerPrompt);
   let peerFocus: PeerPick | null = null;
   let sincePeerFocus = 0;
   let peerNoteUntil = 0;
   let muteHintShown = false;
+  let translateHintShown = false;
+  /** Lines on their way to a translation, so they are not asked for twice. */
+  const translating = new WeakSet<Said>();
   let focused: BillboardHit | null = null;
   let sinceFocus = 0;
   let adModal: { close(): void } | null = null;
@@ -1593,9 +1608,9 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const handlePointerDown = (event: PointerEvent) => {
     pressAt = { x: event.clientX, y: event.clientY, time: performance.now() };
     if (document.pointerLockElement !== renderer.domElement || adModal || claimModal || event.button !== 0) return;
-    // Someone who has talked, where the camera looks: mute or unmute them.
+    // Someone where the camera looks: translate their line, or mute or unmute them.
     if (peerFocus) {
-      toggleMute(peerFocus);
+      actOn(peerFocus);
       return;
     }
     // A click aims where the camera looks: a tower door there, or a billboard.
@@ -1616,22 +1631,57 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     const ndcY = -((event.clientY - rect.top) / rect.height) * 2 + 1;
     const peer = peerAt(ndcX, ndcY);
     if (peer) {
-      toggleMute(peer);
+      actOn(peer);
       return;
     }
     const hit = billboardAt(ndcX, ndcY);
     if (hit) activateBillboard(hit);
   };
 
-  /** Someone who has talked within earshot, at a point on screen, unless a wall stands in front of them. */
+  /**
+   * Someone at a point on screen with something to do about them: a line
+   * to translate, or a voice to mute. Not through a wall.
+   */
   function peerAt(ndcX: number, ndcY: number): PeerPick | null {
     if (!presence) return null;
     raycaster.setFromCamera(pointer.set(ndcX, ndcY), camera);
     raycaster.far = PEER_PICK_RANGE;
-    const peer = presence.pickPeer(raycaster.ray, PEER_PICK_RANGE);
-    if (!peer?.talked) return null;
+    const peer = presence.pickPeer(raycaster, PEER_PICK_RANGE);
+    if (!peer || (!peer.talked && !translatable(peer))) return null;
     const wallAt = raycaster.intersectObjects([...wall, ...trim], false)[0]?.distance ?? Infinity;
     return peer.distance < wallAt ? peer : null;
+  }
+
+  /** Their bubble is marked 文A and not translated (or being translated) yet: picked on the bubble, or on them when there is no voice to mute. */
+  function translatable(peer: PeerPick): boolean {
+    const said = peer.said;
+    return !!said?.foreign && said.translation === null && !translating.has(said) && (peer.onBubble || !peer.talked);
+  }
+
+  /** Clicked or tapped someone: translate their line, or mute or unmute them. */
+  function actOn(peer: PeerPick): void {
+    if (translatable(peer)) translateLine(peer);
+    else if (peer.talked) toggleMute(peer);
+  }
+
+  function translateLine(peer: PeerPick): void {
+    const said = peer.said;
+    if (!said || !presence) return;
+    peerFocus = null;
+    translating.add(said);
+    // Up until the translation is in: a phone downloading its own translator can take a few seconds.
+    notePeer('translating…', Infinity);
+    translate(said.text, said.language).then(
+      (translation) => {
+        translating.delete(said);
+        presence.showTranslation(peer.id, said.text, translation);
+        peerNoteUntil = 0;
+      },
+      () => {
+        translating.delete(said);
+        notePeer('could not translate this');
+      },
+    );
   }
 
   function toggleMute(peer: PeerPick): void {
@@ -1640,14 +1690,14 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     notePeer(peer.muted ? `${peer.label} unmuted` : `${peer.label} muted · ${isTouch ? 'tap' : 'click'} again to unmute`);
   }
 
-  /** A short line in the peer prompt, kept up a moment over the aiming prompt. */
-  function notePeer(text: string): void {
+  /** A short line in the peer prompt, kept up a moment (or until cleared) over the aiming prompt. */
+  function notePeer(text: string, ms = PEER_NOTE_MS): void {
     peerPrompt.textContent = text;
     peerPrompt.classList.add('visible');
-    peerNoteUntil = performance.now() + PEER_NOTE_MS;
+    peerNoteUntil = performance.now() + ms;
   }
 
-  /** Follow where the camera looks a few times a second: "Click to mute" over someone who has talked. */
+  /** Follow where the camera looks a few times a second: "Click to translate" or "Click to mute" over someone. */
   function updatePeerFocus(dt: number, doorPrompt: boolean): void {
     sincePeerFocus += dt;
     if (sincePeerFocus < FOCUS_INTERVAL) return;
@@ -1656,7 +1706,10 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     peerFocus = active ? peerAt(0, 0) : null;
     if (performance.now() < peerNoteUntil) return;
     peerPrompt.classList.toggle('visible', !!peerFocus);
-    if (peerFocus) peerPrompt.textContent = `Click to ${peerFocus.muted ? 'unmute' : 'mute'} ${peerFocus.label}`;
+    if (!peerFocus) return;
+    peerPrompt.textContent = translatable(peerFocus)
+      ? `Click to translate what ${peerFocus.label} said`
+      : `Click to ${peerFocus.muted ? 'unmute' : 'mute'} ${peerFocus.label}`;
   }
 
   /** The billboard at a point on screen, unless a wall or tower is in front of it. */

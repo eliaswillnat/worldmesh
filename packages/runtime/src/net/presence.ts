@@ -1,4 +1,4 @@
-import { Box3, CanvasTexture, Group, Mesh, MeshBasicMaterial, Sprite, SpriteMaterial, Vector3, type Object3D, type Ray, type Scene } from 'three';
+import { Box3, CanvasTexture, Group, Mesh, MeshBasicMaterial, Sprite, SpriteMaterial, Vector3, type Object3D, type Raycaster, type Scene } from 'three';
 import { Footsteps, sharedAudio } from '../audio/footsteps.js';
 import { parseAvatarShare, type SignedAvatarShare } from '../avatar/descriptor.js';
 import { loadAvatarModel, type LoadedAvatar } from '../avatar/loader.js';
@@ -88,6 +88,29 @@ export interface PresenceOptions {
   onMic?: (state: MicState) => void;
   /** Someone's voice reached this visitor for the first time since they arrived. */
   onVoice?: (id: string, label: string) => void;
+  /**
+   * The language this visitor's device reads, as a primary subtag ('en',
+   * 'ja'). Sent with each chat line, so others know what to translate from.
+   */
+  language?: string;
+  /**
+   * Whether a line someone said, with the language their device reads ('' when
+   * unknown), is in a language this visitor might not read. Their bubble then
+   * carries a 文A mark, and `showTranslation` can swap in a translation.
+   */
+  isForeign?: (text: string, language: string) => boolean | Promise<boolean>;
+}
+
+/** What someone's speech bubble says right now (`PeerPick.said`). */
+export interface Said {
+  /** The line as they wrote it. */
+  text: string;
+  /** The language their device reads, '' when their client did not say. */
+  language: string;
+  /** Marked 文A: maybe not in this visitor's language. */
+  foreign: boolean;
+  /** The translation shown instead, once there is one. */
+  translation: string | null;
 }
 
 /** Someone a ray passes through (`Presence.pickPeer`). */
@@ -98,6 +121,10 @@ export interface PeerPick {
   /** They have talked within earshot since this visitor joined, so muting them means something. */
   talked: boolean;
   muted: boolean;
+  /** Their speech bubble, while it shows. */
+  said: Said | null;
+  /** The ray went through their speech bubble rather than their figure. */
+  onBubble: boolean;
   /** How far along the ray they are, to tell whether a wall stands in front. */
   distance: number;
 }
@@ -157,6 +184,8 @@ interface Remote {
   /** What they just said, stuck above their head until it runs out. */
   bubble: Sprite | null;
   bubbleLeft: number;
+  /** What the bubble says, for translating it. */
+  said: Said | null;
   /** Their voice, once they have talked within earshot. */
   voice: VoiceStream | null;
   /** Sound bars over their head while their voice comes through. */
@@ -206,7 +235,7 @@ type ServerMessage =
   | ({ t: 'v'; id: string } & WireAvatar)
   | { t: 'o'; id: string; k: string; v: unknown }
   | ({ t: 's'; id: string } & PeerState)
-  | { t: 'c'; id: string; m: string }
+  | { t: 'c'; id: string; m: string; l?: string }
   | { t: 'leave'; id: string };
 
 /**
@@ -274,6 +303,8 @@ export class Presence implements NetworkAdapter {
   private voice: boolean;
   private onMic: (state: MicState) => void;
   private onVoice: (id: string, label: string) => void;
+  private language: string;
+  private isForeign: PresenceOptions['isForeign'];
 
   constructor(options: PresenceOptions) {
     this.url = options.url;
@@ -295,6 +326,8 @@ export class Presence implements NetworkAdapter {
     this.voice = options.voice === true;
     this.onMic = options.onMic ?? (() => {});
     this.onVoice = options.onVoice ?? (() => {});
+    this.language = typeof options.language === 'string' && LANGUAGE.test(options.language) ? options.language : '';
+    this.isForeign = options.isForeign;
     this.group.name = 'worldmesh:remote-players';
     options.scene.add(this.group);
   }
@@ -362,7 +395,7 @@ export class Presence implements NetworkAdapter {
     const socket = this.socket;
     const line = text.replace(/[\u0000-\u001f]/g, '').trim().slice(0, 80);
     if (!line || !socket || socket.readyState !== WebSocket.OPEN) return;
-    socket.send(JSON.stringify({ t: 'c', m: line }));
+    socket.send(JSON.stringify(this.language ? { t: 'c', m: line, l: this.language } : { t: 'c', m: line }));
   }
 
   /**
@@ -389,21 +422,65 @@ export class Presence implements NetworkAdapter {
   }
 
   /**
-   * Who this ray passes through first, if anyone: the figure, name tag
-   * included. Walls are the caller's to check, with `distance`.
+   * Who this ray passes through first, if anyone: their speech bubble, or
+   * their figure, name tag included. Walls are the caller's to check, with
+   * `distance`. The raycaster must come from `setFromCamera`: bubbles face
+   * the camera.
    */
-  pickPeer(ray: Ray, far = Infinity): PeerPick | null {
+  pickPeer(raycaster: Raycaster, far = Infinity): PeerPick | null {
+    const ray = raycaster.ray;
     let best: PeerPick | null = null;
     for (const [id, remote] of this.remotes) {
+      let distance = Infinity;
+      let onBubble = false;
+      if (remote.bubble) {
+        const hit = raycaster.intersectObject(remote.bubble, false)[0];
+        if (hit) {
+          distance = hit.distance;
+          onBubble = true;
+        }
+      }
       const { x, y, z } = remote.root.position;
       this.pickBox.min.set(x - PICK_RADIUS, y, z - PICK_RADIUS);
       this.pickBox.max.set(x + PICK_RADIUS, y + PICK_HEIGHT, z + PICK_RADIUS);
-      if (!ray.intersectBox(this.pickBox, this.pickPoint)) continue;
-      const distance = ray.origin.distanceTo(this.pickPoint);
+      if (!onBubble && ray.intersectBox(this.pickBox, this.pickPoint)) distance = ray.origin.distanceTo(this.pickPoint);
       if (distance > far || (best && distance >= best.distance)) continue;
-      best = { id, label: remote.label, talked: !!remote.voice, muted: remote.muted, distance };
+      best = { id, label: remote.label, talked: !!remote.voice, muted: remote.muted, said: remote.said, onBubble, distance };
     }
     return best;
+  }
+
+  /**
+   * Show `translation` in someone's bubble instead of what they wrote, as
+   * long as the bubble still says `original`, and keep it up a while longer
+   * to be read.
+   */
+  showTranslation(id: string, original: string, translation: string): void {
+    const remote = this.remotes.get(id);
+    const said = remote?.said;
+    if (!remote || !said || said.text !== original) return;
+    said.translation = translation;
+    drawBubble(remote, translation, 'translated');
+    remote.bubbleLeft = BUBBLE_LIFE + TRANSLATED_EXTRA;
+  }
+
+  /** Someone said something: their bubble, marked 文A once it turns out to be in another language. */
+  private hearLine(remote: Remote, text: string, language: string): void {
+    const said: Said = { text, language, foreign: false, translation: null };
+    remote.said = said;
+    drawBubble(remote, text, 'none');
+    remote.bubbleLeft = BUBBLE_LIFE;
+    const isForeign = this.isForeign;
+    if (!isForeign) return;
+    void Promise.resolve()
+      .then(() => isForeign(text, language))
+      .then((foreign) => {
+        // Only the line still showing, and not one already translated.
+        if (!foreign || remote.said !== said || !remote.bubble || said.translation !== null) return;
+        said.foreign = true;
+        drawBubble(remote, text, 'translate');
+      })
+      .catch(() => undefined);
   }
 
   /**
@@ -685,7 +762,9 @@ export class Presence implements NetworkAdapter {
       }
       case 'c': {
         const remote = message.id === this.selfId ? undefined : this.remotes.get(message.id);
-        if (remote && typeof message.m === 'string') showBubble(remote, message.m);
+        if (remote && typeof message.m === 'string') {
+          this.hearLine(remote, message.m, typeof message.l === 'string' && LANGUAGE.test(message.l) ? message.l : '');
+        }
         break;
       }
       case 'leave': {
@@ -753,6 +832,7 @@ export class Presence implements NetworkAdapter {
         appear: 0,
         bubble: null,
         bubbleLeft: 0,
+        said: null,
         voice: null,
         talkIcon: null,
         muted: false,
@@ -1084,20 +1164,28 @@ function nameLabel(name: unknown, alias: unknown): string {
   return GUEST;
 }
 
-/** A camera-facing label over a remote avatar. Guests are drawn dimmer. */
+/** Seconds a line stays over someone's head. */
 const BUBBLE_LIFE = 7;
+/** A translation stays up this much longer, as it came late and is read twice. */
+const TRANSLATED_EXTRA = 5;
+/** A language as chat lines carry it: the primary subtag only. */
+const LANGUAGE = /^[a-z]{2,3}$/;
 
-/** Stick a line of text over a remote figure. The next line replaces it. */
-function showBubble(remote: Remote, text: string): void {
+/** Draw a line over a remote figure, replacing whatever bubble they had. How long it stays is the caller's. */
+function drawBubble(remote: Remote, text: string, mark: BubbleMark): void {
+  const opacity = remote.bubble?.material.opacity ?? 1;
+  const kept = remote.said;
   dropBubble(remote);
-  const bubble = createSpeechBubble(text);
+  remote.said = kept;
+  const bubble = createSpeechBubble(text, mark);
+  bubble.material.opacity = opacity;
   bubble.position.y = TAG_HEIGHT + 0.42;
   remote.root.add(bubble);
   remote.bubble = bubble;
-  remote.bubbleLeft = BUBBLE_LIFE;
 }
 
 function dropBubble(remote: Remote): void {
+  remote.said = null;
   const bubble = remote.bubble;
   if (!bubble) return;
   bubble.material.map?.dispose();
@@ -1164,8 +1252,11 @@ function createTalkIcon(muted: boolean): Sprite {
   return sprite;
 }
 
+/** The chip at the start of a bubble: none, 文A to offer a translation, or a grey 文A on one. */
+export type BubbleMark = 'none' | 'translate' | 'translated';
+
 /** A white speech bubble. One line, cut off if they wrote a novel. Its bottom edge sits at the sprite's position. */
-export function createSpeechBubble(text: string): Sprite {
+export function createSpeechBubble(text: string, mark: BubbleMark = 'none'): Sprite {
   const scale = 2;
   const font = `600 ${20 * scale}px system-ui, -apple-system, sans-serif`;
   const canvas = document.createElement('canvas');
@@ -1174,8 +1265,11 @@ export function createSpeechBubble(text: string): Sprite {
   const padX = 16 * scale;
   const height = 40 * scale;
   const maxWidth = 280 * scale;
+  const chipWidth = 34 * scale;
+  const chipSpace = mark === 'none' ? 0 : chipWidth + 8 * scale;
   const measured = context.measureText(text).width;
-  canvas.width = Math.ceil(Math.min(maxWidth, measured) + padX * 2);
+  const textWidth = Math.min(maxWidth, measured);
+  canvas.width = Math.ceil(textWidth + chipSpace + padX * 2);
   canvas.height = height;
 
   context.font = font;
@@ -1183,10 +1277,24 @@ export function createSpeechBubble(text: string): Sprite {
   context.beginPath();
   context.roundRect(0, 0, canvas.width, height, 14 * scale);
   context.fill();
+  if (mark !== 'none') {
+    const chipHeight = 24 * scale;
+    const left = padX - 6 * scale;
+    context.fillStyle = mark === 'translate' ? '#2563eb' : '#e5e7eb';
+    context.beginPath();
+    context.roundRect(left, (height - chipHeight) / 2, chipWidth, chipHeight, 7 * scale);
+    context.fill();
+    context.fillStyle = mark === 'translate' ? '#ffffff' : '#4b5563';
+    context.font = `700 ${13 * scale}px system-ui, -apple-system, sans-serif`;
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText('文A', left + chipWidth / 2, height / 2 + scale);
+    context.font = font;
+  }
   context.fillStyle = '#111111';
   context.textAlign = 'center';
   context.textBaseline = 'middle';
-  context.fillText(text, canvas.width / 2, height / 2, maxWidth);
+  context.fillText(text, padX + chipSpace + textWidth / 2, height / 2, maxWidth);
 
   const texture = new CanvasTexture(canvas);
   const sprite = new Sprite(new SpriteMaterial({ map: texture, depthWrite: false, transparent: true }));
