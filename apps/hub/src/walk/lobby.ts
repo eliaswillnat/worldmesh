@@ -362,6 +362,13 @@ const GHOST_GLOW = 0x5cc8ff;
  * do not set it off.
  */
 const ARRIVE_RADIUS = 1.5;
+/**
+ * A pad is taken while someone else stands this close to its centre: the
+ * dais is about a metre out from it, and a body beside it would still clip.
+ */
+const PAD_CLEAR = 1.4;
+/** Still this close to the pad's centre: not walked off it yet, so can still be moved to a free one. */
+const PAD_SETTLE = 0.4;
 /** Billboards further than this are not picked by the crosshair or a tap. */
 const BILLBOARD_RANGE = 95;
 /** How often the billboard under the crosshair is looked up, in seconds. */
@@ -575,10 +582,25 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   // Placed now, not at the first render: the first steps already stand on a pad.
   spawnPads.object.updateMatrixWorld(true);
   // Every visitor arrives on one of the pads round the middle of the hall, chosen at
-  // random, facing the middle, which is left clear for the hologram.
+  // random among those nobody stands on, facing the middle, which is left clear for
+  // the hologram. Nobody is known yet on the first one: settleOnPad moves off it if
+  // the room turns out to have someone there.
   let spawnPad = Math.floor(Math.random() * spawnPads.pads.length);
   const padSpawn = (): Vec3Tuple => [spawnPads.pads[spawnPad].x, 0, spawnPads.pads[spawnPad].z];
   const padYaw = () => Math.atan2(spawnPads.pads[spawnPad].x, spawnPads.pads[spawnPad].z);
+  /** How far the nearest other visitor stands from pad `index`'s centre. */
+  const padRoom = (index: number): number => {
+    const { x, z } = spawnPads.pads[index];
+    return Math.min(Infinity, ...(presence?.bodies() ?? []).map((body) => Math.hypot(body.x - x, body.z - z)));
+  };
+  /** A pad nobody else stands on, at random; with every one taken, the one with the most room. */
+  const pickPad = (): number => {
+    const room = spawnPads.pads.map((_, index) => padRoom(index));
+    const free = room.flatMap((space, index) => (space >= PAD_CLEAR ? [index] : []));
+    return free.length ? free[Math.floor(Math.random() * free.length)] : room.indexOf(Math.max(...room));
+  };
+  /** Just arrived on a pad and not yet checked against who else is in the room. */
+  let settling = false;
   // The local figure warping in on arrival.
   const arrival = new Arrival();
   /** Other visitors' figures warping in as they arrive. */
@@ -669,7 +691,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     ? new Presence({
         url: `${options.presenceEndpoint.replace(/\/$/, '')}/room/lobby`,
         scene,
-        onCount: (count) => options.onPresenceCount?.(count),
+        onCount: (count) => {
+          options.onPresenceCount?.(count);
+          // In the room now, with everyone in it: step off a pad someone already stands on.
+          if (count !== null && settling) settleOnPad();
+        },
         getName: () => (alias ? null : options.playerName?.() ?? null),
         getAlias: () => alias,
         // Private mode keeps the default colour, so nothing ties the alias back to this visitor.
@@ -1382,6 +1408,9 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   // Keyboard: E at a tower door, lift or elevator, or next to an empty door.
   // The runtime reports E as a plain interaction when no portal of its own is in reach.
   world.on('respawn', () => {
+    // The runtime puts us back on the first pad: take a free one instead.
+    spawnPad = pickPad();
+    world.teleport(padSpawn(), padYaw());
     aimSpawn();
   });
   world.on('interact', () => {
@@ -1561,7 +1590,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     handleResize();
     if (returnTo) emerge(returnTo);
     else {
-      world.respawn();
+      spawnPad = pickPad();
+      world.teleport(padSpawn(), padYaw());
       triggerSpawnFx();
     }
   };
@@ -1651,6 +1681,30 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     if (ghost) ghost.shimmer(time, 0);
     else setLocalAppear(world.avatar, 0);
     aimSpawn();
+    settling = true;
+  }
+
+  /**
+   * Arrived where someone else already stands (the room's welcome came after
+   * the pad was picked): warp in again on a free pad, unless already walked off.
+   */
+  function settleOnPad(): void {
+    settling = false;
+    const [x, , z] = world.getState().position;
+    const pad = spawnPads.pads[spawnPad];
+    if (Math.hypot(x - pad.x, z - pad.z) > PAD_SETTLE || padRoom(spawnPad) >= PAD_CLEAR) return;
+    const next = pickPad();
+    if (next === spawnPad) return;
+    spawnPad = next;
+    world.teleport(padSpawn(), padYaw());
+    // Still warping in: start the warp over on the new pad, its sound already playing.
+    if (arrival.running) {
+      arrival.start(() => world.avatar);
+      aimSpawn();
+    } else {
+      triggerSpawnFx();
+      settling = false;
+    }
   }
 
   /** Look across the pad towards the middle of the hall, and turn the body toward the camera. */
@@ -1744,7 +1798,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       ghost?.restore();
       ghost = alias ? makeGhost(world.avatar) : null;
       void loadCharacter();
-      spawnPad = Math.floor(Math.random() * spawnPads.pads.length);
+      spawnPad = pickPad();
       world.teleport(padSpawn(), padYaw());
       triggerSpawnFx();
       presence?.rejoin();
