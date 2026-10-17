@@ -1,7 +1,9 @@
 /** The presence Worker's room class, as seen across the script boundary (RPC). */
 export interface RoomStats {
-  /** Open sockets, including peers that have not sent a position yet. */
+  /** Open sockets, including peers that have not sent a position yet; watchers left out. */
   connections: number;
+  /** Live doorway views watching the room (`?watch`); missing from relays deployed before them. */
+  watchers?: number;
   /** Peers that are actually walking around. */
   peers: { id: string; name: string; alias: string; position: [number, number, number] }[];
 }

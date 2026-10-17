@@ -32,6 +32,12 @@ import { chatRejection } from './chatFilter';
  *
  *   client → server  'ping'                    keep-alive while standing still; the room answers 'pong' without waking up
  *
+ * Watching: a socket opened with `?watch` (a live doorway view, drawn in a hub
+ * before anyone walks in) gets the same welcome, marked `w: 1`, and everything
+ * the room sends, but is never a peer: nobody sees it, it takes no one's place
+ * (it has its own cap, MAX_WATCHERS) and anything it sends is ignored. It
+ * counts nothing towards occupancy or the daily allowance.
+ *
  * Shared state is the one thing the room remembers: the latest value per key,
  * so someone walking in sees the lift where everyone else does. Sending it
  * back to the sender too gives every client the same order of writes, so two
@@ -68,6 +74,8 @@ interface Env {
   MAX_WORLD_PEERS?: string;
   /** People at once in one named room, such as the hub lobby. Unset or not a positive whole number: 64. */
   MAX_ROOM_PEERS?: string;
+  /** Sockets at once watching one room (`?watch`), besides its people. Unset or not a whole number: 32. */
+  MAX_WATCHERS?: string;
   /** Per-IP limits on WebSocket joins and on plain reads (occupancy, full probes). */
   JOIN_LIMIT?: RateLimit;
   READ_LIMIT?: RateLimit;
@@ -102,6 +110,8 @@ interface Peer {
   avatarAt?: number;
   /** Wears an avatar, kept in storage under `v:<id>` (too long for the socket attachment). */
   avatar?: boolean;
+  /** Only watching (`?watch`): never seen, never heard. */
+  watch?: boolean;
 }
 
 /** A peer's avatar as the room remembers it. */
@@ -135,6 +145,12 @@ interface Shared {
 const DEFAULT_ROOM_PEERS = 64;
 /** A world's room, unless MAX_WORLD_PEERS says otherwise. Lower, because every creator's world draws on the same free plan. */
 const DEFAULT_WORLD_PEERS = 16;
+/** Watchers of one room, unless MAX_WATCHERS says otherwise: everyone in a busy hub hall near the same doorway. */
+const DEFAULT_WATCHERS = 32;
+/** Query parameter for a socket that only watches the room. */
+const WATCH_PARAM = 'watch';
+/** Hibernation tag on watching sockets, so they can be counted apart. */
+const WATCHER_TAG = 'watch';
 /** Set by this Worker on the request it hands to a room; clients cannot choose it. */
 const ROOM_HEADER = 'X-WorldMesh-Room';
 const MAX_MESSAGE_BYTES = 256;
@@ -260,6 +276,12 @@ function list(value: string | undefined): string[] {
 function capFor(isWorld: boolean, env: Env): number {
   const value = Number(isWorld ? env.MAX_WORLD_PEERS : env.MAX_ROOM_PEERS);
   return Number.isInteger(value) && value > 0 ? value : isWorld ? DEFAULT_WORLD_PEERS : DEFAULT_ROOM_PEERS;
+}
+
+/** How many sockets may watch one room at once. 0 turns watching off. */
+function watcherCap(env: Env): number {
+  const value = Number(env.MAX_WATCHERS);
+  return env.MAX_WATCHERS !== undefined && env.MAX_WATCHERS !== '' && Number.isInteger(value) && value >= 0 ? value : DEFAULT_WATCHERS;
 }
 
 /** True when this world origin is on a list of origins and "*.example.net" entries (every https subdomain). */
@@ -433,18 +455,20 @@ export class Room extends DurableObject<Env> {
 
   async fetch(request: Request): Promise<Response> {
     const isWorld = request.headers.get(ROOM_HEADER) === 'world';
+    const watching = new URL(request.url).searchParams.has(WATCH_PARAM);
     const sockets = this.ctx.getWebSockets();
-    if (sockets.length >= capFor(isWorld, this.env)) {
-      return new Response('Room is full', { status: 503, headers: CORS });
+    const watchers = this.ctx.getWebSockets(WATCHER_TAG).length;
+    if (watching ? watchers >= watcherCap(this.env) : sockets.length - watchers >= capFor(isWorld, this.env)) {
+      return new Response(watching ? 'Too many watching' : 'Room is full', { status: 503, headers: CORS });
     }
     // People already here stay; only new joins are turned away.
     const allowance = Number(request.headers.get(ALLOWANCE_HEADER)) || 0;
     if (allowance > 0 && (await this.activeMsToday()) >= allowance * 60_000) return overAllowance();
 
     const { 0: client, 1: server } = new WebSocketPair();
-    const peer: Peer = { id: crypto.randomUUID().slice(0, 8), p: [0, 0, 0], r: 0, e: 'smile', n: '', a: '', k: '', seen: false, chatAt: 0, notify: !isWorld };
+    const peer: Peer = { id: crypto.randomUUID().slice(0, 8), p: [0, 0, 0], r: 0, e: 'smile', n: '', a: '', k: '', seen: false, chatAt: 0, notify: !isWorld, ...(watching ? { watch: true } : {}) };
 
-    this.ctx.acceptWebSocket(server);
+    this.ctx.acceptWebSocket(server, watching ? [WATCHER_TAG] : []);
     server.serializeAttachment(peer);
 
     const seen = sockets
@@ -457,13 +481,14 @@ export class Room extends DurableObject<Env> {
     });
     const now = Date.now();
     const objects = [...this.shared].map(([k, { v, at }]) => ({ k, v, ms: Math.max(0, now - at) }));
-    server.send(JSON.stringify({ t: 'welcome', id: peer.id, peers, objects }));
+    server.send(JSON.stringify({ t: 'welcome', id: peer.id, peers, objects, ...(watching ? { w: 1 } : {}) }));
 
     return new Response(null, { status: 101, webSocket: client });
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     if (typeof message !== 'string' || message.length > MAX_AVATAR_MESSAGE_BYTES) return;
+    if ((ws.deserializeAttachment() as Peer | null)?.watch) return;
 
     let data: { t?: unknown; p?: unknown; r?: unknown; e?: unknown; n?: unknown; a?: unknown; g?: unknown; k?: unknown; m?: unknown; u?: unknown; f?: unknown; i?: unknown; x?: unknown; s?: unknown };
     try {
@@ -533,27 +558,28 @@ export class Room extends DurableObject<Env> {
    * namespace and calls it over RPC; nothing public can reach it). The same
    * fields every peer in the room already receives, nothing more.
    */
-  async stats(): Promise<{ connections: number; peers: { id: string; name: string; alias: string; position: [number, number, number] }[] }> {
+  async stats(): Promise<{ connections: number; watchers: number; peers: { id: string; name: string; alias: string; position: [number, number, number] }[] }> {
     const sockets = this.ctx.getWebSockets();
     const peers = sockets
       .map((ws) => ws.deserializeAttachment() as Peer | null)
       .filter((peer): peer is Peer => !!peer?.seen)
       .map((peer) => ({ id: peer.id, name: peer.n ?? '', alias: peer.a ?? '', position: peer.p }));
-    return { connections: sockets.length, peers };
+    return { connections: this.people(), watchers: this.ctx.getWebSockets(WATCHER_TAG).length, peers };
   }
 
   /**
-   * Open socket count only. Served publicly via GET /occupancy so the hub can
-   * mark full world doors without reading peer names or positions.
+   * Open socket count only, watchers left out. Served publicly via GET
+   * /occupancy so the hub can mark full world doors without reading peer
+   * names or positions.
    */
   async occupancy(): Promise<{ count: number }> {
-    return { count: this.ctx.getWebSockets().length };
+    return { count: this.people() };
   }
 
   /** Plain GET to /room/… or /world — browsers use this after a silent failed upgrade. */
   async occupancyHttp(isWorld: boolean, allowance = 0): Promise<Response> {
     const cap = capFor(isWorld, this.env);
-    const count = this.ctx.getWebSockets().length;
+    const count = this.people();
     const full = count >= cap;
     if (!full && allowance > 0 && (await this.activeMsToday()) >= allowance * 60_000) return overAllowance();
     return new Response(full ? 'Room is full' : JSON.stringify({ count, cap }), {
@@ -563,6 +589,11 @@ export class Room extends DurableObject<Env> {
         ...CORS,
       },
     });
+  }
+
+  /** Open sockets of people in the room, whether they have moved yet or not: everyone but the watchers. */
+  private people(): number {
+    return this.ctx.getWebSockets().length - this.ctx.getWebSockets(WATCHER_TAG).length;
   }
 
   /**
@@ -596,7 +627,7 @@ export class Room extends DurableObject<Env> {
   private async notifyEntered(): Promise<void> {
     const { TELEGRAM_BOT_TOKEN: token, TELEGRAM_CHAT_ID: chatId } = this.env;
     if (!token || !chatId) return;
-    const count = this.ctx.getWebSockets().length;
+    const count = this.people();
     const text = `🌍 Someone entered the WorldMesh lobby (${count} online)`;
     try {
       await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {

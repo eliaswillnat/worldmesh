@@ -89,9 +89,12 @@ A hub door can show your world itself, live, as seen from the visitor's own
 camera: water moving, everything as it is. Publish a Doorway file at
 `/.well-known/doorway.json` saying `{ "doorway": 1, "view": true }` and let
 hubs frame your page. The hub opens it with `?doorway-view` and sends its
-camera every frame; the runtime does the rest: offline, no UI, no input,
-drawing only the doorway's part of the screen from that camera, carried onto
-your spawn point (Doorway spec §3.1). Hubs keep the cover for worlds without it.
+camera every frame; the runtime does the rest: no UI, no input, drawing only
+the doorway's part of the screen from that camera, carried onto your spawn
+point (Doorway spec §3.1). With `multiplayer: true` the view watches your
+world's room, so the people inside show through the doorway (in the default
+body) while nobody sees the visitor and they take no one's place. Hubs keep the
+cover for worlds without it.
 
 Add `"embed": true` (and `"characters": ["vrm", "glb"]` if you show
 visitors' avatars) and visitors can walk straight in: as they cross the

@@ -306,7 +306,7 @@ export const livePage: Page = async (_request, env, admin) => {
       ['Room', 'Walking', 'Connected', 'Who'],
       sorted.map((room) => {
         if (!room.stats.ok) return [`<span class="cell-main">${esc(room.label)}</span>`, '—', '—', `<span class="error">${esc(room.stats.error)}</span>`];
-        const { peers, connections } = room.stats.value;
+        const { peers, connections, watchers } = room.stats.value;
         const who = peers.length
           ? `<div class="peers">${peers
               .map((peer) => (peer.name ? pill(`@${peer.name}`, 'info') : peer.alias ? pill(peer.alias) : pill('guest')))
@@ -315,7 +315,7 @@ export const livePage: Page = async (_request, env, admin) => {
         return [
           `<span class="cell-main">${esc(room.label)}</span><div class="cell-sub">${esc(room.room)}</div>`,
           `<span class="mono">${num(peers.length)}</span>`,
-          `<span class="mono">${num(connections)}</span>`,
+          `<span class="mono">${num(connections)}</span>${watchers ? `<div class="cell-sub">+${num(watchers)} watching</div>` : ''}`,
           who,
         ];
       }),
