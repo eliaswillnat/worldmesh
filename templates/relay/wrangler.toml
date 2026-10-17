@@ -23,6 +23,9 @@ ALLOWED_ORIGINS = ""
 NAMED_ROOMS = ""
 # People at once in one named room.
 MAX_ROOM_PEERS = "64"
+# "on": push-to-talk voice, handed on to people standing nearby. Each talker
+# is 16 KB a second for as long as they hold the button. "off": no voice.
+VOICE = "off"
 # Optional secret: BLOCKED_ORIGINS, comma-separated origins to refuse.
 #   npx wrangler secret put BLOCKED_ORIGINS
 

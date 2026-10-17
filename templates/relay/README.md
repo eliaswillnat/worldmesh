@@ -47,6 +47,7 @@ edited in the dashboard.
 | `NAMED_ROOMS` | | Named rooms (`/room/<name>`), e.g. `lobby` for a city's own lobby. |
 | `MAX_ROOM_PEERS` | `64` | People at once in one named room. |
 | `MAX_WATCHERS` | `32` | Live doorway views watching one room at once (`?watch`): they see everyone, nobody sees them, and they don't count towards the caps above or the daily minutes. `0`: no watching. |
+| `VOICE` | `off` | `on`: push-to-talk voice for worlds that turn it on (`voice: true` on `Presence`), handed only to people within 45 m of whoever is talking. 16 KB a second per talker while they hold the button. |
 
 `JOIN_LIMIT` and `READ_LIMIT` limit joins and occupancy reads per IP address.
 

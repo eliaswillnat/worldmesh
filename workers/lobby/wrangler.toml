@@ -12,6 +12,8 @@ routes = [
 [vars]
 NAMED_ROOMS = "lobby"
 WORLD_ROOMS = "off"
+# Push-to-talk in the lobby: hold T, or the mic button on touch.
+VOICE = "on"
 # Optional secrets: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID, to hear when someone walks in.
 #   npx wrangler secret put TELEGRAM_BOT_TOKEN --config workers/lobby/wrangler.toml
 
@@ -49,6 +51,8 @@ workers_dev = false
 [env.preview.vars]
 NAMED_ROOMS = "lobby"
 WORLD_ROOMS = "off"
+# Push-to-talk in the lobby: hold T, or the mic button on touch.
+VOICE = "on"
 
 [[env.preview.durable_objects.bindings]]
 name = "ROOMS"
