@@ -1,4 +1,4 @@
-import { createWorldMesh } from '@worldmesh/runtime';
+import { loadWorldMesh } from '@worldmesh/runtime';
 import { PerspectiveCamera, Scene, WebGLRenderer } from 'three';
 import { buildCity } from './world';
 
@@ -10,7 +10,7 @@ document.body.appendChild(renderer.domElement);
 
 const colliders = buildCity(scene);
 
-const world = createWorldMesh({
+const world = await loadWorldMesh({
   scene,
   camera,
   renderer,
@@ -49,6 +49,10 @@ const world = createWorldMesh({
   //   { url: 'http://localhost:5174/', label: 'Medieval Village - Demo', position: [-6, 0, -3], color: 0xffd36b },
   //   { url: 'http://localhost:5172/', label: 'Mars - Demo', position: [6, 0, -3], color: 0xff8a5c },
   // ],
+}, {
+  // Like any outside world, run the current runtime from worldmesh.net. Dev
+  // and preview builds (VITE_WORLDMESH_RUNTIME=bundled) run this repo's own.
+  hosted: !import.meta.env.DEV && import.meta.env.VITE_WORLDMESH_RUNTIME !== 'bundled',
 });
 
 if (import.meta.env.DEV) {
