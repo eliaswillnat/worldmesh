@@ -1,4 +1,4 @@
-import { createWorldMesh } from '@worldmesh/runtime';
+import { loadWorldMesh } from '@worldmesh/runtime';
 import { PerspectiveCamera, Scene, WebGLRenderer } from 'three';
 import { buildForest } from './world';
 
@@ -12,7 +12,7 @@ document.body.appendChild(renderer.domElement);
 const colliders = buildForest(scene);
 
 // --- This is the entire WorldMesh integration. ------------------------------
-const world = createWorldMesh({
+const world = await loadWorldMesh({
   scene,
   camera,
   renderer,
@@ -49,6 +49,10 @@ const world = createWorldMesh({
   //   { url: 'http://localhost:5172/', label: 'Mars - Demo', position: [6, 0, -6], color: 0xff8a5c },
   //   { url: 'http://localhost:5175/', label: 'Space Station - Demo', position: [-4, 0, -12], color: 0xb08cff },
   // ],
+}, {
+  // Like any outside world, run the current runtime from worldmesh.net. Dev
+  // and preview builds (VITE_WORLDMESH_RUNTIME=bundled) run this repo's own.
+  hosted: !import.meta.env.DEV && import.meta.env.VITE_WORLDMESH_RUNTIME !== 'bundled',
 });
 
 if (import.meta.env.DEV) {

@@ -276,6 +276,7 @@ build_apps() {
     log "Building $app (preview settings)"
     env VITE_WORLDMESH_HUB="https://$(host_of hub)/" \
         VITE_PRESENCE_ENDPOINT="$relay" \
+        VITE_WORLDMESH_RUNTIME=bundled \
         npm run build --workspace="apps/$app"
   done
 }

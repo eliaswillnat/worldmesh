@@ -68,9 +68,11 @@ Left out of the preview:
 
 Every name the script creates, changes or deletes ends in `-preview` or is a
 `preview(-*).worldmesh.net` hostname, and destructive steps check this before acting.
-The only changes to production files are the additive `[env.preview]` blocks and a
-`VITE_PRESENCE_ENDPOINT` override in the five world apps that does nothing unless the
-variable is set (production builds don't set it).
+The only changes to production files are the additive `[env.preview]` blocks and two
+overrides in the five world apps that do nothing unless their variables are set
+(production builds set neither): `VITE_PRESENCE_ENDPOINT`, and
+`VITE_WORLDMESH_RUNTIME=bundled`, which makes preview worlds run the branch's own
+runtime instead of the one worldmesh.net serves.
 
 ## One-time setup
 

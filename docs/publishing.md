@@ -84,7 +84,9 @@ their bundled copy only if it can't be loaded or doesn't start
 ([compatibility.md](compatibility.md#staying-current-loadworldmesh-and-createworldmesh)).
 So a change to `packages/runtime` reaches those worlds without npm and without
 anyone rebuilding them: **it goes live in every one of them when `main`
-deploys the hub.**
+deploys the hub.** The five demo worlds in `apps/` are among them, so they
+use the hosted runtime exactly as an outside world does; in `npm run dev:*` and
+on the preview (`VITE_WORLDMESH_RUNTIME=bundled`) they run this repo's copy.
 
 How it is built and served:
 

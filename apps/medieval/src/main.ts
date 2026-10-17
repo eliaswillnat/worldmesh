@@ -1,4 +1,4 @@
-import { createWorldMesh } from '@worldmesh/runtime';
+import { loadWorldMesh } from '@worldmesh/runtime';
 import { PerspectiveCamera, Scene, WebGLRenderer } from 'three';
 import { buildVillage } from './world';
 
@@ -11,7 +11,7 @@ document.body.appendChild(renderer.domElement);
 const colliders = buildVillage(scene);
 
 // No abilities at all: this is the baseline every WorldMesh world starts from.
-const world = createWorldMesh({
+const world = await loadWorldMesh({
   scene,
   camera,
   renderer,
@@ -46,6 +46,10 @@ const world = createWorldMesh({
   //   { url: 'http://localhost:5175/', label: 'Space Station - Demo', position: [-8, 0, 4], color: 0xb08cff },
   //   { url: 'http://localhost:5173/', label: 'Neon City - Demo', position: [8, 0, 4], color: 0xff4fd8 },
   // ],
+}, {
+  // Like any outside world, run the current runtime from worldmesh.net. Dev
+  // and preview builds (VITE_WORLDMESH_RUNTIME=bundled) run this repo's own.
+  hosted: !import.meta.env.DEV && import.meta.env.VITE_WORLDMESH_RUNTIME !== 'bundled',
 });
 
 if (import.meta.env.DEV) {
