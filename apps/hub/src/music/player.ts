@@ -1,21 +1,21 @@
 import { audio as lobbyAudio } from '../walk/sounds';
 import { EPOCH_MS, slotLevel, slotsBetween, type Slot } from './schedule';
+import { audible, createHallMix, distanceToSource, hearing, type HallMix } from './space';
 import { TRACKS, trackUrl, type Track } from './tracks';
 
 /** Remembered per browser: someone who turned the music off keeps it off. */
 const MUSIC_KEY = 'worldmesh.music';
-/** Background level, well under the lobby's footsteps and chat sounds. */
-const VOLUME = 0.2;
-/** How much of the hall's echo comes back, against the music itself. */
-const ECHO = 0.35;
-const DRY = 0.8;
-/** Seconds the hall's echo takes to die away: a big glass-domed room. */
-const ECHO_S = 3.2;
+/**
+ * Background level, well under the lobby's footsteps and chat sounds. The
+ * hall's reverberation adds to it: in the middle of the hall the music comes
+ * out at about 1.8× this, half the level the lobby music had before.
+ */
+const VOLUME = 0.05;
 /** Seconds ahead a coming song starts loading, so it is ready for its crossfade. */
 const LOOKAHEAD_S = 10;
 /** Seconds off the timetable before a song is put back in step. */
 const DRIFT_S = 1;
-/** Seconds for the music to come up or die away on walking in or out of the hall. */
+/** Seconds the music takes to die away once it should stop (turned off, out of earshot). */
 const ROOM_FADE_S = 1.5;
 const TICK_MS = 250;
 
@@ -28,8 +28,11 @@ export interface LobbyMusic {
   readonly current: Track | null;
   /** The lobby is open (walk mode). */
   setActive(active: boolean): void;
-  /** The visitor is inside the hall. The music plays only there. */
-  setInHall(inside: boolean): void;
+  /**
+   * Where the visitor stands (feet), and the hall's radius. The music comes
+   * from the middle of the hall: loudest there, fading out past the wall.
+   */
+  setListener(x: number, y: number, z: number, hallRadius: number): void;
   setEnabled(enabled: boolean): void;
   /** Called whenever the song or the on/off choice changes. */
   onChange(listener: () => void): void;
@@ -52,17 +55,6 @@ function savedEnabled(): boolean {
   }
 }
 
-/** A made-up echo for a big hard room: two channels of noise, dying away. */
-function hallEcho(context: AudioContext): AudioBuffer {
-  const length = Math.floor(context.sampleRate * ECHO_S);
-  const buffer = context.createBuffer(2, length, context.sampleRate);
-  for (let channel = 0; channel < 2; channel++) {
-    const data = buffer.getChannelData(channel);
-    for (let i = 0; i < length; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, 3);
-  }
-  return buffer;
-}
-
 /**
  * How far this browser's clock is from the server's, in milliseconds, from
  * the Date header of a tiny request. Good to about half a second, which is
@@ -82,16 +74,19 @@ async function clockOffset(): Promise<number> {
 }
 
 /**
- * The lobby's music: everyone in the hall hears the same song at the same
- * moment (see schedule.ts), with the hall's echo, crossfading from one song
- * to the next. It plays only while the visitor is in the hall with the tab
- * in view, and fades away when they walk out.
+ * The lobby's music: everyone hears the same song at the same moment (see
+ * schedule.ts), crossfading from one song to the next. It comes from the
+ * middle of the hall and sounds like the hall (see space.ts): loudest there,
+ * softer towards the wall, muffled and fading as you walk away outside. It
+ * plays only within earshot of the hall, with the tab in view.
  */
 export function createLobbyMusic(): LobbyMusic {
   const supported = TRACKS.length > 0 && new Audio().canPlayType('audio/ogg; codecs="vorbis"') !== '';
   let enabled = savedEnabled();
   let active = false;
-  let inHall = false;
+  /** Metres from the music, and the hall's radius; out of earshot until the lobby says. */
+  let distance = Infinity;
+  let radius = 1;
   let current: Track | null = null;
   let offset: number | null = null;
   let askedClock = false;
@@ -99,34 +94,26 @@ export function createLobbyMusic(): LobbyMusic {
   /** Seconds of context time when the music last began fading away, or -1. */
   let fadingSince = -1;
   let decks: Deck[] = [];
-  let master: GainNode | null = null;
+  let mix: HallMix | null = null;
   const listeners: Array<() => void> = [];
   const changed = () => listeners.forEach((listener) => listener());
 
-  const shouldPlay = () => supported && enabled && active && inHall && document.visibilityState === 'visible';
+  const shouldPlay = () => supported && enabled && active && audible(distance, radius) && document.visibilityState === 'visible';
   /** Seconds since the timetable began, on the server's clock. */
   const now = () => (Date.now() + (offset ?? 0) - EPOCH_MS) / 1000;
 
   /** The mixing desk, built on first use inside the lobby's own audio context. */
   function desk(): AudioContext | null {
     const context = lobbyAudio();
-    if (!context || master) return context;
-    master = context.createGain();
-    master.gain.value = 0;
-    const dry = context.createGain();
-    dry.gain.value = DRY;
-    const echo = context.createConvolver();
-    echo.buffer = hallEcho(context);
-    const wet = context.createGain();
-    wet.gain.value = ECHO;
-    master.connect(dry).connect(context.destination);
-    master.connect(echo).connect(wet).connect(context.destination);
+    if (!context || mix) return context;
+    const hall = createHallMix(context, context.destination);
+    mix = hall;
     decks = [0, 1].map(() => {
       const element = new Audio();
       element.preload = 'none';
       const level = context.createGain();
       level.gain.value = 0;
-      context.createMediaElementSource(element).connect(level).connect(master!);
+      context.createMediaElementSource(element).connect(level).connect(hall.input);
       const deck: Deck = { element, level, slot: null, broken: false };
       // A file that will not load: skip it and let the timetable move on.
       element.addEventListener('error', () => {
@@ -162,13 +149,13 @@ export function createLobbyMusic(): LobbyMusic {
 
   function tick(): void {
     const context = desk();
-    if (!context || !master) return;
+    if (!context || !mix) return;
     const playing = shouldPlay();
     const at = context.currentTime;
-    master.gain.setTargetAtTime(playing ? VOLUME : 0, at, ROOM_FADE_S / 3);
+    mix.hear(hearing(distance, radius), playing ? VOLUME : 0);
 
     if (!playing) {
-      // Faded out: let go of the files until the visitor is back in the hall.
+      // Faded out: let go of the files until the visitor is back within earshot.
       if (fadingSince < 0) fadingSince = at;
       if (at - fadingSince > ROOM_FADE_S * 1.5 || document.visibilityState !== 'visible') {
         for (const deck of decks) deck.element.pause();
@@ -253,12 +240,15 @@ export function createLobbyMusic(): LobbyMusic {
     },
     setActive(value) {
       active = value;
-      if (!value) inHall = false;
+      if (!value) distance = Infinity;
       update();
     },
-    setInHall(inside) {
-      inHall = inside;
-      update();
+    setListener(x, y, z, hallRadius) {
+      const was = shouldPlay();
+      distance = distanceToSource(x, y, z);
+      radius = hallRadius;
+      // Every frame: only stepping into or out of earshot needs more than the next tick.
+      if (shouldPlay() !== was) update();
     },
     setEnabled(value) {
       enabled = value;
