@@ -492,6 +492,7 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
           }
         }
       },
+      onHall: (inside) => lobbyMusic.setInHall(inside),
       onEnterWorld: (world, returnTo) => {
         trackClick(world.url);
         saveWalkReturn(returnTo, walkColor);

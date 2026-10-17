@@ -109,6 +109,8 @@ export interface LobbyOptions {
   color?: string | null;
   /** Called with how many people are in the lobby, or null while offline. */
   onPresenceCount?: (count: number | null) => void;
+  /** Called when this visitor walks into the hall (true) or out of it to the avenues (false). */
+  onHall?: (inside: boolean) => void;
   /**
    * Called right before the page navigates into a world, with where to put
    * the visitor if they come back: just outside that door, facing the room.
@@ -891,6 +893,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const cityColliders: Mesh[] = [];
   let nearEmpty: Door | null = null;
   let time = 0;
+  /** Whether this visitor is in the hall, as last reported to `onHall`. */
+  let inHall: boolean | null = null;
   let warping = false;
   /** Lobby clock when this visitor started warping out through a door; negative = not leaving. */
   let leavingAt = -1;
@@ -1022,6 +1026,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         callPrompt.classList.remove('visible');
       }
       const [x, y, z] = handle.getState().position;
+      const inside = Math.hypot(x, z) < HALL_RADIUS;
+      if (inside !== inHall) {
+        inHall = inside;
+        options.onHall?.(inside);
+      }
       // Only doors on the floor they are standing on.
       const level = (door: Door) => Math.abs(y - door.group.position.y) < 1;
       if (exitDoor && !emerging) {
