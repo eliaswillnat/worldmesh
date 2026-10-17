@@ -323,6 +323,8 @@ const LEAVE_TIME = 0.12;
 const OTHER_LEAVE_TIME = 0.9;
 /** How far their figure is carried on through the doorway as it warps out, in metres. */
 const OTHER_LEAVE_DRIFT = 1.4;
+/** Someone closing the page warps out up and down, where they stand. */
+const UP_AXIS = new Vector3(0, 1, 0);
 /** A portal or figure this close to where someone went through is the one they used. */
 const WARP_MATCH = 3;
 /** Seconds after which a figure that warped out but never left is shown again. */
@@ -608,7 +610,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   let newestFigure: Object3D | null = null;
   // Everyone else's figures, so one stepping through a portal can be warped out.
   const figures = new Set<Object3D>();
-  const departing: Array<{ root: Object3D; time: number; axis: Vector3; from: Vector3; left: boolean }> = [];
+  const departing: Array<{ root: Object3D; time: number; axis: Vector3; from: Vector3; left: boolean; drift: number }> = [];
   const throughAxis = new Vector3();
   // Coming out of a world happens as the page loads, often before presence
   // has connected: hold the warp until it can be shared.
@@ -731,12 +733,24 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         // Everyone else's footsteps, jumps and landings, heard from where we stand.
         listener: () => listenerPoint.fromArray(world.getState().position),
         // Someone leaving, by a door or by closing the page: the same sound as our own leaving.
-        // One warping out through a door is kept until the warp has played out.
+        // One warping out through a door is kept until the warp has played out; one
+        // closing the page warps out where they stand, up and down like an arrival.
         onDepart: (x, z, root) => {
           playWarpSound(false, 0, loudnessAt(x, z));
           const entry = departing.find((candidate) => candidate.root === root);
-          if (entry) entry.left = true;
-          return !!entry;
+          if (entry) {
+            entry.left = true;
+            return true;
+          }
+          // Gone before their own arrival had shown them: nothing to warp out.
+          const arriving = arrivals.findIndex((candidate) => candidate.root === root);
+          if (arriving >= 0) {
+            arrivals.splice(arriving, 1);
+            return false;
+          }
+          if (!root.visible) return false;
+          departing.push({ root, time: 0, axis: UP_AXIS, from: root.position.clone(), left: true, drift: 0 });
+          return true;
         },
       })
     : undefined;
@@ -1305,7 +1319,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       }
     }
     if (figure && !departing.some((entry) => entry.root === figure)) {
-      departing.push({ root: figure, time: 0, axis: door.through(new Vector3()), from: figure.position.clone(), left: false });
+      departing.push({ root: figure, time: 0, axis: door.through(new Vector3()), from: figure.position.clone(), left: false, drift: OTHER_LEAVE_DRIFT });
     }
   }
 
@@ -1322,7 +1336,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       const amount = 1 - t * t * (3 - 2 * t);
       // Carried on into the portal as they smear through it, quickening as they go.
       // (`axis` points out of the door into the hall, so in is against it.)
-      entry.root.position.copy(entry.from).addScaledVector(entry.axis, -OTHER_LEAVE_DRIFT * t * t);
+      entry.root.position.copy(entry.from).addScaledVector(entry.axis, -entry.drift * t * t);
       setLocalAppear(entry.root, amount, entry.axis);
       for (const child of entry.root.children) {
         if (child instanceof Sprite) child.material.opacity = amount;
