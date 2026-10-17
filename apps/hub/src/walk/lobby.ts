@@ -649,6 +649,14 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     roughness: 0.08,
     metalness: 0.4,
   });
+  // The dome: barely there, so the sky shows through and the hall shows from on top.
+  const domeGlassMaterial = new MeshStandardMaterial({
+    transparent: true,
+    depthWrite: false,
+    side: DoubleSide,
+    roughness: 0.05,
+    metalness: 0.2,
+  });
   // The gallery floors: thicker glass than the rails, so the deck still reads as a floor.
   const deckGlassMaterial = new MeshStandardMaterial({
     transparent: true,
@@ -848,6 +856,38 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     },
   });
   const feet = new Vector3();
+  const cameraRay = new Raycaster();
+  const cameraEye = new Vector3();
+  const cameraBack = new Vector3();
+  const faceNormal = new Vector3();
+  /**
+   * A world's doorway is open (walk in and you go through), so it is no
+   * collider and the camera's boom would pass it, stopping only at the
+   * backstop inside the wall: from there the door's face hides the figure.
+   * Pull the camera in to just this side of any door face behind them, as a
+   * wall would. Not for the door being walked through, which the camera follows.
+   */
+  function keepCameraOutOfDoorways(feet: Vector3): void {
+    // The boom runs from straight above the feet (the eye) back to the camera.
+    cameraBack.set(0, 0, 1).applyQuaternion(camera.quaternion);
+    const flat = cameraBack.x * cameraBack.x + cameraBack.z * cameraBack.z;
+    if (flat < 1e-4) return;
+    const boom = ((camera.position.x - feet.x) * cameraBack.x + (camera.position.z - feet.z) * cameraBack.z) / flat;
+    if (boom <= 0.05) return;
+    cameraEye.copy(camera.position).addScaledVector(cameraBack, -boom);
+    const faces: Mesh[] = [];
+    for (const door of doors.values()) if (!door.passable) faces.push(door.face);
+    cameraRay.set(cameraEye, cameraBack);
+    cameraRay.far = boom + 0.3;
+    for (const hit of cameraRay.intersectObjects(faces, false)) {
+      // Only from the hall side: a face seen from behind is past the wall anyway.
+      if (!hit.face || faceNormal.copy(hit.face.normal).transformDirection(hit.object.matrixWorld).dot(cameraBack) > 0) continue;
+      // Like the camera rig: 0.3 short of the surface, but never past it, however close they stand.
+      const pulled = Math.max(hit.distance - 0.3, hit.distance * 0.5);
+      if (pulled < boom) camera.position.copy(cameraEye).addScaledVector(cameraBack, pulled);
+      return;
+    }
+  }
   /**
    * The visitor's character (Avatar Wallet), shown in the lobby as well, so
    * the figure walking through a door is already the one the world shows.
@@ -1041,6 +1081,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     // Held upright, look further down so the floor fills the tall screen instead of the sky.
     view: { mode: 'third', yaw: padYaw(), distance: 5.5, pitch: window.innerWidth < window.innerHeight ? -0.32 : -0.15 },
     vr: true,
+    // Trying out Minecraft-style flight: double-tap Space.
+    abilities: { flying: true },
     ui: { title: 'WorldMesh', badge: false, crosshair: false, deferLockPanel: true, moveBeforeLock: true },
     network: presence,
     // Empty doors are closed: their faces stop you like the wall does.
@@ -1096,6 +1138,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         if (!warping && !emerging && door.contains(x, z)) enter(door);
       }
       walkThrough.update();
+      if (world.getViewMode() === 'third' && !renderer.xr.isPresenting) keepCameraOutOfDoorways(feet.set(x, y, z));
       let near: Door | null = null;
       let nearest = EMPTY_DOOR_REACH;
       for (const door of [...emptyDoors, ...galleryDoors]) {
@@ -2114,6 +2157,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     // Clear by day with the sky behind it; a faint smoked sheen at night.
     glassMaterial.color.set(light ? 0xe4eef9 : 0x9aa8bf);
     glassMaterial.opacity = light ? 0.22 : 0.1;
+    domeGlassMaterial.color.set(light ? 0xe4eef9 : 0x9aa8bf);
+    domeGlassMaterial.opacity = light ? 0.08 : 0.04;
     deckGlassMaterial.color.set(light ? 0xd6e4f2 : 0x8fa4c4);
     deckGlassMaterial.opacity = light ? 0.38 : 0.2;
     departures.setTheme(light);
@@ -2503,13 +2548,21 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     upper.length = 0;
     const upperColliders = [...galleries.colliders.map((g) => (g.index ? g.toNonIndexed() : g)), ...shafts.colliders];
     if (upperColliders.length) upper.push(mergeInto(upperColliders, colliderMaterial));
+    // The drum's top and the dome's glass, to land on when flying.
+    upper.push(new Mesh(rim.clone(), colliderMaterial), new Mesh(dome.collider, colliderMaterial));
     lifts.setLifts(liftPlan);
-    const glazing = new Mesh(mergeGeometries([dome.glass, ...galleries.glass].map((g) => (g.index ? g.toNonIndexed() : g))), glassMaterial);
-    for (const geometry of [dome.glass, ...galleries.glass]) geometry.dispose();
     // Drawn after the opaque hall, so the rails and the dome stay see-through.
-    glazing.renderOrder = 3;
-    scene.add(glazing);
-    trim.push(glazing);
+    const domeGlass = new Mesh(dome.glass, domeGlassMaterial);
+    domeGlass.renderOrder = 3;
+    scene.add(domeGlass);
+    trim.push(domeGlass);
+    if (galleries.glass.length) {
+      const glazing = new Mesh(mergeGeometries(galleries.glass.map((g) => (g.index ? g.toNonIndexed() : g))), glassMaterial);
+      for (const geometry of galleries.glass) geometry.dispose();
+      glazing.renderOrder = 3;
+      scene.add(glazing);
+      trim.push(glazing);
+    }
     if (galleries.decks.length) {
       const decks = new Mesh(mergeGeometries(galleries.decks), deckGlassMaterial);
       for (const geometry of galleries.decks) geometry.dispose();
@@ -2780,6 +2833,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     innerWallMaterial.dispose();
     gateFrameMaterial.dispose();
     glassMaterial.dispose();
+    domeGlassMaterial.dispose();
     deckGlassMaterial.dispose();
     colliderMaterial.dispose();
     for (const mesh of upper) mesh.geometry.dispose();
