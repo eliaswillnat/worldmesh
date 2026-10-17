@@ -230,7 +230,9 @@ everyone in the room.
    the same hub as `avatar.hubUrl` (`https://worldmesh.net/` by default). It
    throws while the hub's key cannot be fetched; the relay client tries again a
    minute later.
-4. Only then `loadAvatarModel(…)`, with a `maxBytes` limit.
+4. Only then `loadAvatarModel(…)`, with a `maxBytes` limit. Pass `warmUp`
+   (the world's `renderer`, `scene` and `camera`) so the model is readied a
+   bit at a time and does not freeze a frame when it appears.
 
 Never send, or load, a plain `modelUrl`.
 

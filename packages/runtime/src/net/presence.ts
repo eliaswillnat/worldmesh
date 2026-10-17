@@ -209,6 +209,8 @@ export class Presence implements NetworkAdapter {
   private avatarQueue: Promise<void> = Promise.resolve();
   /** Tidies up an avatar left on a figure that is kept after its owner left. */
   private keptAvatars = new WeakMap<Object3D, LoadedAvatar>();
+  /** The world this draws into, once attached: avatars are readied for its renderer before they go on. */
+  private world: WorldMeshHandle | null = null;
 
   readonly url: string;
   private onCount: (count: number | null) => void;
@@ -255,6 +257,7 @@ export class Presence implements NetworkAdapter {
   }
 
   attach(world: WorldMeshHandle): void {
+    this.world = world;
     this.unsubscribe = world.on('update', ({ dt, state }) => {
       this.sendLocalState(state);
       this.sendAvatar();
@@ -405,6 +408,7 @@ export class Presence implements NetworkAdapter {
     window.removeEventListener('pagehide', this.handlePageHide);
     window.removeEventListener('pageshow', this.handlePageShow);
     this.unsubscribe?.();
+    this.world = null;
     this.disconnect();
     this.group.removeFromParent();
   }
@@ -722,7 +726,12 @@ export class Presence implements NetworkAdapter {
     try {
       const loaded = await loadAvatarModel(
         { provider: 'peer', avatarId: id, name: null, thumbnail: null, format: share.f, modelUrl: share.u, expiresAt: null, sourceUrl: null },
-        { height: BODY_HEIGHT, maxBytes: this.maxAvatarBytes, signal: load.signal },
+        {
+          height: BODY_HEIGHT,
+          maxBytes: this.maxAvatarBytes,
+          signal: load.signal,
+          warmUp: this.world ? { renderer: this.world.renderer, scene: this.world.scene, camera: this.world.camera } : undefined,
+        },
       );
       if (load.signal.aborted || remote.avatarId !== id) {
         loaded.dispose();

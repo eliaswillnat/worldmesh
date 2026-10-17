@@ -209,9 +209,15 @@ export class PubSubNetwork implements NetworkAdapter {
     takeOff(peer);
     if (!share || share.x * 1000 < Date.now() - 5 * 60_000) return; // expired, with 5 minutes for clock skew
     if (!(await verifyAvatar(share).catch(() => false))) return;
+    const world = this.world;
     const avatar = await loadAvatarModel(
       { provider: 'peer', avatarId: share.i, name: null, thumbnail: null, format: share.f, modelUrl: share.u, expiresAt: null, sourceUrl: null },
-      { height: 1.8, maxBytes: 40 * 1024 * 1024 },
+      {
+        height: 1.8,
+        maxBytes: 40 * 1024 * 1024,
+        // Readies it for drawing a bit at a time, so it does not freeze a frame when it appears.
+        warmUp: world ? { renderer: world.renderer, scene: world.scene, camera: world.camera } : undefined,
+      },
     ).catch(() => null);
     if (!avatar) return;
     // They left, or changed avatar, while it downloaded.

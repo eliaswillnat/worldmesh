@@ -1,4 +1,18 @@
-import { AnimationMixer, Box3, Group, MathUtils, Mesh, Texture, type AnimationAction, type Object3D } from 'three';
+import {
+  AnimationMixer,
+  Box3,
+  Group,
+  MathUtils,
+  Mesh,
+  Texture,
+  type AnimationAction,
+  type Camera,
+  type Material,
+  type Object3D,
+  type Scene,
+  type ShaderMaterial,
+  type WebGLRenderer,
+} from 'three';
 import { attachAvatarAppear, type AvatarMotion } from '../player/avatar.js';
 import type { AvatarDescriptor } from './descriptor.js';
 
@@ -19,6 +33,20 @@ export interface LoadAvatarOptions {
   signal?: AbortSignal;
   /** The model file, already downloaded (downloadAvatarModel): nothing is fetched again. */
   data?: ArrayBuffer;
+  /**
+   * Where the model will be drawn. Given, its textures go to the GPU one per
+   * frame and its shaders compile in the background before the promise
+   * resolves, so putting it on does not freeze a frame (a hitch in the
+   * camera). It takes a moment longer to arrive.
+   */
+  warmUp?: AvatarWarmUp;
+}
+
+export interface AvatarWarmUp {
+  renderer: WebGLRenderer;
+  /** The scene it will join: its lights and fog decide which shaders are needed. */
+  scene: Scene;
+  camera: Camera;
 }
 
 const DEFAULT_MAX_BYTES = 40 * 1024 * 1024;
@@ -49,13 +77,17 @@ export async function loadAvatarModel(descriptor: AvatarDescriptor, options: Loa
   const loader = new GLTFLoader();
   if (vrmModule) loader.register((parser) => new vrmModule.VRMLoaderPlugin(parser));
   const gltf = await loader.parseAsync(buffer, '');
+  // The steps below are heavy on big models: give each a frame of its own.
+  await nextFrame(options.signal);
 
   const vrm = vrmModule ? (gltf.userData.vrm as import('@pixiv/three-vrm').VRM | undefined) : undefined;
   if (descriptor.format === 'vrm' && (!vrm || !vrmModule)) throw new Error('Not a VRM model');
   const model = vrm ? vrm.scene : gltf.scene;
   if (vrm && vrmModule) {
     vrmModule.VRMUtils.removeUnnecessaryVertices(model);
+    await nextFrame(options.signal);
     vrmModule.VRMUtils.combineSkeletons(model);
+    await nextFrame(options.signal);
     // VRM 0.x faces -Z; this makes it face +Z like VRM 1.0 and plain glTF.
     vrmModule.VRMUtils.rotateVRM0(vrm);
   }
@@ -84,14 +116,77 @@ export async function loadAvatarModel(descriptor: AvatarDescriptor, options: Loa
   turn.position.y = -box.min.y * scale;
 
   const animate = vrm ? vrmAnimator(vrm) : clipAnimator(model, gltf.animations);
-  return {
-    object: root,
-    animate,
-    dispose() {
-      if (vrm && vrmModule) vrmModule.VRMUtils.deepDispose(model);
-      else disposeTree(model);
-    },
+  const dispose = () => {
+    if (vrm && vrmModule) vrmModule.VRMUtils.deepDispose(model);
+    else disposeTree(model);
   };
+  if (options.warmUp) {
+    try {
+      await warmUpAvatar(root, options.warmUp, options.signal);
+    } catch (error) {
+      dispose();
+      throw error;
+    }
+  }
+  return { object: root, animate, dispose };
+}
+
+/** Roughly one frame at 60 fps. */
+const FRAME_MS = 16;
+
+/** Let the page draw a frame, so the work before and after lands in different ones. */
+async function nextFrame(signal?: AbortSignal): Promise<void> {
+  // A timer rather than requestAnimationFrame, which stops while a VR headset draws.
+  await new Promise((resolve) => setTimeout(resolve, FRAME_MS));
+  signal?.throwIfAborted();
+}
+
+/**
+ * Without this, the first frame that draws a new model compiles all its
+ * shaders and uploads all its textures at once, and freezes for a moment.
+ * Shaders compile in the background where the browser can (and in two
+ * variants: solid, and see-through for while it warps in), then the
+ * textures go up one per frame.
+ */
+async function warmUpAvatar(root: Object3D, { renderer, scene, camera }: AvatarWarmUp, signal?: AbortSignal): Promise<void> {
+  const materials = new Set<Material>();
+  root.traverse((child) => {
+    const mesh = child as Mesh;
+    if (!mesh.isMesh) return;
+    for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) materials.add(material);
+  });
+
+  await renderer.compileAsync(root, camera, scene);
+  signal?.throwIfAborted();
+  const solid = [...materials].filter((material) => !material.transparent);
+  const setTransparent = (transparent: boolean) => {
+    for (const material of solid) {
+      material.transparent = transparent;
+      material.needsUpdate = true;
+    }
+  };
+  if (solid.length) {
+    setTransparent(true);
+    try {
+      await renderer.compileAsync(root, camera, scene);
+    } finally {
+      setTransparent(false);
+    }
+    signal?.throwIfAborted();
+  }
+
+  const textures = new Set<Texture>();
+  for (const material of materials) {
+    // Plain materials keep their textures as properties; shader materials (a VRM's MToon) in uniforms.
+    const uniforms = Object.values((material as ShaderMaterial).uniforms ?? {}).map((uniform) => uniform?.value);
+    for (const value of [...Object.values(material), ...uniforms]) {
+      if (value instanceof Texture) textures.add(value);
+    }
+  }
+  for (const texture of textures) {
+    await nextFrame(signal);
+    renderer.initTexture(texture);
+  }
 }
 
 async function download(url: string, maxBytes: number, signal?: AbortSignal): Promise<ArrayBuffer> {
