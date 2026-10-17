@@ -27,6 +27,7 @@ interface WorldEntry {
 }
 
 import communityWorldsJson from './community.json';
+import { createLobbyMusic } from './music/player';
 
 /**
  * Dev only: VITE_DEV_WORLD_ORIGINS="https://leniverse.com=http://localhost:3000,…"
@@ -392,6 +393,9 @@ const WALK_RETURN_KEY = 'worldmesh.walkReturn';
 const WALK_COLORS = ['#f4f4f4', '#8ec8ff', '#9ee6b0', '#ffc48a', '#f0a8cc', '#c4b0ff'];
 let walkColor = WALK_COLORS[0];
 let walkRoot: HTMLDivElement | null = null;
+/** Music in the lobby: the playlist and credits come from music/tracks.ts. */
+const lobbyMusic = createLobbyMusic();
+lobbyMusic.onChange(showLobbyMusic);
 let lobby: import('./walk/lobby').Lobby | null = null;
 let walkLoading = false;
 /** The centered Gallery mode button was pressed while the lobby was still loading. */
@@ -514,6 +518,7 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
     applyWalkTheme();
     mountPauseActions();
     showWalkPrivate(lobby.alias);
+    lobbyMusic.setActive(true);
     walkColor = color && WALK_COLORS.includes(color) ? color : savedWalkColor() ?? randomWalkColor();
     lobby.setColor(walkColor);
     showWalkColor(walkColor);
@@ -565,6 +570,7 @@ function showWalkOnline(): void {
 }
 
 function exitWalkMode(): void {
+  lobbyMusic.setActive(false);
   lobby?.dispose();
   lobby = null;
   walkRoot?.remove();
@@ -709,6 +715,25 @@ function showWalkPrivate(alias: string | null): void {
   }
 }
 
+/** The pause screen's music switch, and the song playing with a link to its credit. */
+function showLobbyMusic(): void {
+  const on = lobbyMusic.enabled;
+  for (const button of document.querySelectorAll<HTMLButtonElement>('.walk-music')) {
+    button.setAttribute('aria-pressed', String(on));
+    button.textContent = on ? 'Music on' : 'Music off';
+  }
+  const track = lobbyMusic.current;
+  for (const link of document.querySelectorAll<HTMLAnchorElement>('.walk-now-playing')) {
+    link.textContent = on && track ? `♪ ${track.title} · ${track.artist}` : 'Music credits';
+    link.setAttribute('aria-label', on && track ? `Now playing ${track.title} by ${track.artist}. Music credits` : 'Music credits');
+  }
+}
+
+document.addEventListener('click', (event) => {
+  const target = event.target instanceof Element ? event.target : null;
+  if (target?.closest('.walk-music')) lobbyMusic.setEnabled(!lobbyMusic.enabled);
+});
+
 const walkConfirm = document.querySelector<HTMLDialogElement>('#walk-confirm')!;
 const walkConfirmTitle = document.querySelector<HTMLHeadingElement>('#walk-confirm-title')!;
 const walkConfirmBody = document.querySelector<HTMLParagraphElement>('#walk-confirm-body')!;
@@ -808,13 +833,27 @@ function mountPauseActions(): void {
 
   const colors = walkColors.cloneNode(true) as HTMLDivElement;
   colors.removeAttribute('id');
-  bar.append(gallery, discord, priv, theme, colors);
+  bar.append(gallery, discord, priv);
+  if (lobbyMusic.supported) {
+    const music = document.createElement('button');
+    music.type = 'button';
+    music.className = 'walk-music';
+    // In a new tab, so the lobby keeps its place.
+    const credits = document.createElement('a');
+    credits.className = 'walk-now-playing';
+    credits.href = '/music-credits';
+    credits.target = '_blank';
+    credits.rel = 'noopener';
+    bar.append(music, credits);
+  }
+  bar.append(theme, colors);
   const keys = content.querySelector('.wm-keys');
   if (keys) content.insertBefore(bar, keys);
   else content.appendChild(bar);
   const choice = (document.documentElement.dataset.theme as ThemeChoice | undefined) ?? 'system';
   applyThemeChoice(choice);
   showWalkColor(walkColor);
+  showLobbyMusic();
 }
 
 /** An empty door in the lobby was picked: back to the list, straight into the add form. */
