@@ -2,6 +2,8 @@ import type { InputAction, Keymap } from '../types.js';
 import { resolveKeymap } from './keymap.js';
 import { TouchControls, isTouchDevice } from './touch.js';
 
+const MOVE_ACTIONS = new Set<InputAction>(['forward', 'backward', 'left', 'right']);
+
 export interface InputOptions {
   /** The element that receives pointer lock. */
   element: HTMLElement;
@@ -340,6 +342,10 @@ export class Input {
     }
     // Space and the arrow keys scroll the page otherwise.
     if (event.code === 'Space' || event.code.startsWith('Arrow')) event.preventDefault();
+    // Fast flying is Ctrl + a move key: keep Ctrl+S, Ctrl+D and the like from
+    // saving or bookmarking the page. (Ctrl+W still closes the tab; browsers
+    // do not let a page stop that.)
+    if (event.ctrlKey && actions.some((action) => MOVE_ACTIONS.has(action))) event.preventDefault();
     this.pressed.add(event.code);
     for (const action of actions) this.justPressed.add(action);
   };

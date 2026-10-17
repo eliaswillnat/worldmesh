@@ -684,6 +684,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
       dt,
       speed: Math.hypot(controller.velocity.x, controller.velocity.z),
       grounded: controller.onGround || controller.flying,
+      flying: controller.flying,
       heading: Math.atan2(-controller.velocity.x, -controller.velocity.z),
     }, cameraRig.mode === 'third');
     footsteps?.update(dt, playing ? Math.hypot(controller.velocity.x, controller.velocity.z) : 0, controller.onGround, footfall, controller.velocity.y, controller.flying);

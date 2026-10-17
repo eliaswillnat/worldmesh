@@ -26,7 +26,9 @@ import { DOOR_HEIGHT, DOOR_TOP, DOOR_WIDTH, loadCoverTexture } from './door';
  * The hall as a hub rotunda, like the atrium of a station, airport or mall:
  * a glass dome with an oculus the spawn beam rises through, galleries of
  * doors ringing the drum below the screens, a departures board
- * hanging over the middle, and avenue signs in the exits. Only looks: none of it is solid.
+ * hanging over the middle, and avenue signs in the exits. Only looks: none of it
+ * is solid, except the dome's glass and the departures ring, which someone
+ * flying bumps into and can land on.
  */
 
 /** The dome rises this fraction of the hall's radius above the drum. */
@@ -117,12 +119,15 @@ export function domeShape(radius: number): DomeShape {
 
 /**
  * The glass dome over a hall of `radius`: the glazing, plus ribs (solid) and
- * light lines (glow) to merge into the citadel's trim.
+ * light lines (glow) to merge into the citadel's trim, and a coarser copy of
+ * the glazing to walk on.
  */
-export function buildDome(radius: number): { glass: BufferGeometry; solid: BufferGeometry[]; glow: BufferGeometry[] } {
+export function buildDome(radius: number): { glass: BufferGeometry; solid: BufferGeometry[]; glow: BufferGeometry[]; collider: BufferGeometry } {
   const { sphereRadius: R, centerY, thetaTop, thetaBase } = domeShape(radius);
   const glass = new SphereGeometry(R, 96, 24, 0, Math.PI * 2, thetaTop, thetaBase - thetaTop);
   glass.translate(0, centerY, 0);
+  const collider = new SphereGeometry(R, 48, 8, 0, Math.PI * 2, thetaTop, thetaBase - thetaTop);
+  collider.translate(0, centerY, 0);
   const solid: BufferGeometry[] = [];
   const glow: BufferGeometry[] = [];
   const at = (r: number, theta: number, phi: number) =>
@@ -156,7 +161,7 @@ export function buildDome(radius: number): { glass: BufferGeometry; solid: Buffe
   foot.rotateX(Math.PI / 2);
   foot.translate(0, DRUM_HEIGHT + 0.1, 0);
   solid.push(flat(foot));
-  return { glass, solid, glow };
+  return { glass, solid, glow, collider };
 }
 
 /**
@@ -279,6 +284,8 @@ export function createDepartureBoard(): {
   group: Group;
   /** Points on the board's top, for hanging it from the dome. */
   hangers: Vector3[];
+  /** The ring's outside, inside, top and underside, for someone flying into it. */
+  colliders: BufferGeometry[];
   setFlights(flights: Flight[]): void;
   setTheme(light: boolean): void;
   update(dt: number): void;
@@ -371,6 +378,30 @@ export function createDepartureBoard(): {
   deck(BOARD_RADIUS - 1.2, BOARD_RADIUS + 0.4, BOARD_BOTTOM - 0.45, Math.PI / 2);
   ring(BOARD_RADIUS + 0.38, BOARD_BOTTOM - 0.45, 0.03, edgeLight);
   ring(BOARD_RADIUS + 0.34, outerTop + 0.2, 0.025, edgeLight);
+
+  // Solid to fly into: both faces of the ring, the top rim to land on, and
+  // the flange underneath to bump into from below. It spins, but it is round,
+  // so a still collider fits it.
+  const colliders: BufferGeometry[] = [];
+  // Walls only stop someone moving against the way they face: out on the outside, in on the inside.
+  const wall = (radius: number, inward: boolean) => {
+    const height = outerTop + 0.3 - (BOARD_BOTTOM - 0.45);
+    const cylinder = new CylinderGeometry(radius, radius, height, 64, 1, true);
+    const geometry = inward ? flipInside(cylinder) : cylinder;
+    geometry.translate(0, BOARD_BOTTOM - 0.45 + height / 2, 0);
+    colliders.push(geometry);
+  };
+  const lid = (from: number, to: number, y: number) => {
+    const geometry = new RingGeometry(from, to, 64, 1);
+    geometry.rotateX(-Math.PI / 2);
+    geometry.translate(0, y, 0);
+    colliders.push(geometry);
+  };
+  wall(BOARD_RADIUS + 0.4, false);
+  wall(BOARD_RADIUS - 0.25, true);
+  lid(BOARD_RADIUS - 0.25, BOARD_RADIUS + 0.4, outerTop + 0.3);
+  lid(BOARD_RADIUS - 1.2, BOARD_RADIUS + 0.4, BOARD_BOTTOM - 0.45);
+  geometries.push(...colliders);
 
   // Where the cords meet the board's top rim: one over each stretch of wall between two exits.
   const hangers = Array.from({ length: HANGERS }, (_, i) => {
@@ -517,6 +548,7 @@ export function createDepartureBoard(): {
   return {
     group,
     hangers,
+    colliders,
     setFlights(next) {
       const same =
         next.length === flights.length &&

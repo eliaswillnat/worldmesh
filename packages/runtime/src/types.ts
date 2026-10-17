@@ -44,6 +44,8 @@ export interface Keymap {
   toggleView: string[];
   crouch: string[];
   fly: string[];
+  /** Held while flying in any direction: fly twice as fast. */
+  flyFast: string[];
   dash: string[];
 }
 

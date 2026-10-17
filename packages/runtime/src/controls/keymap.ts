@@ -15,6 +15,7 @@ export const DEFAULT_KEYMAP: Keymap = {
   toggleView: ['KeyV'],
   crouch: ['KeyC'],
   fly: ['KeyF'],
+  flyFast: ['ControlLeft', 'ControlRight'],
   dash: ['KeyQ'],
 };
 
