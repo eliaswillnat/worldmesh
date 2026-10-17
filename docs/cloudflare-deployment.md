@@ -201,6 +201,22 @@ cover cannot be loaded show a procedural tunnel instead.
 
 ---
 
+### Translating lobby chat
+
+A chat line in another language gets a 文A mark in the lobby; clicking or
+tapping it translates it into the visitor's device language. Chrome and Edge
+do that on the device. Every other browser asks the hub's Pages Function
+`/api/translate`, which runs Cloudflare Workers AI (`@cf/meta/m2m100-1.2b`).
+It needs one binding, once:
+
+- `worldmesh-hub` → **Settings** → **Bindings** → **Add** → **Workers AI**,
+  variable name `AI`. It takes effect on the next deploy.
+
+Without it, `/api/translate` answers 503 and those browsers show "could not
+translate this"; nothing else changes. Answers are cached at the edge for a
+week, so the same line asked by many people is translated once, and each IP
+gets 30 a minute. The preview hub gets the binding from `scripts/preview.sh`.
+
 ## 6. Accounts and federation
 
 `workers/auth` and `workers/federation` are Workers routed onto the hub's own

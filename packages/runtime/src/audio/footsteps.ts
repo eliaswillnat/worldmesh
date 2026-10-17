@@ -3,14 +3,34 @@ const STRIDE = 1.6;
 /** Below this ground speed (m/s) the player is standing, not walking. */
 const MIN_SPEED = 0.6;
 
+/** One audio context and noise buffer for every walker: browsers allow only a few contexts per page. */
+let shared: { context: AudioContext; noise: AudioBuffer } | null = null;
+
+/**
+ * The runtime's audio context, made on first use and shared by footsteps and
+ * voices. Null without Web Audio. It may still be suspended: browsers start
+ * audio only once the page has had a click or key press, so each call asks
+ * it to resume.
+ */
+export function sharedAudio(): { context: AudioContext; noise: AudioBuffer } | null {
+  if (!shared) {
+    if (typeof AudioContext === 'undefined') return null;
+    const context = new AudioContext();
+    const length = Math.floor(context.sampleRate * 0.6);
+    const noise = context.createBuffer(1, length, context.sampleRate);
+    const data = noise.getChannelData(0);
+    for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+    shared = { context, noise };
+  }
+  if (shared.context.state === 'suspended') void shared.context.resume().catch(() => undefined);
+  return shared;
+}
+
 /**
  * Footstep sounds for the local player, synthesised with Web Audio so no
  * world has to ship a sound file. Steps follow distance walked, so sprinting
  * quickens them and crouching slows them without any extra tuning.
  */
-/** One audio context and noise buffer for every walker: browsers allow only a few contexts per page. */
-let shared: { context: AudioContext; noise: AudioBuffer } | null = null;
-
 export class Footsteps {
   /**
    * How loud this walker is where the listener stands: 1 for the player's own
@@ -164,18 +184,8 @@ export class Footsteps {
   /** The shared audio, or null when there is none, it is not running yet, or this walker is out of earshot. */
   private audio(): { context: AudioContext; noise: AudioBuffer } | null {
     if (this.loudness < 0.02) return null;
-    if (!shared) {
-      if (typeof AudioContext === 'undefined') return null;
-      const context = new AudioContext();
-      const length = Math.floor(context.sampleRate * 0.6);
-      const noise = context.createBuffer(1, length, context.sampleRate);
-      const data = noise.getChannelData(0);
-      for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
-      shared = { context, noise };
-    }
-    // Browsers start audio suspended until the page has had a click or key press.
-    if (shared.context.state === 'suspended') void shared.context.resume().catch(() => undefined);
-    return shared.context.state === 'running' ? shared : null;
+    const audio = sharedAudio();
+    return audio?.context.state === 'running' ? audio : null;
   }
 
   dispose(): void {
