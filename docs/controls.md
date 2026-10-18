@@ -44,7 +44,7 @@ controls move the view instead:
 | `W` `A` `S` `D` / arrows | Pan over the ground |
 | `Shift` | Pan faster |
 | Mouse | Turn the view around, and tilt it between steep and shallow |
-| Scroll wheel | Higher or lower, never more than 40 m above the ground (`view.aerialMaxHeight`) |
+| Scroll wheel | Higher or lower, never more than 50 m above the ground in the lobby (`view.aerialMaxHeight`, 40 m unless a world sets it) |
 | Click, or `E` | Land where the marker is, and walk on in the mode you came from |
 | `V` | Back to first person without moving |
 
