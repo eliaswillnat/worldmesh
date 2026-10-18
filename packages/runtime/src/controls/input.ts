@@ -39,6 +39,8 @@ export class Input {
   private justPressed = new Set<InputAction>();
   /** The last number key pressed this frame, if any. */
   private pendingDigit: number | null = null;
+  /** The mouse was clicked this frame with the cursor captured. */
+  private clicked = false;
   private codeToActions = new Map<string, InputAction[]>();
   private onPointerLockChange?: (locked: boolean) => void;
   private onEscape?: () => boolean | void;
@@ -253,6 +255,13 @@ export class Input {
     return digit;
   }
 
+  /** True once for a mouse click while the cursor is captured. Reading it clears it. */
+  consumeClick(): boolean {
+    const clicked = this.clicked;
+    this.clicked = false;
+    return clicked;
+  }
+
   /** Keep moving this way (same axes as getMoveAxis) until told otherwise; 0, 0 stops. */
   carry(x: number, z: number): void {
     this.carriedX = Number.isFinite(x) ? Math.max(-1, Math.min(1, x)) : 0;
@@ -300,6 +309,7 @@ export class Input {
   endFrame(): void {
     this.justPressed.clear();
     this.pendingDigit = null;
+    this.clicked = false;
   }
 
   dispose(): void {
@@ -364,8 +374,13 @@ export class Input {
   /**
    * A click captures the cursor for looking. Touch is left alone: the joysticks
    * already have the finger, and they do not need a tap before they work.
+   * Once captured, a click is kept for the frame (consumeClick).
    */
   private handlePointerDown = (event: PointerEvent): void => {
+    if (this.locked && !this.disposed && event.button === 0 && event.pointerType === 'mouse' && document.pointerLockElement === this.element) {
+      this.clicked = true;
+      return;
+    }
     if (!this.moveBeforeLock || this.locked || this.disposed || event.button !== 0) return;
     if (event.pointerType === 'touch' || event.pointerType === 'pen') return;
     const target = event.target instanceof Element ? event.target : null;

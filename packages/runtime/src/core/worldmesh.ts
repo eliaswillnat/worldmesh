@@ -7,6 +7,7 @@ import { rememberView, takeViewHandoff } from '../camera/viewHandoff.js';
 import { loadAvatarModel } from '../avatar/loader.js';
 import { Footsteps } from '../audio/footsteps.js';
 import { CameraRig } from '../camera/cameraRig.js';
+import { LandingMarker } from '../camera/landingMarker.js';
 import { Input } from '../controls/input.js';
 import { CollisionWorld } from '../movement/collision.js';
 import { MovementController } from '../movement/controller.js';
@@ -59,7 +60,7 @@ const isDoorwayMessage = (data: unknown, name: string): boolean => {
  * Turn an ordinary Three.js scene into a WorldMesh world.
  *
  * This is the whole compatibility surface: a world that can produce a scene,
- * a camera and a renderer gets the shared controls, both camera modes, the
+ * a camera and a renderer gets the shared controls, all three camera modes, the
  * shared overlay and portals from one call.
  */
 export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
@@ -118,6 +119,8 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   });
 
   const cameraRig = new CameraRig({ ...options.view, mode: rememberedView ?? options.view?.mode, camera, collision });
+  const landingMarker = new LandingMarker();
+  scene.add(landingMarker.root);
   const player = new Player({ ...options.player, height, radius });
   if (player.root) scene.add(player.root);
 
@@ -617,6 +620,8 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   }
 
   function bindXrSession(session: XRSession): void {
+    // The headset is the camera: no bird's-eye view in VR.
+    if (cameraRig.mode === 'aerial') setViewMode(cameraRig.walkingMode);
     xrSession = session;
     input.setXrSession(session);
     if (camera.parent !== xrOrigin) xrOrigin.add(camera);
@@ -653,7 +658,13 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
         cameraRig.look(look.dx, look.dy);
         if (input.locked) cameraRig.zoom(look.wheel);
       }
-      if (input.consume('toggleView')) setViewMode(cameraRig.mode === 'first' ? 'third' : 'first');
+      if (input.consume('toggleView')) setViewMode(cameraRig.nextMode());
+      if (cameraRig.mode === 'aerial') {
+        // The move keys and the joystick pan the bird's-eye view; the player stays put.
+        const axis = input.getMoveAxis();
+        cameraRig.pan(axis.x, axis.z, dt, input.isDown('sprint'));
+        if (input.consumeClick() || input.consume('interact')) landFromAerial();
+      }
       const digit = input.consumeDigit();
       const expression = digit === null ? null : expressionForDigit(digit);
       if (expression) player.setExpression(expression);
@@ -669,7 +680,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     let remaining = dt;
     while (remaining > 0) {
       const step = Math.min(remaining, MAX_STEP);
-      controller.step(step, cameraRig.yaw, playing);
+      controller.step(step, cameraRig.yaw, playing && cameraRig.mode !== 'aerial');
       remaining -= step;
     }
 
@@ -686,9 +697,10 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
       grounded: controller.onGround || controller.flying,
       flying: controller.flying,
       heading: Math.atan2(-controller.velocity.x, -controller.velocity.z),
-    }, cameraRig.mode === 'third');
+    }, cameraRig.mode !== 'first');
     footsteps?.update(dt, playing ? Math.hypot(controller.velocity.x, controller.velocity.z) : 0, controller.onGround, footfall, controller.velocity.y, controller.flying);
     portals.animate(elapsed);
+    landingMarker.update(cameraRig.mode === 'aerial' && !presenting ? cameraRig.landing : null, cameraRig.aerialDistance, elapsed);
 
     updatePortals();
     input.endFrame();
@@ -703,12 +715,20 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   }
 
   function updatePortals(): void {
-    const nearest = portals.findActive(controller.position);
+    // From the bird's-eye view no portal is in reach: E lands the player instead.
+    const aerial = cameraRig.mode === 'aerial' && !renderer.xr.isPresenting;
+    const nearest = aerial ? null : portals.findActive(controller.position);
 
     if (nearest !== activePortal) {
       if (activePortal) events.emit('portal:exit', { portal: activePortal });
       if (nearest) events.emit('portal:enter', { portal: nearest });
       activePortal = nearest;
+    }
+
+    if (aerial) {
+      const where = isTouchDevice() ? 'Tap E to land here' : 'Click or press E to land here';
+      overlay.setPrompt(cameraRig.landing && isPlaying() ? where : null);
+      return;
     }
 
     if (!nearest) {
@@ -748,15 +768,26 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   function setViewMode(mode: ViewMode): void {
     if (cameraRig.mode === mode) return;
     cameraRig.setMode(mode);
-    rememberView(mode);
+    if (cameraRig.mode !== mode) return;
+    // The bird's-eye view is a quick look around, not a way to arrive: the next world opens walking.
+    if (mode !== 'aerial') rememberView(mode);
     applyViewVisibility();
     events.emit('view:change', { mode });
+  }
+
+  /** From the bird's-eye view: put the player where it points, facing the way it looks, and walk on from there. */
+  function landFromAerial(): void {
+    const spot = cameraRig.landing;
+    if (!spot) return;
+    controller.reset(spot.clone().setY(spot.y + 0.05));
+    player.facing = cameraRig.yaw;
+    setViewMode(cameraRig.walkingMode);
   }
 
   /** In first person the avatar would fill the screen. */
   function applyViewVisibility(): void {
     // In a doorway the visitor's own body is the host's: none here.
-    player.setVisible(!viewing && (cameraRig.mode === 'third' || renderer.xr.isPresenting));
+    player.setVisible(!viewing && (cameraRig.mode !== 'first' || renderer.xr.isPresenting));
   }
 
   function getState(): PlayerState {
@@ -852,6 +883,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     input.dispose();
     overlay.dispose();
     portals.dispose();
+    landingMarker.dispose();
     player.dispose();
     footsteps?.dispose();
     if (vrEnabled) scene.remove(xrOrigin);

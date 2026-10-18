@@ -98,6 +98,21 @@ export class CollisionWorld {
     return result;
   }
 
+  /**
+   * The first point along a ray the player may be put down on, for the
+   * bird's-eye view. Colliders with `userData.noLanding` (a glass roof that
+   * only fliers stand on) are seen through, to whatever is under them.
+   */
+  castLandable(origin: Vector3, direction: Vector3, far: number): Vector3 | null {
+    if (this.isEmpty) return null;
+    this.raycaster.set(origin, direction);
+    this.raycaster.far = far;
+    for (const hit of this.raycaster.intersectObjects(this.colliders, true)) {
+      if (hit.object.userData.noLanding !== true) return hit.point;
+    }
+    return null;
+  }
+
   /** Distance from `origin` along `direction` before hitting something. */
   castDistance(origin: Vector3, direction: Vector3, far: number): number {
     if (this.isEmpty) return far;

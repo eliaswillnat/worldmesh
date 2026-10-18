@@ -4,8 +4,12 @@ import type { Camera, Object3D, PerspectiveCamera, Scene, WebGLRenderer } from '
 
 export type Vec3Tuple = [number, number, number];
 
-/** Camera modes every WorldMesh world supports. */
-export type ViewMode = 'first' | 'third';
+/**
+ * Camera modes every WorldMesh world supports. `aerial` is the bird's-eye
+ * view: a high three-quarter look down at the world, panned with the move
+ * keys, from which a click (or E) lands the player where it points.
+ */
+export type ViewMode = 'first' | 'third' | 'aerial';
 
 /**
  * Optional movement capabilities. A world declares what it allows;
@@ -116,6 +120,10 @@ export interface ViewOptions {
   /** Start looking along this yaw, in radians. 0 looks down -Z. */
   yaw?: number;
   pitch?: number;
+  /** Offer the bird's-eye view (V cycles first → third → bird's-eye). Defaults to true. */
+  aerial?: boolean;
+  /** How far the bird's-eye camera sits from the point it looks at, in metres. Defaults to 60. */
+  aerialDistance?: number;
 }
 
 export type PortalMode = 'interact' | 'auto';

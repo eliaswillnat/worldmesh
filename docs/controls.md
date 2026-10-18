@@ -16,10 +16,10 @@ Every WorldMesh world ships these bindings by default. They live in
 | `Space` | Jump (and ascend while flying) |
 | `Shift` | Sprint |
 | `E` | Interact / enter a portal |
-| `V` | Toggle first ↔ third person |
+| `V` | Change the camera: first person → third person → bird's-eye view |
 | `1` … `9`, `0` | Change the default figure's face: smile, grin, laugh, wink, love, surprised, sad, angry, sleepy, neutral |
 | `Esc` | Release the cursor |
-| Scroll wheel | Third-person camera distance |
+| Scroll wheel | Camera distance (third person and bird's-eye view) |
 
 Optional, and only active when the world declares the matching ability:
 
@@ -31,6 +31,29 @@ Optional, and only active when the world declares the matching ability:
 | `Shift` while flying | Descend | `flying` |
 | `Ctrl` + a move key, or double-tap `W` | Fly twice as fast, until you stop moving | `flying` |
 | `Q` | Dash | `dash` |
+
+## Bird's-eye view
+
+The third camera mode is a high, three-quarter look down at the world, for
+getting somewhere far away quickly. While it is on, the player stands still
+and the controls move the view instead:
+
+| Input | Action |
+| --- | --- |
+| `W` `A` `S` `D` / arrows | Pan over the ground |
+| `Shift` | Pan faster |
+| Mouse | Turn the view around, and tilt it between steep and shallow |
+| Scroll wheel | Higher or lower |
+| Click, or `E` | Land where the marker is, and walk on in the mode you came from |
+| `V` | Back to first person without moving |
+
+The marker sits on the first surface under the middle of the screen; pointing
+at a wall puts it at the wall's foot. Colliders a world marks with
+`mesh.userData.noLanding = true` (a glass roof only fliers reach, say) are
+seen through, to whatever is under them. Worlds that should not offer the view
+at all set `view: { aerial: false }`, and `V` then toggles first ↔ third as
+before. The bird's-eye view is never carried to the next world, and VR always
+leaves it.
 
 ## Rules a world should not break
 
@@ -61,8 +84,11 @@ landscape:
 | Drag on the right half | Look |
 | ▲ button | Jump |
 | E button | Interact |
-| V button | Toggle first / third person |
+| V button | Change the camera: first person, third person, bird's-eye view |
 | ⏸ button (top right) | Pause |
+
+In the bird's-eye view the joystick pans, dragging on the right turns the view,
+and E (or the prompt) lands the player at the marker.
 
 ## VR
 

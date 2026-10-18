@@ -26,7 +26,7 @@ document.body.appendChild(renderer.domElement);
 const world = await loadWorldMesh({ scene, camera, renderer, spawn: [0, 2, 0] });
 ```
 
-That gets you the full control convention, both camera modes, the shared
+That gets you the full control convention, all three camera modes, the shared
 overlay, gravity, jumping and respawning.
 
 ## Staying current: `loadWorldMesh` and `createWorldMesh`
@@ -70,7 +70,7 @@ exports (`Presence`, `createNameTag`, …) is the installed version.
 | `portals` | `[]` | See below. |
 | `player` | 1.8m tall, 0.35m radius | `avatar` replaces the default white figure, `avatar: false` removes it. |
 | `avatar` | off | `{ source: 'worldmesh' }` shows the visitor's Avatar Wallet character (VRM/glTF, loaded from the platform that hosts it); `{ source: 'descriptor', descriptor }` loads one you resolved yourself. Falls back to the default body. See [avatar-wallet.md](avatar-wallet.md). |
-| `view` | `{ mode: 'first', distance: 5 }` | Starting camera mode, boom length, mouse sensitivity, initial `yaw`/`pitch`. |
+| `view` | `{ mode: 'first', distance: 5 }` | Starting camera mode, boom length, mouse sensitivity, initial `yaw`/`pitch`; `aerial: false` turns the bird's-eye view off, `aerialDistance` sets its height. |
 | `movement` | see `DEFAULT_TUNING` | `gravity`, `walkSpeed`, `jumpSpeed`, `fallLimit`, … |
 | `keymap` | the convention | Add bindings; do not move the core row. |
 | `multiplayer` | off | `true` shows everyone else in your world through the relay WorldMesh hosts; `{ server: 'wss://…' }` uses your own. See below. |
