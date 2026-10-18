@@ -1079,7 +1079,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     renderer,
     spawn: padSpawn(),
     // Held upright, look further down so the floor fills the tall screen instead of the sky.
-    view: { mode: 'third', yaw: padYaw(), distance: 5.5, pitch: window.innerWidth < window.innerHeight ? -0.32 : -0.15 },
+    // The lobby is big enough to want the bird's-eye view (V); no higher than 50 m over the floor.
+    view: { mode: 'third', yaw: padYaw(), distance: 5.5, pitch: window.innerWidth < window.innerHeight ? -0.32 : -0.15, aerial: true, aerialMaxHeight: 50 },
     vr: true,
     // Minecraft-style flight: double-tap Space.
     abilities: { flying: true },
@@ -1138,9 +1139,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       if (world.getViewMode() === 'third' && !renderer.xr.isPresenting) keepCameraOutOfDoorways(feet.set(x, y, z));
       let near: Door | null = null;
       let nearest = EMPTY_DOOR_REACH;
+      // From the bird's-eye view the screen is for picking where to land: no door, billboard or person prompts.
+      const aerial = world.getViewMode() === 'aerial';
       for (const door of [...emptyDoors, ...galleryDoors]) {
         door.update(time);
-        const distance = level(door) ? door.distanceInFront(x, z) : null;
+        const distance = level(door) && !aerial ? door.distanceInFront(x, z) : null;
         if (distance !== null && distance < nearest) {
           nearest = distance;
           near = door;
@@ -1152,8 +1155,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         nearEmpty = near;
         addPrompt.classList.toggle('visible', near !== null);
       }
-      updateBillboardFocus(dt, near !== null);
-      updatePeerFocus(dt, near !== null);
+      updateBillboardFocus(dt, near !== null || aerial);
+      updatePeerFocus(dt, near !== null || aerial);
       billboards?.update(dt, camera);
       floorUniforms.uPlayer.value.set(x, z);
       // The sky is centred on the camera, so it stays around it however high the towers take them.
@@ -1700,6 +1703,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const handlePointerDown = (event: PointerEvent) => {
     pressAt = { x: event.clientX, y: event.clientY, time: performance.now() };
     if (document.pointerLockElement !== renderer.domElement || adModal || claimModal || event.button !== 0) return;
+    // From the bird's-eye view a click lands the visitor where the camera looks (the runtime's).
+    if (world.getViewMode() === 'aerial') return;
     // Someone where the camera looks: translate their line, or mute or unmute them.
     if (peerFocus) {
       actOn(peerFocus);
@@ -1714,7 +1719,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     pressAt = null;
     if (!press || document.pointerLockElement === renderer.domElement || adModal || claimModal) return;
     // A mouse click while the cursor is free captures it for looking. It is not a tap on a door.
-    if (event.pointerType === 'mouse') return;
+    if (event.pointerType === 'mouse' || world.getViewMode() === 'aerial') return;
     // A tap, not a drag to look around or a push on the joystick.
     const moved = Math.hypot(event.clientX - press.x, event.clientY - press.y);
     if (moved > 10 || performance.now() - press.time > 400) return;
@@ -2545,8 +2550,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     upper.length = 0;
     const upperColliders = [...galleries.colliders.map((g) => (g.index ? g.toNonIndexed() : g)), ...shafts.colliders];
     if (upperColliders.length) upper.push(mergeInto(upperColliders, colliderMaterial));
-    // The drum's top and the dome's glass, to land on when flying.
-    upper.push(new Mesh(rim.clone(), colliderMaterial), new Mesh(dome.collider, colliderMaterial));
+    // The drum's top and the dome's glass, to land on when flying. Not from
+    // the bird's-eye view, which sees through the glass to the hall below.
+    const roof = [new Mesh(rim.clone(), colliderMaterial), new Mesh(dome.collider, colliderMaterial)];
+    for (const mesh of roof) mesh.userData.noLanding = true;
+    upper.push(...roof);
     lifts.setLifts(liftPlan);
     // Drawn after the opaque hall, so the rails and the dome stay see-through.
     const domeGlass = new Mesh(dome.glass, domeGlassMaterial);
