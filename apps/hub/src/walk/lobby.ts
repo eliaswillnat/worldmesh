@@ -293,8 +293,8 @@ function doorAngles(total: number, radius: number): number[] {
 }
 /**
  * Which worlds get a door, and where. Multiplayer worlds go inside (the demos
- * first, then the newest); solo ones go out into the city, along the avenues
- * and ring streets (newest first, avenuePlan), followed by any multiplayer
+ * first, then the newest); solo ones go out into the city, along its grid
+ * of avenues and streets (newest first, avenuePlan), followed by any multiplayer
  * worlds that did not fit inside. Ties break on the URL, so everyone with
  * the same list gets the same doors. The rotunda's outer wall has none.
  */
@@ -571,9 +571,9 @@ const TALK_NOTES: Record<MicState, string> = {
 /**
  * Walk mode: the directory as a place. You arrive inside the citadel, a tall
  * round hall whose wall is lined with a door per listed world; walking into
- * one travels to that world. Its gates open onto avenues running out like the
- * spokes of a wheel, crossed by ring streets, with more worlds' doors along
- * them (avenuePlan). Movement,
+ * one travels to that world. It stands in a square plaza, and its gates open
+ * onto a grid of avenues and streets, with more worlds' doors along them
+ * (avenuePlan). Movement,
  * camera, touch controls and portal triggers all come from the same runtime
  * the worlds themselves use.
  */
@@ -961,8 +961,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const emptyDoors: Door[] = [];
   // Empty doors round the galleries. Rebuilt with the hall.
   const galleryDoors: Door[] = [];
-  /** The avenues and ring streets round the citadel, and how many of their door places hold a world. */
-  let city: CityPlan = planAvenues(HALL_RADIUS + WALL_THICKNESS, GATE_COUNT, 0, STOREFRONT_WIDTH);
+  /** The grid of avenues and streets round the citadel, and how many of its door places hold a world. */
+  let city: CityPlan = planAvenues(HALL_RADIUS + WALL_THICKNESS, 0, STOREFRONT_WIDTH);
   /** The door at each place round the hall (world, claimed or empty): each gets a storefront and a sign. */
   let hallPlaces: Door[] = [];
   /** The doors out in the city, in the order of the plan's slots: each gets its storefront's sign. */
@@ -2272,10 +2272,10 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     };
 
     urls.forEach((url, i) => at(doorFor(url), slots[i]));
-    // Out in the city: along the avenues and ring streets, nearest ring first,
+    // Out in the city: along the avenues and streets, nearest ring of blocks first,
     // numbered after the hall's. The city grows a ring when it runs out of doors.
     const outer = radius + WALL_THICKNESS;
-    city = planAvenues(outer, GATE_COUNT, assigned.city.length, STOREFRONT_WIDTH);
+    city = planAvenues(outer, assigned.city.length, STOREFRONT_WIDTH);
     const cityUrls = assigned.city.slice(0, city.slots.length);
     const cityGate = total + 1;
     cityDoors = cityUrls.map((url, i) => {
@@ -2769,7 +2769,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       collider.updateMatrixWorld(true);
       cityColliders.push(collider);
     }
-    // The walkable ground reaches past the outermost ring street; the mirror floor under it too.
+    // The walkable ground reaches past the corners of the outermost streets; the mirror floor under it too.
     const reach = Math.max(PLAZA_RADIUS, outer + PLAZA_RADIUS / 2, city.radius + 30);
     ground.scale.setScalar(reach);
     ground.updateMatrixWorld(true);

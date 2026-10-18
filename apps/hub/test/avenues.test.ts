@@ -5,104 +5,107 @@ import { Matrix4 } from 'three';
 import { STOREFRONT_WIDTH } from '../src/walk/facade';
 
 const HUB = 60.2;
-const SPOKES = 8;
 const SLOT = 13.1;
 
-/** An angle brought into -π..π. */
-const turn = (angle: number) => Math.atan2(Math.sin(angle), Math.cos(angle));
-
 describe('avenue plan', () => {
+  const inside = (block: { minX: number; maxX: number; minZ: number; maxZ: number }, x: number, z: number) =>
+    x > block.minX && x < block.maxX && z > block.minZ && z < block.maxZ;
+
   it('keeps at least the minimum rings, and grows a ring when doors run out', () => {
-    const empty = planAvenues(HUB, SPOKES, 0, SLOT);
+    const empty = planAvenues(HUB, 0, SLOT);
     expect(empty.rings).toBe(AVENUES.minRings);
-    expect(empty.blocks).toHaveLength(AVENUES.minRings * SPOKES);
     expect(empty.slots).toHaveLength(0);
-    const more = planAvenues(HUB, SPOKES, empty.capacity + 1, SLOT);
+    const more = planAvenues(HUB, empty.capacity + 1, SLOT);
     expect(more.rings).toBe(AVENUES.minRings + 1);
     expect(more.radius).toBeGreaterThan(empty.radius);
-    expect(planAvenues(HUB, SPOKES, 100_000, SLOT).rings).toBe(AVENUES.maxRings);
+    expect(planAvenues(HUB, 100_000, SLOT).rings).toBe(AVENUES.maxRings);
   });
 
-  it('gives a door to every world that fits, and keeps each in its block as the city grows', () => {
-    const small = planAvenues(HUB, SPOKES, 20, SLOT);
+  it('lays every block out on one grid: the same square, the same streets between', () => {
+    const plan = planAvenues(HUB, 0, SLOT);
+    const pitch = AVENUES.blockSize + AVENUES.street;
+    for (const block of plan.blocks) {
+      expect(block.maxX - block.minX).toBeCloseTo(AVENUES.blockSize);
+      expect(block.maxZ - block.minZ).toBeCloseTo(AVENUES.blockSize);
+      // Its near walls sit a whole number of blocks and streets out from an avenue's edge.
+      for (const near of [Math.min(Math.abs(block.minX), Math.abs(block.maxX)), Math.min(Math.abs(block.minZ), Math.abs(block.maxZ))]) {
+        const squares = (near - plan.halfAvenue) / pitch;
+        expect(squares).toBeCloseTo(Math.round(squares));
+      }
+    }
+    // No two blocks overlap, and each ring is a square of blocks round the last.
+    for (const a of plan.blocks) {
+      for (const b of plan.blocks) if (a !== b) expect(inside(a, (b.minX + b.maxX) / 2, (b.minZ + b.maxZ) / 2)).toBe(false);
+    }
+    for (let ring = 0; ring < plan.rings; ring++) {
+      const blocks = plan.blocks.filter((block) => block.ring === ring);
+      const near = ringInner(HUB, ring);
+      for (const block of blocks) {
+        const out = Math.max(Math.abs(block.minX), Math.abs(block.maxX), Math.abs(block.minZ), Math.abs(block.maxZ));
+        expect(out).toBeCloseTo(near + AVENUES.blockSize);
+      }
+      expect(new Set(blocks.map((block) => `${block.minX},${block.minZ}`)).size).toBe(blocks.length);
+    }
+  });
+
+  it('runs an avenue straight out of each axial gate, and keeps it clear', () => {
+    const plan = planAvenues(HUB, 0, SLOT);
+    for (const block of plan.blocks) {
+      expect(Math.min(Math.abs(block.minX), Math.abs(block.maxX))).toBeGreaterThanOrEqual(plan.halfAvenue - 1e-6);
+      expect(Math.min(Math.abs(block.minZ), Math.abs(block.maxZ))).toBeGreaterThanOrEqual(plan.halfAvenue - 1e-6);
+      // Nothing straddles an avenue's centre line.
+      expect(Math.sign(block.minX)).toBe(Math.sign(block.maxX));
+      expect(Math.sign(block.minZ)).toBe(Math.sign(block.maxZ));
+    }
+  });
+
+  it('leaves a square plaza round the rotunda', () => {
+    const plan = planAvenues(HUB, 0, SLOT);
+    expect(ringInner(HUB, 0)).toBeGreaterThanOrEqual(HUB + AVENUES.plaza);
+    for (const block of plan.blocks) {
+      const out = Math.max(Math.min(Math.abs(block.minX), Math.abs(block.maxX)), Math.min(Math.abs(block.minZ), Math.abs(block.maxZ)));
+      expect(out).toBeGreaterThanOrEqual(ringInner(HUB, 0) - 1e-6);
+    }
+    expect(plan.half).toBeCloseTo(ringInner(HUB, plan.rings));
+    expect(plan.radius).toBeCloseTo(plan.half * Math.SQRT2);
+  });
+
+  it('gives a door to every world that fits, and keeps each in its block and on its wall as the city grows', () => {
+    const small = planAvenues(HUB, 20, SLOT);
     expect(small.slots).toHaveLength(20);
-    const large = planAvenues(HUB, SPOKES, small.capacity + 50, SLOT);
+    const large = planAvenues(HUB, small.capacity + 50, SLOT);
     small.slots.forEach((slot, i) => {
-      expect([large.slots[i].ring, large.slots[i].sector]).toEqual([slot.ring, slot.sector]);
-      // The same wall: a door on a curved wall turns a little as it moves along it, no more.
-      expect(large.slots[i].facingX * slot.facingX + large.slots[i].facingZ * slot.facingZ).toBeGreaterThan(0.7);
+      expect([large.slots[i].ring, large.slots[i].block, large.slots[i].face]).toEqual([slot.ring, slot.block, slot.face]);
     });
   });
 
-  it('centres a lone door on its wall, in the middle of its block', () => {
-    const plan = planAvenues(HUB, SPOKES, SPOKES, SLOT);
+  it('centres a lone door on its wall, on the side facing the rotunda', () => {
+    const plan = planAvenues(HUB, 8, SLOT);
     for (const slot of plan.slots) {
-      const block = plan.blocks.find((b) => b.ring === slot.ring && b.sector === slot.sector)!;
-      expect(turn(Math.atan2(slot.x, slot.z) - (block.from + block.to) / 2)).toBeCloseTo(0, 6);
-      // On the wall facing the rotunda.
-      expect(Math.hypot(slot.x, slot.z)).toBeLessThan(block.inner);
-    }
-  });
-
-  it('shares a wall evenly between its doors', () => {
-    const plan = planAvenues(HUB, SPOKES, SPOKES * 2, SLOT);
-    for (let sector = 0; sector < SPOKES; sector++) {
-      const block = plan.blocks.find((b) => b.ring === 0 && b.sector === sector)!;
-      const middle = (block.from + block.to) / 2;
-      const offsets = plan.slots.filter((slot) => slot.sector === sector).map((slot) => turn(Math.atan2(slot.x, slot.z) - middle));
-      expect(offsets).toHaveLength(2);
-      expect(offsets[0] + offsets[1]).toBeCloseTo(0, 6);
-    }
-  });
-
-  it('runs an avenue straight out of every gate', () => {
-    const plan = planAvenues(HUB, SPOKES, 0, SLOT);
-    const step = (Math.PI * 2) / SPOKES;
-    for (const block of plan.blocks) {
-      expect(block.from).toBeCloseTo(block.sector * step);
-      expect(block.to).toBeCloseTo((block.sector + 1) * step);
-    }
-    // No block reaches into an avenue: every corner stays half an avenue from both centre lines.
-    for (const block of plan.blocks) {
-      for (const [x, z] of blockOutline(block, plan.halfAvenue)) {
-        for (const angle of [block.from, block.to]) {
-          const across = Math.abs(x * Math.cos(angle) - z * Math.sin(angle));
-          expect(across).toBeGreaterThanOrEqual(plan.halfAvenue - 1e-6);
-        }
+      const block = plan.blocks[slot.block];
+      const face = blockFaces(block)[slot.face];
+      expect(slot.along).toBeCloseTo(face.length / 2);
+      const [mx, mz] = face.at(face.length / 2, 0);
+      for (const other of blockFaces(block)) {
+        const [ox, oz] = other.at(other.length / 2, 0);
+        expect(Math.hypot(mx, mz)).toBeLessThanOrEqual(Math.hypot(ox, oz) + 1e-6);
       }
     }
   });
 
-  it('leaves the plaza and the ring streets open', () => {
-    const plan = planAvenues(HUB, SPOKES, 0, SLOT);
-    expect(ringInner(HUB, 0)).toBe(HUB + AVENUES.plaza);
-    for (const block of plan.blocks) {
-      const next = plan.blocks.find((other) => other.ring === block.ring + 1);
-      if (next) expect(next.inner - block.outer).toBeCloseTo(AVENUES.ringStreet);
-    }
-  });
-
   it('puts door places in the streets, facing away from their block, clear of each other', () => {
-    const plan = planAvenues(HUB, SPOKES, 200, SLOT);
+    const plan = planAvenues(HUB, 200, SLOT);
     for (const slot of plan.slots) {
       expect(Math.hypot(slot.facingX, slot.facingZ)).toBeCloseTo(1);
-      // The point behind the door is on the block's wall.
-      const block = plan.blocks.find((b) => b.ring === slot.ring && b.sector === slot.sector)!;
+      // The point behind the door is on its block's wall, and a step out from the door is in no block.
+      const block = plan.blocks[slot.block];
       const wx = slot.x - slot.facingX * slot.out;
       const wz = slot.z - slot.facingZ * slot.out;
-      const r = Math.hypot(wx, wz);
-      expect(r).toBeGreaterThanOrEqual(block.inner - 1e-6);
-      expect(r).toBeLessThanOrEqual(block.outer + 1e-6);
-      // A step out from the door is outside the block.
-      const sx = slot.x + slot.facingX;
-      const sz = slot.z + slot.facingZ;
-      const sr = Math.hypot(sx, sz);
-      const angle = Math.atan2(sx, sz);
-      const inBand = sr > block.inner && sr < block.outer;
-      const acrossFrom = sx * Math.cos(block.from) - sz * Math.sin(block.from);
-      const acrossTo = -(sx * Math.cos(block.to) - sz * Math.sin(block.to));
-      const between = acrossFrom > plan.halfAvenue && acrossTo > plan.halfAvenue;
-      expect(inBand && between, `slot at angle ${angle}`).toBe(false);
+      expect(wx).toBeGreaterThanOrEqual(block.minX - 1e-6);
+      expect(wx).toBeLessThanOrEqual(block.maxX + 1e-6);
+      expect(wz).toBeGreaterThanOrEqual(block.minZ - 1e-6);
+      expect(wz).toBeLessThanOrEqual(block.maxZ + 1e-6);
+      for (const other of plan.blocks) expect(inside(other, slot.x + slot.facingX, slot.z + slot.facingZ)).toBe(false);
     }
     // Side by side along a wall, a whole porch apart; round a block's corner, each clear of the other's porch.
     for (const a of plan.slots) {
@@ -114,18 +117,22 @@ describe('avenue plan', () => {
     }
   });
 
-  it('fills the nearest ring first, round every avenue', () => {
-    const plan = planAvenues(HUB, SPOKES, 1000, SLOT);
+  it('fills the nearest ring first, all the way round', () => {
+    const plan = planAvenues(HUB, 1000, SLOT);
     const firstRing = plan.slots.filter((slot) => slot.ring === 0).length;
     expect(plan.slots.slice(0, firstRing).every((slot) => slot.ring === 0)).toBe(true);
-    expect(new Set(plan.slots.slice(0, SPOKES).map((slot) => slot.sector)).size).toBe(SPOKES);
+    const ringBlocks = plan.blocks.filter((block) => block.ring === 0).length;
+    expect(new Set(plan.slots.slice(0, ringBlocks).map((slot) => slot.block)).size).toBe(ringBlocks);
+    // A world on each side of the plaza among the first few.
+    const sides = new Set(plan.slots.slice(0, 8).map((slot) => `${Math.sign(Math.round(slot.x))},${Math.sign(Math.round(slot.z))}`));
+    expect(sides.size).toBeGreaterThanOrEqual(4);
   });
 });
 
 describe('block geometry', () => {
-  const plan = planAvenues(HUB, SPOKES, 0, SLOT);
+  const plan = planAvenues(HUB, 0, SLOT);
   const block = plan.blocks[3];
-  const outline = blockOutline(block, plan.halfAvenue);
+  const outline = blockOutline(block);
   const cx = outline.reduce((sum, [x]) => sum + x, 0) / outline.length;
   const cz = outline.reduce((sum, [, z]) => sum + z, 0) / outline.length;
 
@@ -154,26 +161,26 @@ describe('block geometry', () => {
 });
 
 describe('storefront geometry', () => {
-  const plan = planAvenues(HUB, SPOKES, 30, STOREFRONT_WIDTH);
-  const block = plan.blocks.find((b) => b.ring === 0 && b.sector === 2)!;
+  const plan = planAvenues(HUB, 30, STOREFRONT_WIDTH);
+  const block = plan.blocks[2];
 
   it('meets each wall at its corners, and puts every door on its own wall', () => {
-    const [inner, outer, from, to] = blockFaces(block, plan.halfAvenue);
-    const near = (a: [number, number], b: [number, number]) => expect(Math.hypot(a[0] - b[0], a[1] - b[1])).toBeLessThan(1e-6);
-    near(inner.at(0, 0), from.at(0, 0));
-    near(inner.at(inner.length, 0), to.at(0, 0));
-    near(outer.at(0, 0), from.at(from.length, 0));
-    near(outer.at(outer.length, 0), to.at(to.length, 0));
+    const faces = blockFaces(block);
+    faces.forEach((face, i) => {
+      const next = faces[(i + 1) % faces.length];
+      const [ax, az] = face.at(face.length, 0);
+      const [bx, bz] = next.at(0, 0);
+      expect(Math.hypot(ax - bx, az - bz)).toBeLessThan(1e-6);
+    });
     for (const slot of plan.slots) {
-      const b = plan.blocks.find((other) => other.ring === slot.ring && other.sector === slot.sector)!;
-      const face = blockFaces(b, plan.halfAvenue)[slot.face];
+      const face = blockFaces(plan.blocks[slot.block])[slot.face];
       const [x, z] = face.at(slot.along, slot.out);
       expect(Math.hypot(x - slot.x, z - slot.z)).toBeLessThan(1e-6);
     }
   });
 
-  it('faces a pier out from its wall on curved and straight walls alike', () => {
-    for (const face of blockFaces(block, plan.halfAvenue)) {
+  it('faces a pier out from its wall', () => {
+    for (const face of blockFaces(block)) {
       const pier = faceBox(face, 5, 6, 0, 10, 0, 0.45);
       const position = pier.getAttribute('position');
       const [mx, mz] = face.at(5.5, 0.2);
