@@ -1,24 +1,26 @@
 /**
- * The city round the rotunda, as plain numbers: Paris seen from above. A
- * straight avenue runs out from each of the hall's exits like the spoke of a
- * wheel, and ring streets circle the hall, crossing every avenue. Between two
- * avenues and two ring streets stands a block: plain walls and a flat roof,
- * with world doors along the streets. avenues.ts turns this into geometry.
+ * The city round the rotunda, as plain numbers: a grid plan seen from above.
+ * The rotunda stands in a square plaza. A straight avenue runs out of each
+ * of the hall's four axial exits (north, east, south, west), and streets
+ * run parallel to them at an even pitch, so every block is the same square:
+ * plain walls and a flat roof, with world doors along the streets.
+ * avenues.ts turns this into geometry.
  *
- * The city grows a ring at a time: as many rings as the worlds need doors,
- * never fewer than `minRings`. A ring keeps its blocks however many rings
- * follow it, and a world keeps its block and wall.
+ * The city grows a ring at a time, a ring being the square of blocks just
+ * outside the last: as many rings as the worlds need doors, never fewer than
+ * `minRings`. A ring keeps its blocks however many rings follow it, and a
+ * world keeps its block and wall.
  */
 
 export interface AvenueConfig {
-  /** Avenue width, wall to wall: wider than an exit's mouth. */
+  /** Width of the avenues out of the axial exits, wall to wall: wider than an exit's mouth. */
   avenueWidth: number;
-  /** The open street round the rotunda, between its outer wall and the first ring of blocks. */
+  /** Clear ground at least this deep between the rotunda's outer wall and the first ring of blocks. */
   plaza: number;
-  /** Depth of a ring of blocks, from the street inside it to the street outside. */
-  blockDepth: number;
-  /** Width of each ring street. */
-  ringStreet: number;
+  /** Side of a block, corner to corner. */
+  blockSize: number;
+  /** Width of each street between two blocks. */
+  street: number;
   minRings: number;
   maxRings: number;
   /** Bare wall kept at each corner of a block. */
@@ -28,31 +30,29 @@ export interface AvenueConfig {
 }
 
 export const AVENUES: AvenueConfig = {
-  avenueWidth: 16,
+  avenueWidth: 24,
   plaza: 36,
-  blockDepth: 28,
-  ringStreet: 24,
+  blockSize: 28,
+  street: 16,
   minRings: 2,
   maxRings: 6,
   cornerClear: 3,
   doorGap: 4,
 };
 
-/** How far a door stands proud of a block's wall: further on a concave face, where the wall curves round its ends. */
-const OUT_FLAT = 0.3;
-const OUT_CONCAVE = 0.5;
+/** How far a door stands proud of a block's wall. */
+const OUT = 0.3;
 
 export interface CityBlock {
   /** 0 is the ring nearest the rotunda. */
   ring: number;
-  /** The block lies between avenue `sector` and the next one round. */
-  sector: number;
-  /** Radii of the block's inner and outer walls. */
-  inner: number;
-  outer: number;
-  /** Centre-line angles of the avenues either side (angle 0 faces +Z, as in the hall). */
-  from: number;
-  to: number;
+  /** Where the block stands in its ring, going round from +Z towards +X. */
+  index: number;
+  /** The block's footprint, wall to wall (angle 0 faces +Z, as in the hall). */
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
 }
 
 export interface CitySlot {
@@ -64,7 +64,8 @@ export interface CitySlot {
   /** How far in front of its wall the door stands. */
   out: number;
   ring: number;
-  sector: number;
+  /** The door's block, as an index into the plan's blocks. */
+  block: number;
   /** Which of its block's walls the door is on (see blockFaces), and how far along it from the first corner. */
   face: number;
   along: number;
@@ -73,28 +74,31 @@ export interface CitySlot {
 export interface CityPlan {
   rings: number;
   blocks: CityBlock[];
-  /** A door for each world, in list order: nearest ring first, spread round every avenue. */
+  /** A door for each world, in list order: nearest ring first, spread round the whole ring. */
   slots: CitySlot[];
   /** How many doors the city's rings hold in all. */
   capacity: number;
-  /** Half an avenue's width: a block's side walls stand this far from the avenue's centre line. */
+  /** Half an avenue's width: the blocks beside an avenue stand this far from its centre line. */
   halfAvenue: number;
-  /** Outer edge of the outermost ring street. */
+  /** Half the side of the square the city fills, to the outer edge of the outermost street. */
+  half: number;
+  /** Everything in the city lies within this distance of the centre: the corner of that square. */
   radius: number;
 }
 
-/** Inner radius of ring `ring`, for a rotunda whose outer wall is at `hub`. */
-export function ringInner(hub: number, ring: number, config: AvenueConfig = AVENUES): number {
-  return hub + config.plaza + ring * (config.blockDepth + config.ringStreet);
+/** Blocks and street, from one block's near wall to the next one's. */
+function pitch(config: AvenueConfig): number {
+  return config.blockSize + config.street;
 }
 
-/**
- * Angle round the centre of the point at radius `r` on a block's side wall,
- * measured from the avenue's centre line: the wall is straight, a fixed
- * distance from that line, so the angle shrinks further out.
- */
-export function sideAngle(r: number, halfAvenue: number): number {
-  return Math.asin(Math.min(1, halfAvenue / r));
+/** How many squares of the grid the plaza takes from the middle, each way, so the first ring clears the rotunda by `plaza`. */
+function plazaSquares(hub: number, config: AvenueConfig): number {
+  return Math.max(0, Math.ceil((hub + config.plaza - config.avenueWidth / 2) / pitch(config) - 1e-9));
+}
+
+/** Distance from the centre lines to the near walls of ring `ring`, for a rotunda whose outer wall is at `hub`. */
+export function ringInner(hub: number, ring: number, config: AvenueConfig = AVENUES): number {
+  return config.avenueWidth / 2 + (plazaSquares(hub, config) + ring) * pitch(config);
 }
 
 /**
@@ -103,13 +107,13 @@ export function sideAngle(r: number, halfAvenue: number): number {
  * far along the wall from its first corner, and how far out in front of it.
  */
 export interface WallFace {
-  /** 0 the inner wall, 1 the outer wall, 2 the side on avenue `from`, 3 the side on avenue `to`. */
+  /** Which wall of its block (see blockFaces), or of the hall. */
   index: number;
   /** Corner to corner, in metres along the wall. */
   length: number;
   /** Radius of a curved wall; 0 for a straight one. */
   radius: number;
-  /** The inner wall curves round towards whoever stands in front of it. */
+  /** The wall curves round towards whoever stands in front of it. */
   concave: boolean;
   /** The point `along` metres from the first corner, `out` metres in front of the wall. */
   at(along: number, out: number): [number, number];
@@ -140,34 +144,40 @@ export function arcFace(index: number, r: number, start: number, end: number, in
   };
 }
 
-/** A block's four walls: inner, outer, and the sides along the avenues either side. */
-export function blockFaces(block: CityBlock, halfAvenue: number): WallFace[] {
-  const faces: WallFace[] = [];
-  for (const [index, r, inward] of [[0, block.inner, true], [1, block.outer, false]] as const) {
-    faces.push(arcFace(index, r, block.from + sideAngle(r, halfAvenue), block.to - sideAngle(r, halfAvenue), inward));
-  }
-  for (const [index, angle, side] of [[2, block.from, 1], [3, block.to, -1]] as const) {
-    // Along the avenue, and across it into the block.
-    const ux = Math.sin(angle);
-    const uz = Math.cos(angle);
-    const nx = Math.cos(angle) * side;
-    const nz = -Math.sin(angle) * side;
-    const t0 = Math.sqrt(block.inner * block.inner - halfAvenue * halfAvenue);
-    const t1 = Math.sqrt(block.outer * block.outer - halfAvenue * halfAvenue);
-    faces.push({
+/** The four corners of a block, in the order its walls run between them. */
+export function blockCorners(block: CityBlock): Array<[number, number]> {
+  return [
+    [block.minX, block.minZ],
+    [block.maxX, block.minZ],
+    [block.maxX, block.maxZ],
+    [block.minX, block.maxZ],
+  ];
+}
+
+/**
+ * A block's four walls, each from one corner to the next (blockCorners), so
+ * wall i ends where wall i + 1 begins: 0 faces -Z, 1 faces +X, 2 faces +Z,
+ * 3 faces -X.
+ */
+export function blockFaces(block: CityBlock): WallFace[] {
+  const corners = blockCorners(block);
+  return corners.map(([x0, z0], index) => {
+    const [x1, z1] = corners[(index + 1) % corners.length];
+    const length = Math.hypot(x1 - x0, z1 - z0);
+    const ux = (x1 - x0) / length;
+    const uz = (z1 - z0) / length;
+    // Going round this way, out of the block is to the right of the way along.
+    const nx = uz;
+    const nz = -ux;
+    return {
       index,
-      length: t1 - t0,
+      length,
       radius: 0,
       concave: false,
-      at: (along, out) => {
-        const t = t0 + along;
-        const across = halfAvenue - out;
-        return [ux * t + nx * across, uz * t + nz * across];
-      },
-      normal: () => [-nx, -nz],
-    });
-  }
-  return faces;
+      at: (along, out) => [x0 + ux * along + nx * out, z0 + uz * along + nz * out],
+      normal: () => [nx, nz],
+    };
+  });
 }
 
 /** A stretch of wall that holds doors: where its k doors stand, evenly spread and centred. */
@@ -189,24 +199,37 @@ function spread(length: number, count: number): number[] {
   return Array.from({ length: count }, (_, i) => ((i + 0.5) * length) / count);
 }
 
-/** The blocks of one ring, and the walls round each that take doors. */
-function planRing(hub: number, ring: number, spokes: number, slotWidth: number, config: AvenueConfig): { blocks: CityBlock[]; faces: Face[][] } {
-  const half = config.avenueWidth / 2;
-  const inner = ringInner(hub, ring, config);
-  const outer = inner + config.blockDepth;
-  const step = (Math.PI * 2) / spokes;
+/** Near and far wall of the `square`th square out from a centre line, on the side given by `sign`. */
+function span(square: number, sign: 1 | -1, config: AvenueConfig): [number, number] {
+  const near = config.avenueWidth / 2 + square * pitch(config);
+  const far = near + config.blockSize;
+  return sign > 0 ? [near, far] : [-far, -near];
+}
+
+/** The blocks of one ring, and the walls round each that take doors. `first` is the index the ring's first block gets in the plan. */
+function planRing(hub: number, ring: number, first: number, slotWidth: number, config: AvenueConfig): { blocks: CityBlock[]; faces: Face[][] } {
+  const out = plazaSquares(hub, config) + ring;
+  // Every square of the grid this many out from the centre lines, one way or the other.
+  const squares: Array<[number, number]> = [];
+  for (const sx of [1, -1] as const) {
+    for (const sz of [1, -1] as const) {
+      for (let k = 0; k <= out; k++) squares.push([sx * (out + 0.5), sz * (k + 0.5)]);
+      for (let k = 0; k < out; k++) squares.push([sx * (k + 0.5), sz * (out + 0.5)]);
+    }
+  }
+  const round = (x: number, z: number) => (Math.atan2(x, z) + Math.PI * 2) % (Math.PI * 2);
+  squares.sort((a, b) => round(...a) - round(...b));
+
   const blocks: CityBlock[] = [];
   const faces: Face[][] = [];
-
-  for (let sector = 0; sector < spokes; sector++) {
-    const from = sector * step;
-    const to = from + step;
-    const block: CityBlock = { ring, sector, inner, outer, from, to };
+  squares.forEach(([gx, gz], index) => {
+    const [minX, maxX] = span(Math.floor(Math.abs(gx)), gx > 0 ? 1 : -1, config);
+    const [minZ, maxZ] = span(Math.floor(Math.abs(gz)), gz > 0 ? 1 : -1, config);
+    const block: CityBlock = { ring, index, minX, maxX, minZ, maxZ };
     blocks.push(block);
-    // Every wall takes doors, the inner one (facing the rotunda) first.
-    const walls: Face[] = blockFaces(block, half).map((face) => {
+    // Every wall takes doors, those facing the rotunda first.
+    const walls: Face[] = blockFaces(block).map((face) => {
       const length = face.length - config.cornerClear * 2;
-      const out = face.concave ? OUT_CONCAVE : OUT_FLAT;
       const [mx, mz] = face.at(face.length / 2, 0);
       return {
         capacity: fits(length, slotWidth, config.doorGap),
@@ -214,24 +237,50 @@ function planRing(hub: number, ring: number, spokes: number, slotWidth: number, 
         place: (count) =>
           spread(length, count).map((offset) => {
             const along = config.cornerClear + offset;
-            const [x, z] = face.at(along, out);
+            const [x, z] = face.at(along, OUT);
             const [facingX, facingZ] = face.normal(along);
-            return { x, z, facingX, facingZ, out, ring, sector, face: face.index, along };
+            return { x, z, facingX, facingZ, out: OUT, ring, block: first + index, face: face.index, along };
           }),
       };
     });
     faces.push(walls.filter((wall) => wall.capacity > 0).sort((a, b) => a.order - b.order));
-  }
+  });
   return { blocks, faces };
 }
 
 /**
+ * A round of `count` blocks, given in order round the ring, visited so each
+ * next one is as far as can be from those before: halfway round, then the
+ * quarters, the eighths, and so on, taking the nearest block not yet taken.
+ */
+function spreadOrder(count: number): number[] {
+  const order: number[] = [];
+  const taken = new Set<number>();
+  for (let k = 0; order.length < count; k++) {
+    // k's binary digits mirrored past the point: 0, 1/2, 1/4, 3/4, 1/8...
+    let at = 0;
+    for (let bit = 0.5, n = k; n; bit /= 2, n >>= 1) if (n & 1) at += bit;
+    let best = -1;
+    for (let i = 0; i < count; i++) {
+      if (taken.has(i)) continue;
+      const off = (i + 0.5) / count - at;
+      const gap = Math.min(Math.abs(off), 1 - Math.abs(off));
+      const bestOff = best < 0 ? 0 : (best + 0.5) / count - at;
+      if (best < 0 || gap < Math.min(Math.abs(bestOff), 1 - Math.abs(bestOff)) - 1e-9) best = i;
+    }
+    taken.add(best);
+    order.push(best);
+  }
+  return order;
+}
+
+/**
  * The order a ring's door places fill in, as walls: one door for each block
- * in turn, so the ring fills evenly round the wheel, and within a block the
- * wall nearest the rotunda first.
+ * in turn, spread so the first few already stand all round the plaza, and
+ * within a block the wall nearest the rotunda first.
  */
 function fillOrder(faces: Face[][]): Face[] {
-  const queues = faces.map((walls) => walls.flatMap((wall) => Array.from({ length: wall.capacity }, () => wall)));
+  const queues = spreadOrder(faces.length).map((block) => faces[block].flatMap((wall) => Array.from({ length: wall.capacity }, () => wall)));
   const order: Face[] = [];
   const most = Math.max(0, ...queues.map((queue) => queue.length));
   for (let i = 0; i < most; i++) {
@@ -241,19 +290,18 @@ function fillOrder(faces: Face[][]): Face[] {
 }
 
 /**
- * The city round a rotunda whose outer wall is at radius `hub`, with an
- * avenue out of each of its `spokes` exits (the first at angle 0), and doors
+ * The city round a rotunda whose outer wall is at radius `hub`, with doors
  * for `worlds` worlds, each `slotWidth` wide along the wall. Each wall's
  * doors are centred on it: one door stands in the middle, two share it
  * evenly, and so on. A world keeps its block and wall as the city grows;
  * its door moves along the wall only to make room for a new neighbour.
  */
-export function planAvenues(hub: number, spokes: number, worlds: number, slotWidth: number, config: AvenueConfig = AVENUES): CityPlan {
+export function planAvenues(hub: number, worlds: number, slotWidth: number, config: AvenueConfig = AVENUES): CityPlan {
   const blocks: CityBlock[] = [];
   const order: Face[] = [];
   let rings = 0;
   while (rings < config.maxRings && (rings < config.minRings || order.length < worlds)) {
-    const ring = planRing(hub, rings, spokes, slotWidth, config);
+    const ring = planRing(hub, rings, blocks.length, slotWidth, config);
     blocks.push(...ring.blocks);
     order.push(...fillOrder(ring.faces));
     rings++;
@@ -268,6 +316,6 @@ export function planAvenues(hub: number, spokes: number, worlds: number, slotWid
     used.set(face, index + 1);
     return placed.get(face)![index];
   });
-  const radius = rings ? ringInner(hub, rings - 1, config) + config.blockDepth + config.ringStreet : hub + config.plaza;
-  return { rings, blocks, slots, capacity: order.length, halfAvenue: config.avenueWidth / 2, radius };
+  const half = rings ? ringInner(hub, rings, config) : hub + config.plaza;
+  return { rings, blocks, slots, capacity: order.length, halfAvenue: config.avenueWidth / 2, half, radius: half * Math.SQRT2 };
 }
