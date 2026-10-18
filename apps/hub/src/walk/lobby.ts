@@ -1214,6 +1214,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   }
   let chatting = false;
   let chatUntil = 0;
+  let chatOpenedAt = 0;
+  let chatOpenHeight = 0;
   const chatPoint = new Vector3();
 
   chatField.addEventListener('keydown', (event) => {
@@ -1259,7 +1261,17 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     chatSaid.textContent = '';
     chatBubble.classList.add('saying');
     document.documentElement.classList.add('chatting');
-    chatField.focus();
+    if (isTouch) {
+      // iOS scrolls the whole page to keep a focused field clear of the keyboard.
+      // Focus it high up, where the keyboard never reaches, hidden until it docks.
+      chatOpenedAt = performance.now();
+      chatOpenHeight = window.visualViewport?.height ?? window.innerHeight;
+      chatBubble.classList.add('docked');
+      chatBubble.classList.remove('visible');
+      chatBubble.style.left = '50%';
+      chatBubble.style.top = '30%';
+    }
+    chatField.focus({ preventScroll: true });
   }
 
   const handleChatKey = (event: KeyboardEvent) => {
@@ -1340,6 +1352,13 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     chatBubble.classList.toggle('docked', docked);
     if (docked) {
       const view = window.visualViewport;
+      // Moving the field to the bottom before the keyboard is up puts it under the
+      // keyboard, and iOS scrolls the page to follow it. A hardware keyboard never
+      // shrinks the view, so give up waiting after a moment.
+      const height = view?.height ?? window.innerHeight;
+      if (height > chatOpenHeight - 120 && performance.now() - chatOpenedAt < 800) return;
+      // Undo any scroll iOS did anyway: the world stays put and the field moves.
+      if (window.scrollY || (view && view.offsetTop)) window.scrollTo(0, 0);
       const bottom = view ? view.offsetTop + view.height : window.innerHeight;
       chatBubble.style.left = `${view ? view.offsetLeft + view.width / 2 : window.innerWidth / 2}px`;
       chatBubble.style.top = `${bottom - 12}px`;
