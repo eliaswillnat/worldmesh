@@ -1,6 +1,6 @@
 import { BufferGeometry, Float32BufferAttribute, Matrix4, ShapeUtils, Vector2, Vector3 } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { arcFace, blockFaces, sideAngle, type CityBlock, type CityPlan, type CitySlot, type WallFace } from './avenuePlan';
+import { arcFace, blockCorners, blockFaces, type CityBlock, type CityPlan, type CitySlot, type WallFace } from './avenuePlan';
 import {
   BEAM_DEPTH,
   CORNER_HALF,
@@ -16,7 +16,7 @@ import {
 } from './facade';
 
 /**
- * The city of avenues and ring streets (avenuePlan.ts) as geometry, in the
+ * The city's grid of avenues and streets (avenuePlan.ts) as geometry, in the
  * rotunda's own vocabulary: plain walls and a flat roof under the same
  * cornice as the drum, dressed as a row of storefronts (facade.ts). Piers
  * frame each world's door, a fascia over it carries its sign, a beam with
@@ -39,24 +39,11 @@ const ARC_STEP = Math.PI / 90;
 
 
 /**
- * A block's footprint seen from above, as (x, z) points: its inner wall, a
- * side wall along one avenue, its outer wall and a side wall along the next.
+ * A block's footprint seen from above, as (x, z) points: its four corners.
  * `grow` pushes every wall out by that much, for trim that stands proud.
  */
-export function blockOutline(block: CityBlock, halfAvenue: number, grow = 0): Array<[number, number]> {
-  const half = halfAvenue - grow;
-  const arc = (r: number, reverse: boolean): Array<[number, number]> => {
-    const start = block.from + sideAngle(r, half);
-    const end = block.to - sideAngle(r, half);
-    const steps = Math.max(2, Math.ceil((end - start) / ARC_STEP));
-    const points: Array<[number, number]> = [];
-    for (let i = 0; i <= steps; i++) {
-      const angle = start + ((end - start) * (reverse ? steps - i : i)) / steps;
-      points.push([Math.sin(angle) * r, Math.cos(angle) * r]);
-    }
-    return points;
-  };
-  return [...arc(block.inner - grow, false), ...arc(block.outer + grow, true)];
+export function blockOutline(block: CityBlock, grow = 0): Array<[number, number]> {
+  return blockCorners({ ...block, minX: block.minX - grow, maxX: block.maxX + grow, minZ: block.minZ - grow, maxZ: block.maxZ + grow });
 }
 
 /** Clockwise seen from above (x right, z down the page), so each wall's front faces out. */
@@ -301,14 +288,8 @@ function slotFrame(slot: CitySlot): Matrix4 {
  */
 function dressBlock(faces: WallFace[], doors: Map<number, FacadeDoor[]>, out: Dressing): void {
   for (const face of faces) dressFace(face, doors.get(face.index) ?? [], { levels: STREET_LEVELS, beam: true, ends: 'corner' }, out);
-  const [inner, outer, from, to] = faces;
-  // Where the walls meet: inner and outer each start on avenue `from` and end on avenue `to`.
-  const corners: Array<[WallFace, number, WallFace, number]> = [
-    [inner, 0, from, 0],
-    [inner, inner.length, to, 0],
-    [outer, 0, from, from.length],
-    [outer, outer.length, to, to.length],
-  ];
+  // Where the walls meet: each wall ends at the corner where the next one begins.
+  const corners = faces.map((face, i): [WallFace, number, WallFace, number] => [face, face.length, faces[(i + 1) % faces.length], 0]);
   for (const [a, alongA, b, alongB] of corners) {
     // Along each wall from the corner, and out from both.
     const pier = (face: WallFace, along: number) => {
@@ -349,24 +330,23 @@ export function buildAvenues(
   const colliders: BufferGeometry[] = [];
   const signs: StorefrontSign[] = [];
   // The doors on each wall of each block.
-  const byWall = new Map<string, Map<number, FacadeDoor[]>>();
+  const byWall = new Map<number, Map<number, FacadeDoor[]>>();
   plan.slots.slice(0, doors).forEach((slot, index) => {
-    const key = `${slot.ring}:${slot.sector}`;
-    const walls = byWall.get(key) ?? new Map();
-    byWall.set(key, walls);
+    const walls = byWall.get(slot.block) ?? new Map();
+    byWall.set(slot.block, walls);
     walls.set(slot.face, [...(walls.get(slot.face) ?? []), { along: slot.along, index, toDoor: slotFrame(slot) }]);
   });
-  for (const block of plan.blocks) {
-    const footprint = blockOutline(block, plan.halfAvenue);
+  plan.blocks.forEach((block, index) => {
+    const footprint = blockOutline(block);
     solid.push(prismWalls(footprint, 0, BLOCK_HEIGHT - CORNICE_HEIGHT));
-    const crown = blockOutline(block, plan.halfAvenue, CORNICE_OUT);
+    const crown = blockOutline(block, CORNICE_OUT);
     solid.push(prismWalls(crown, BLOCK_HEIGHT - CORNICE_HEIGHT, BLOCK_HEIGHT));
     solid.push(prismRoof(crown, BLOCK_HEIGHT));
     // The roof too, so someone flying over can land on it.
     const own: BufferGeometry[] = [prismWalls(footprint, 0, BLOCK_HEIGHT), prismRoof(crown, BLOCK_HEIGHT)];
-    dressBlock(blockFaces(block, plan.halfAvenue), byWall.get(`${block.ring}:${block.sector}`) ?? new Map(), { trim, glow, colliders: own, signs });
+    dressBlock(blockFaces(block), byWall.get(index) ?? new Map(), { trim, glow, colliders: own, signs });
     colliders.push(mergeAll(own));
-  }
+  });
   return { solid, trim, glow, colliders, signs };
 }
 

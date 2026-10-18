@@ -8,7 +8,8 @@
  * whole wall over every bay. avenues.ts turns this into geometry.
  *
  * Nothing here knows whether the wall is straight or curved: everything is
- * measured along it, so the same layout bends round the ring streets.
+ * measured along it, so the same layout lines the city's straight streets
+ * and bends round the hall.
  */
 
 import { DOOR_HALF_SPAN, DOOR_TOP } from './door';
