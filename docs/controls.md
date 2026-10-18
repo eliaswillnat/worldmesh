@@ -16,10 +16,10 @@ Every WorldMesh world ships these bindings by default. They live in
 | `Space` | Jump (and ascend while flying) |
 | `Shift` | Sprint |
 | `E` | Interact / enter a portal |
-| `V` | Change the camera: first person → third person → bird's-eye view |
+| `V` | Toggle first ↔ third person (in the lobby: first → third → bird's-eye view) |
 | `1` … `9`, `0` | Change the default figure's face: smile, grin, laugh, wink, love, surprised, sad, angry, sleepy, neutral |
 | `Esc` | Release the cursor |
-| Scroll wheel | Camera distance (third person and bird's-eye view) |
+| Scroll wheel | Third-person camera distance (and bird's-eye height) |
 
 Optional, and only active when the world declares the matching ability:
 
@@ -34,26 +34,25 @@ Optional, and only active when the world declares the matching ability:
 
 ## Bird's-eye view
 
-The third camera mode is a high, three-quarter look down at the world, for
-getting somewhere far away quickly. While it is on, the player stands still
-and the controls move the view instead:
+The lobby has a third camera mode: a high, three-quarter look down at it, for
+getting somewhere far away quickly. Other worlds don't, unless they ask for it
+with `view: { aerial: true }`. While it is on, the player stands still and the
+controls move the view instead:
 
 | Input | Action |
 | --- | --- |
 | `W` `A` `S` `D` / arrows | Pan over the ground |
 | `Shift` | Pan faster |
 | Mouse | Turn the view around, and tilt it between steep and shallow |
-| Scroll wheel | Higher or lower |
+| Scroll wheel | Higher or lower, never more than 40 m above the ground (`view.aerialMaxHeight`) |
 | Click, or `E` | Land where the marker is, and walk on in the mode you came from |
 | `V` | Back to first person without moving |
 
 The marker sits on the first surface under the middle of the screen; pointing
 at a wall puts it at the wall's foot. Colliders a world marks with
 `mesh.userData.noLanding = true` (a glass roof only fliers reach, say) are
-seen through, to whatever is under them. Worlds that should not offer the view
-at all set `view: { aerial: false }`, and `V` then toggles first ↔ third as
-before. The bird's-eye view is never carried to the next world, and VR always
-leaves it.
+seen through, to whatever is under them. The bird's-eye view is never carried
+to the next world, and VR always leaves it.
 
 ## Rules a world should not break
 
@@ -84,10 +83,10 @@ landscape:
 | Drag on the right half | Look |
 | ▲ button | Jump |
 | E button | Interact |
-| V button | Change the camera: first person, third person, bird's-eye view |
+| V button | Toggle first / third person (in the lobby, the bird's-eye view too) |
 | ⏸ button (top right) | Pause |
 
-In the bird's-eye view the joystick pans, dragging on the right turns the view,
+In the lobby's bird's-eye view the joystick pans, dragging on the right turns the view,
 and E (or the prompt) lands the player at the marker.
 
 ## VR

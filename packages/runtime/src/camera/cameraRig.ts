@@ -10,6 +10,8 @@ const AERIAL_PITCH_MAX = -0.55;
 const AERIAL_PITCH = -1;
 const AERIAL_MIN_DISTANCE = 12;
 const AERIAL_MAX_DISTANCE = 200;
+/** The bird's-eye camera never goes higher than this above the ground it looks at, unless the world says otherwise. */
+const AERIAL_MAX_HEIGHT = 40;
 /** Panning speed, in the bird's-eye camera's distances per second: higher up, faster over the ground. */
 const AERIAL_PAN = 0.9;
 const AERIAL_PAN_FAST = 2.5;
@@ -38,10 +40,12 @@ export class CameraRig {
   mode: ViewMode;
   distance: number;
   sensitivity: number;
-  /** False when the world turned the bird's-eye view off. */
+  /** True when the world offers the bird's-eye view. */
   readonly aerialEnabled: boolean;
-  /** How far the bird's-eye camera sits from the point it looks at. */
+  /** How far the bird's-eye camera would like to sit from the point it looks at; aerialReach caps it. */
   aerialDistance: number;
+  /** The highest the bird's-eye camera goes above the ground it looks at. */
+  readonly aerialMaxHeight: number;
   /** The walking mode the bird's-eye view goes back to. */
   walkingMode: WalkingView;
   /**
@@ -76,7 +80,8 @@ export class CameraRig {
   constructor(options: CameraRigOptions) {
     this.camera = options.camera;
     this.collision = options.collision;
-    this.aerialEnabled = options.aerial !== false;
+    this.aerialEnabled = options.aerial === true;
+    this.aerialMaxHeight = Math.max(1, options.aerialMaxHeight ?? AERIAL_MAX_HEIGHT);
     const mode = options.mode ?? 'first';
     this.mode = mode === 'aerial' && !this.aerialEnabled ? 'third' : mode;
     this.walkingMode = this.mode === 'aerial' ? 'third' : this.mode;
@@ -103,7 +108,8 @@ export class CameraRig {
   zoom(wheel: number): void {
     if (wheel === 0) return;
     if (this.mode === 'aerial') {
-      this.aerialDistance = clamp(this.aerialDistance * Math.exp(wheel * 0.001), AERIAL_MIN_DISTANCE, AERIAL_MAX_DISTANCE);
+      // From the distance actually shown, so zooming in past the height cap responds at once.
+      this.aerialDistance = clamp(this.aerialReach * Math.exp(wheel * 0.001), AERIAL_MIN_DISTANCE, AERIAL_MAX_DISTANCE);
       return;
     }
     if (this.mode !== 'third') return;
@@ -130,6 +136,16 @@ export class CameraRig {
     }
   }
 
+  /**
+   * How far the bird's-eye camera actually sits from the point it looks at:
+   * the distance asked for, pulled in so the camera stays within
+   * aerialMaxHeight of the ground at the current tilt.
+   */
+  get aerialReach(): number {
+    const height = Math.max(AERIAL_MIN_DISTANCE, this.aerialMaxHeight / Math.sin(-this.aerialPitch));
+    return Math.min(this.aerialDistance, height);
+  }
+
   /** The mode V goes to next: first → third → bird's-eye → first. */
   nextMode(): ViewMode {
     if (this.mode === 'first') return 'third';
@@ -154,7 +170,7 @@ export class CameraRig {
    */
   pan(x: number, z: number, dt: number, fast = false): void {
     if (this.mode !== 'aerial' || (x === 0 && z === 0)) return;
-    const speed = this.aerialDistance * AERIAL_PAN * (fast ? AERIAL_PAN_FAST : 1) * dt;
+    const speed = this.aerialReach * AERIAL_PAN * (fast ? AERIAL_PAN_FAST : 1) * dt;
     const sin = Math.sin(this.yaw);
     const cos = Math.cos(this.yaw);
     this.focus.x += (x * cos + z * sin) * speed;
@@ -212,13 +228,14 @@ export class CameraRig {
       this.focus.copy(this.feet);
       this.focusSet = true;
     }
-    const ground = this.groundUnder(this.focus.x, this.focus.z, this.focus.y + this.aerialDistance, this.aerialDistance * 2);
+    const reach = this.aerialReach;
+    const ground = this.groundUnder(this.focus.x, this.focus.z, this.focus.y + reach, reach * 2);
     if (ground !== null) this.focus.y += (ground - this.focus.y) * (1 - Math.exp(-6 * dt));
 
     this.euler.set(this.aerialPitch, this.yaw, 0);
     this.camera.quaternion.setFromEuler(this.euler);
     this.offset.set(0, 0, 1).applyQuaternion(this.camera.quaternion);
-    this.camera.position.copy(this.focus).addScaledVector(this.offset, this.aerialDistance);
+    this.camera.position.copy(this.focus).addScaledVector(this.offset, reach);
     this.landing = this.findLanding();
   }
 
@@ -236,7 +253,7 @@ export class CameraRig {
       const along = (this.collision.groundLevel - position.y) / this.offset.y;
       return this.landingPoint.copy(position).addScaledVector(this.offset, along);
     }
-    const reach = this.aerialDistance * 4;
+    const reach = this.aerialReach * 4;
     const hit = this.collision.castLandable(position, this.offset, reach);
     if (!hit) return null;
     const along = Math.max(0, hit.distanceTo(position) - LANDING_STANDOFF);

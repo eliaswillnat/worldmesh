@@ -60,7 +60,7 @@ const isDoorwayMessage = (data: unknown, name: string): boolean => {
  * Turn an ordinary Three.js scene into a WorldMesh world.
  *
  * This is the whole compatibility surface: a world that can produce a scene,
- * a camera and a renderer gets the shared controls, all three camera modes, the
+ * a camera and a renderer gets the shared controls, both camera modes, the
  * shared overlay and portals from one call.
  */
 export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
@@ -700,7 +700,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     }, cameraRig.mode !== 'first');
     footsteps?.update(dt, playing ? Math.hypot(controller.velocity.x, controller.velocity.z) : 0, controller.onGround, footfall, controller.velocity.y, controller.flying);
     portals.animate(elapsed);
-    landingMarker.update(cameraRig.mode === 'aerial' && !presenting ? cameraRig.landing : null, cameraRig.aerialDistance, elapsed);
+    landingMarker.update(cameraRig.mode === 'aerial' && !presenting ? cameraRig.landing : null, cameraRig.aerialReach, elapsed);
 
     updatePortals();
     input.endFrame();

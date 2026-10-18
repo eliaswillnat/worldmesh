@@ -120,10 +120,12 @@ export interface ViewOptions {
   /** Start looking along this yaw, in radians. 0 looks down -Z. */
   yaw?: number;
   pitch?: number;
-  /** Offer the bird's-eye view (V cycles first → third → bird's-eye). Defaults to true. */
+  /** Offer the bird's-eye view: V then cycles first → third → bird's-eye. Off unless set to true. */
   aerial?: boolean;
-  /** How far the bird's-eye camera sits from the point it looks at, in metres. Defaults to 60. */
+  /** How far the bird's-eye camera sits from the point it looks at, in metres. Defaults to 60, within aerialMaxHeight. */
   aerialDistance?: number;
+  /** The highest the bird's-eye camera goes above the ground it looks at, in metres. Defaults to 40. */
+  aerialMaxHeight?: number;
 }
 
 export type PortalMode = 'interact' | 'auto';

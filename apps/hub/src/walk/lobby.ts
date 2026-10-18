@@ -1079,7 +1079,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     renderer,
     spawn: padSpawn(),
     // Held upright, look further down so the floor fills the tall screen instead of the sky.
-    view: { mode: 'third', yaw: padYaw(), distance: 5.5, pitch: window.innerWidth < window.innerHeight ? -0.32 : -0.15 },
+    // The lobby is big enough to want the bird's-eye view (V); no higher than 40 m over the floor.
+    view: { mode: 'third', yaw: padYaw(), distance: 5.5, pitch: window.innerWidth < window.innerHeight ? -0.32 : -0.15, aerial: true, aerialMaxHeight: 40 },
     vr: true,
     // Minecraft-style flight: double-tap Space.
     abilities: { flying: true },

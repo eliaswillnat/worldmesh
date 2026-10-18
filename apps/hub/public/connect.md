@@ -4,7 +4,7 @@ These instructions are for an AI coding agent working in a creator's web
 project. Follow them in order. Ask the creator only where a step says to.
 
 WorldMesh links independently hosted 3D worlds. A connected world gets the
-shared WorldMesh controls (WASD, mouse look, jump, first/third person and bird's-eye view, touch),
+shared WorldMesh controls (WASD, mouse look, jump, first/third person, touch),
 portals to other worlds, and multiplayer: visitors see each other. The world
 stays on the creator's own hosting. No WorldMesh account or server is needed.
 
@@ -167,7 +167,7 @@ Run the dev server and open the world:
 
 1. A WorldMesh panel with a **Continue** button appears. Click it.
 2. WASD moves, the mouse looks around, Space jumps, V switches between first
-   person, third person and the bird's-eye view.
+   and third person.
 3. The player stands on the floor, does not fall through it, and cannot walk
    through walls. If the player falls forever, the floor is missing from
    `colliders`. Falling off the world respawns at `spawn`.
