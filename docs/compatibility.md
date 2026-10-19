@@ -129,7 +129,7 @@ world.on('portal:activate', (event) => {
 ## Multiplayer
 
 ```js
-createWorldMesh({ scene, camera, renderer, multiplayer: true });
+await loadWorldMesh({ scene, camera, renderer, multiplayer: true });
 ```
 
 Everyone on your world's page sees everyone else as a figure that walks,
@@ -255,7 +255,7 @@ and `leave` itself. On the wire, as JSON:
 ```js
 import { PubSubNetwork } from './pubsub-network.js';
 
-createWorldMesh({
+await loadWorldMesh({
   scene, camera, renderer,
   avatar: { source: 'worldmesh' },
   network: new PubSubNetwork('wss://rooms.example/forest'),
