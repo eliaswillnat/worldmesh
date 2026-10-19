@@ -17,7 +17,7 @@ export type { Env };
 
 /** Endpoints worth a per-IP limit in front of everything else. */
 const LIMITED =
-  /^\/api\/auth\/(sign-in|sign-up|callback|atproto|sign-out|request-password-reset|reset-password|send-verification-email)\b|^\/api\/account\/username$|^\/api\/account\/avatar\/(connect|callback|connections|select|disconnect|handoff|resolve)\b|^\/api\/account\/building\/(connections|collect|link|resolve)\b/;
+  /^\/api\/auth\/(sign-in|sign-up|callback|atproto|sign-out|request-password-reset|reset-password|send-verification-email)\b|^\/api\/account\/username$|^\/api\/account\/avatar\/(connect|callback|connections|select|disconnect|handoff|resolve)\b|^\/api\/account\/building\/(connections|collect|link|resolve|report)\b/;
 
 /** The cookie-less endpoints worlds and other hubs call from their own origins (CORS preflight allowed). */
 const CROSS_ORIGIN = new Set([`${AVATAR_BASE_PATH}/resolve`, `${BUILDING_BASE_PATH}/resolve`]);

@@ -166,7 +166,7 @@ beforeEach(async () => {
     FETCH: fakeFetch,
   };
   await database.db.batch(
-    ['ap_follower', 'ap_actor', 'ad_submission', 'building_link', 'building', 'avatar', 'avatar_connection', '"session"', 'account', '"user"'].map((t) =>
+    ['ap_follower', 'ap_actor', 'ad_submission', 'building_report', 'building_link', 'building', 'avatar', 'avatar_connection', '"session"', 'account', '"user"'].map((t) =>
       database.db.prepare(`delete from ${t}`),
     ),
   );
@@ -357,9 +357,21 @@ describe('what an admin sees', () => {
     await insertLink('https://forest.example.org', 'bld_gate000000000000', 'approved');
     await insertLink('https://neon.example.org', 'bld_tower00000000000', 'pending');
     await insertLink('https://old.example.org', 'bld_tower00000000000', 'rejected', 'The door is behind a wall.');
+    await insertLink('https://quiet.example.org', 'bld_gate000000000000', 'approved');
+    // Two visitors reported the gate on forest; a dismissed report doesn't count.
+    for (const [id, status] of [['rpt_a', 'open'], ['rpt_b', 'open'], ['rpt_c', 'dismissed']]) {
+      await env.DB.prepare(
+        `insert into building_report (id, world_url, building_id, reason, status, created_at) values (?1, 'https://forest.example.org', 'bld_gate000000000000', 'offensive', ?2, ?3)`,
+      )
+        .bind(id, status, clock)
+        .run();
+    }
 
     const html = await page('/buildings', cookie);
+    // Waiting first, then reported, then the rest.
     expect(html.indexOf('https://neon.example.org')).toBeLessThan(html.indexOf('https://forest.example.org'));
+    expect(html.indexOf('https://forest.example.org')).toBeLessThan(html.indexOf('https://quiet.example.org'));
+    expect(html).toContain('2 open');
     expect(html).toContain(`${HUB}/review-building?world=${encodeURIComponent('https://neon.example.org')}`);
     expect(html).toContain('Neon Tower');
     expect(html).toContain('in the city');
@@ -370,6 +382,7 @@ describe('what an admin sees', () => {
 
     const overviewHtml = await page('/', cookie);
     expect(overviewHtml).toContain('Building waiting: <strong>Neon Tower</strong>');
+    expect(overviewHtml).toContain('Building reported (2): <strong>Forest Gate</strong>');
   });
 
   it('edits a waiting world, approves it through the hub, and rejects another', async () => {

@@ -14,18 +14,21 @@
  *   POST /remove                     { buildingId }
  *   POST /link                       { buildingId, world } puts it on a world whose worldmesh.json names it, for review
  *   POST /unlink                     { buildingId, world }
+ *   POST /report                     { world, reason, note } flags a building standing in the city (§8)
  *
  * Reviewers only (ADMIN_EMAILS), same-origin, used by the hub's review page:
- *   GET  /review/queue               links, waiting ones first
- *   GET  /review?world=              one link, its building and owner, and where its file is now
- *   POST /review                     { world, buildingId, action: approve | reject | hide, sha256, version, portal, reason }
+ *   GET  /review/queue               links, waiting and reported ones first
+ *   GET  /review?world=              one link, its building, owner and open reports, and where its file is now
+ *   POST /review                     { world, buildingId, action: approve | reject | hide | dismiss, sha256, version, portal, reason }
  *
  * Public, cookie-less, any origin (the city, and other hubs):
  *   GET  /worlds                     worlds with an approved building, and the hash it must have
  *   POST /resolve                    { worlds: [url, …] } where to download each one's building now
  */
 import type { Auth, Env } from '../auth';
+import { isPlaceholderEmail } from '../atprotoSignIn';
 import { HttpError, isSameOrigin, json, readJson } from '../http';
+import { mailConfigured, sendMail } from '../mail';
 import { canonicalWorldUrl, manifestBuilding, recheckStale, resolveWorlds } from './buildingLinks';
 import { UnsafeUrlError, parseMetadata } from './net';
 import { avatarWalletEnabled, configuredProviders, context, PROVIDERS, providerFor, type WaitUntil } from './routes';
@@ -44,8 +47,17 @@ export const MAX_RESOLVE = 16;
 const MAX_NAME = 64;
 /** Same limit the city loads buildings with (§3.1). */
 const MAX_BYTES = 10 * 1024 * 1024;
-/** Longest reason a reviewer can give. */
+/** Longest reason a reviewer can give, or note a reporter can add. */
 const MAX_REASON = 500;
+/** How each report reason reads to reviewers. */
+const REPORT_LABELS: Record<store.ReportReason, string> = {
+  offensive: 'offensive or hateful',
+  sexual: 'sexual content',
+  violent: 'violent or graphic',
+  copyright: "someone else's work",
+  broken: 'broken or in the way',
+  other: 'something else',
+};
 
 /** The platforms that can hold buildings, as configured. */
 function buildingProviders(env: Env): AvatarProvider[] {
@@ -124,6 +136,20 @@ export async function handleBuildingRequest(request: Request, env: Env, getAuth:
       const body = (await readJson(request, 4096)) as { buildingId?: unknown; world?: unknown } | null;
       await link(env, origin, userId, body?.buildingId, body?.world);
       return json(await buildings(env, userId));
+    }
+
+    if (path === '/report' && method === 'POST') {
+      const body = (await readJson(request, 4096)) as { world?: unknown; reason?: unknown; note?: unknown } | null;
+      const world = canonicalWorldUrl(body?.world);
+      const reason = store.REPORT_REASONS.find((r) => r === body?.reason);
+      if (!world || !reason) throw new HttpError(400, 'Choose what is wrong with it.');
+      const note = typeof body?.note === 'string' ? body.note.replace(/\s+/g, ' ').trim().slice(0, MAX_REASON) || null : null;
+      const standing = await store.linkOf(env.DB, world);
+      if (!standing || standing.status !== 'approved') throw new HttpError(404, 'That building is not standing in the city.');
+      const { created, open } = await store.saveReport(env.DB, standing, userId, reason, note);
+      // The first open report on it tells the reviewers; more pile up on the dashboard.
+      if (created && open === 1) exec.waitUntil(tellReviewers(env, origin, standing.building_id, world, reason).catch((error) => console.error('report email failed', error)));
+      return json({ ok: true, alreadyReported: !created });
     }
 
     if (path === '/unlink' && method === 'POST') {
@@ -218,13 +244,17 @@ async function publicRequest(request: Request, env: Env, exec: WaitUntil, origin
   return reply({ buildings: worlds.length ? await resolveWorlds(env, exec, origin, worlds) : {} });
 }
 
-/** Whether this account reviews buildings: a verified email in ADMIN_EMAILS. */
-function isReviewer(env: Env, user: { email: string; emailVerified: boolean }): boolean {
-  const reviewers = (env.ADMIN_EMAILS ?? '')
+/** The accounts that review buildings: ADMIN_EMAILS, lower-cased. */
+function reviewerEmails(env: Env): string[] {
+  return (env.ADMIN_EMAILS ?? '')
     .split(',')
     .map((email) => email.trim().toLowerCase())
     .filter(Boolean);
-  return user.emailVerified && reviewers.includes(user.email.toLowerCase());
+}
+
+/** Whether this account reviews buildings: a verified email in ADMIN_EMAILS. */
+function isReviewer(env: Env, user: { email: string; emailVerified: boolean }): boolean {
+  return user.emailVerified && reviewerEmails(env).includes(user.email.toLowerCase());
 }
 
 /**
@@ -247,6 +277,7 @@ async function review(request: Request, env: Env, exec: WaitUntil, origin: strin
         createdAt: link.created_at,
         updatedAt: link.updated_at,
         reviewedAt: link.reviewed_at,
+        reports: Number(link.reports),
       })),
     });
   }
@@ -297,6 +328,15 @@ async function review(request: Request, env: Env, exec: WaitUntil, origin: strin
         sourceUrl: typeof metadata.sourceUrl === 'string' ? metadata.sourceUrl : null,
       },
       owner: { name: row.owner_name, email: row.owner_email, username: row.owner_username },
+      reports: (await store.openReports(env.DB, row.world_url, row.id)).map((report) => ({
+        id: report.id,
+        reason: report.reason,
+        note: report.note,
+        // Whether it was about the file standing now, or one approved before it.
+        sameFile: !!report.sha256 && report.sha256 === row.sha256,
+        createdAt: report.created_at,
+        reporter: report.reporter_username ? `@${report.reporter_username}` : report.reporter_email && !isPlaceholderEmail(report.reporter_email) ? report.reporter_email : 'an account',
+      })),
       file: file && { modelUrl: file.modelUrl, expiresAt: file.expiresAt ? new Date(file.expiresAt).toISOString() : null, version: file.version },
       fileError,
     });
@@ -327,12 +367,48 @@ async function review(request: Request, env: Env, exec: WaitUntil, origin: strin
   } else if (body.action === 'reject' || body.action === 'hide') {
     if (!reason) throw new HttpError(400, 'Give the owner a reason.');
     decision = { status: body.action === 'reject' ? 'rejected' : 'hidden', sha256: null, version: null, portalJson: null, reason, by: reviewer };
+  } else if (body.action === 'dismiss') {
+    // The reports were looked at and the building stays as it is.
+    const { meta } = await store.resolveReports(env.DB, world, body.buildingId, 'dismissed', reviewer).run();
+    return json({ ok: true, dismissed: meta.changes });
   } else {
-    throw new HttpError(400, 'Approve, reject or hide.');
+    throw new HttpError(400, 'Approve, reject, hide or dismiss.');
   }
-  const { meta } = await store.decideLink(env.DB, world, body.buildingId, decision);
+  const [{ meta }] = await env.DB.batch([
+    store.decideLink(env.DB, world, body.buildingId, decision),
+    // Taken down, its reports were acted on; approved again, they were looked at and set aside.
+    store.resolveReports(env.DB, world, body.buildingId, decision.status === 'approved' ? 'dismissed' : 'actioned', reviewer),
+  ]);
   if (!meta.changes) throw new HttpError(409, 'That world links a different building now. Load it again.');
+  if (decision.status !== 'approved') {
+    exec.waitUntil(tellOwner(env, origin, world, decision.status, decision.reason!).catch((error) => console.error('owner email failed', error)));
+  }
   return json({ ok: true, status: decision.status });
+}
+
+/** Emails the reviewers about a building's first open report, where email is set up. */
+async function tellReviewers(env: Env, origin: string, buildingId: string, world: string, reason: store.ReportReason): Promise<void> {
+  if (!mailConfigured(env)) return;
+  const row = await store.reviewLink(env.DB, world);
+  const name = row?.id === buildingId ? (row.custom_name ?? row.display_name ?? 'A building') : 'A building';
+  const intro = `${name}, standing on ${world} in the hub city, was reported as ${REPORT_LABELS[reason]}.`;
+  const url = `${origin}/review-building?world=${encodeURIComponent(world)}`;
+  for (const to of reviewerEmails(env)) await sendMail(env, to, 'A building in the city was reported', intro, 'Review it', url, null);
+}
+
+/** Tells a building's owner it was not approved, or was taken down, and why, where email is set up. */
+async function tellOwner(env: Env, origin: string, world: string, status: 'rejected' | 'hidden', reason: string): Promise<void> {
+  if (!mailConfigured(env)) return;
+  const row = await store.reviewLink(env.DB, world);
+  const verified = row?.owner_email_verified === 1 || row?.owner_email_verified === true;
+  if (!row?.owner_email || !verified || isPlaceholderEmail(row.owner_email)) return;
+  const name = row.custom_name ?? row.display_name ?? 'Your building';
+  const intro =
+    status === 'rejected'
+      ? `${name} was not approved for ${world}: ${reason} You can fix it and link it again from My buildings.`
+      : `${name} was taken down from ${world} in the hub city: ${reason}`;
+  const subject = status === 'rejected' ? 'Your building was not approved' : 'Your building was taken down';
+  await sendMail(env, row.owner_email, subject, intro, 'Open WorldMesh', `${origin}/`, null);
 }
 
 function buildingProvider(env: Env, connection: ConnectionRow): AvatarProvider {
