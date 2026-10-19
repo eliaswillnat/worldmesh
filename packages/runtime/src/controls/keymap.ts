@@ -17,6 +17,7 @@ export const DEFAULT_KEYMAP: Keymap = {
   fly: ['KeyF'],
   flyFast: ['ControlLeft', 'ControlRight'],
   dash: ['KeyQ'],
+  birdsEye: ['KeyM'],
 };
 
 export function resolveKeymap(overrides: Partial<Keymap> = {}): Keymap {

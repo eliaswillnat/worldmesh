@@ -244,6 +244,70 @@ const CSS = `
   transition: opacity .2s ease;
 }
 .wm-overlay[data-locked="true"] .wm-hint { opacity: 1; }
+/* The bird's-eye view's own button: above the menu hint on desktop, beside ⏸ on touch. */
+.wm-aerial-btn {
+  position: absolute;
+  right: max(14px, env(safe-area-inset-right));
+  bottom: calc(max(12px, env(safe-area-inset-bottom)) + 26px);
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px 7px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.3);
+  background: rgba(8,11,16,0.62);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  color: #fff;
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: .04em;
+  cursor: pointer;
+  pointer-events: auto;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.wm-aerial-btn svg { display: block; flex: none; }
+.wm-aerial-btn .wm-key { font-size: 10px; padding: 1px 5px; }
+.wm-aerial-btn:hover { border-color: rgba(255,255,255,0.6); }
+.wm-aerial-btn[aria-pressed="true"] { background: rgba(255,255,255,0.9); color: #080b10; }
+.wm-aerial-btn[aria-pressed="true"] .wm-key { color: #080b10; border-color: rgba(8,11,16,0.4); }
+.wm-overlay[data-locked="true"][data-aerial-offered="true"] .wm-aerial-btn { display: flex; }
+.wm-overlay[data-touch="true"] .wm-aerial-btn {
+  top: max(14px, env(safe-area-inset-top));
+  bottom: auto;
+  right: calc(max(14px, env(safe-area-inset-right)) + 50px);
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  justify-content: center;
+  border-radius: 10px;
+}
+.wm-overlay[data-touch="true"] .wm-aerial-btn .wm-aerial-label,
+.wm-overlay[data-touch="true"] .wm-aerial-btn .wm-key { display: none; }
+.wm-aerial-hint {
+  position: absolute;
+  left: 50%;
+  bottom: calc(max(12px, env(safe-area-inset-bottom)) + 64px);
+  transform: translateX(-50%);
+  max-width: calc(100% - 32px);
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: rgba(8,11,16,0.72);
+  border: 1px solid rgba(255,255,255,0.22);
+  color: #fff;
+  font-size: 13px;
+  text-align: center;
+  white-space: nowrap;
+  display: none;
+  pointer-events: none;
+}
+.wm-overlay[data-locked="true"][data-aerial="true"] .wm-aerial-hint { display: block; }
+/* On touch the joystick has the bottom: the hint goes under the top buttons. */
+.wm-overlay[data-touch="true"] .wm-aerial-hint {
+  bottom: auto;
+  top: calc(max(14px, env(safe-area-inset-top)) + 54px);
+}
 .wm-room-full {
   position: absolute;
   inset: 0;
@@ -377,6 +441,7 @@ export class Overlay {
   private roomFullRetry: HTMLButtonElement;
   private onEnter: (touch?: boolean) => void;
   private onRoomFullRetry: (() => void) | null = null;
+  private aerialButton: HTMLButtonElement | null = null;
   private deferLockPanel: boolean;
 
   constructor(
@@ -384,6 +449,9 @@ export class Overlay {
       onEnter: (touch?: boolean) => void;
       onInteract?: () => void;
       onEnterVr?: () => void;
+      /** The world offers the bird's-eye view: show its button. */
+      aerial?: boolean;
+      onAerial?: () => void;
     },
   ) {
     injectStyles();
@@ -459,9 +527,10 @@ export class Overlay {
     if (options.controlsHint !== false) {
       const keys = document.createElement('div');
       keys.className = 'wm-keys';
+      const keyLegend: [string, string][] = options.aerial ? [...KEY_LEGEND.slice(0, 6), ['M', "Bird's-eye view"], ...KEY_LEGEND.slice(6)] : KEY_LEGEND;
       const legend = isTouch
-        ? [...KEY_LEGEND.filter(([key]) => key !== '1 – 0'), ['Touch', 'On-screen controls'] as [string, string]]
-        : KEY_LEGEND;
+        ? [...keyLegend.filter(([key]) => key !== '1 – 0' && key !== 'M'), ['Touch', 'On-screen controls'] as [string, string]]
+        : keyLegend;
       for (const [key, label] of legend) {
         const row = document.createElement('div');
         row.className = 'wm-keys-item';
@@ -501,6 +570,41 @@ export class Overlay {
       label.textContent = 'WorldMesh';
       badge.append(dot, label);
       this.root.appendChild(badge);
+    }
+
+    this.root.dataset.touch = String(isTouch);
+    if (options.aerial) {
+      this.root.dataset.aerialOffered = 'true';
+      const aerialButton = document.createElement('button');
+      aerialButton.type = 'button';
+      aerialButton.className = 'wm-aerial-btn';
+      aerialButton.title = "Bird's-eye view (M)";
+      aerialButton.setAttribute('aria-label', "Bird's-eye view");
+      aerialButton.setAttribute('aria-pressed', 'false');
+      // A map pin over a tilted ground plane.
+      aerialButton.innerHTML =
+        '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 17l9 4 9-4-9-4-9 4z"/><path d="M12 13V3"/><circle cx="12" cy="6" r="3"/></svg>';
+      const label = document.createElement('span');
+      label.className = 'wm-aerial-label';
+      label.textContent = "Bird's-eye";
+      const key = document.createElement('span');
+      key.className = 'wm-key';
+      key.textContent = 'M';
+      aerialButton.append(label, key);
+      aerialButton.addEventListener('pointerdown', (event) => event.stopPropagation());
+      aerialButton.addEventListener('click', (event) => {
+        event.stopPropagation();
+        options.onAerial?.();
+      });
+      this.aerialButton = aerialButton;
+      this.root.appendChild(aerialButton);
+
+      const aerialHint = document.createElement('div');
+      aerialHint.className = 'wm-aerial-hint';
+      aerialHint.textContent = isTouch
+        ? 'Tap to land · drag to move'
+        : 'Click to land there · drag to pan · right-drag to turn · scroll to zoom · M to go back';
+      this.root.appendChild(aerialHint);
     }
 
     const hint = document.createElement('div');
@@ -596,6 +700,12 @@ export class Overlay {
     this.roomFullLabel.textContent = label ?? '';
     this.onRoomFullRetry = options?.onRetry ?? null;
     this.roomFullRetry.hidden = !this.onRoomFullRetry;
+  }
+
+  /** The bird's-eye view is on: its button shows pressed, and how to land is spelled out. */
+  setAerial(on: boolean): void {
+    this.root.dataset.aerial = String(on);
+    this.aerialButton?.setAttribute('aria-pressed', String(on));
   }
 
   setPrompt(text: string | null): void {
