@@ -17,13 +17,16 @@ export type { Env };
 
 /** Endpoints worth a per-IP limit in front of everything else. */
 const LIMITED =
-  /^\/api\/auth\/(sign-in|sign-up|callback|atproto|sign-out|request-password-reset|reset-password|send-verification-email)\b|^\/api\/account\/username$|^\/api\/account\/avatar\/(connect|callback|connections|select|disconnect|handoff|resolve)\b|^\/api\/account\/building\/(connections|collect)\b/;
+  /^\/api\/auth\/(sign-in|sign-up|callback|atproto|sign-out|request-password-reset|reset-password|send-verification-email)\b|^\/api\/account\/username$|^\/api\/account\/avatar\/(connect|callback|connections|select|disconnect|handoff|resolve)\b|^\/api\/account\/building\/(connections|collect|link|resolve)\b/;
+
+/** The cookie-less endpoints worlds and other hubs call from their own origins (CORS preflight allowed). */
+const CROSS_ORIGIN = new Set([`${AVATAR_BASE_PATH}/resolve`, `${BUILDING_BASE_PATH}/resolve`]);
 
 export default {
   async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     try {
-      const preflight = request.method === 'OPTIONS' && url.pathname === `${AVATAR_BASE_PATH}/resolve`;
+      const preflight = request.method === 'OPTIONS' && CROSS_ORIGIN.has(url.pathname);
       if (request.method !== 'GET' && request.method !== 'POST' && !preflight) {
         throw new HttpError(405, 'Method not allowed.');
       }

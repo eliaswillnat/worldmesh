@@ -192,6 +192,15 @@ export const atprotoProvider: AvatarProvider = {
     const record = await getOwnRecord(ctx.origin, connection, BUILDING_COLLECTION, id);
     return record && toBuilding(record, requirePds(connection), connection.provider_account_id);
   },
+
+  async resolveBuilding(ctx, connection, building) {
+    // Read the record again: its model may have been replaced since it was saved.
+    const record = await getOwnRecord(ctx.origin, connection, BUILDING_COLLECTION, building.external_id);
+    const model = blobRef((record?.value as Json | undefined)?.model);
+    if (!model || model.mimeType !== MODEL_MIME) return null;
+    // Blobs are content-addressed: the URL names this exact file, and never expires.
+    return { modelUrl: blobUrl(requirePds(connection), connection.provider_account_id, model.cid), expiresAt: null, version: model.cid };
+  },
 };
 
 /** The records of `collection` in the connected account's own repository (public reads). */

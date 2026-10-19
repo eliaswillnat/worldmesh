@@ -837,9 +837,19 @@
       }
       .wallet-tile span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .wallet-item { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-      .wallet-item-actions { display: flex; justify-content: center; gap: 8px; }
+      .wallet-item-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px 8px; }
       .wallet-item-action { margin: 0; font-size: 11px; }
       .wallet-upload { display: flex; flex-direction: column; gap: 8px; }
+      .building-worlds { display: flex; flex-direction: column; gap: 6px; }
+      .building-worlds h3, .wallet-upload h3 { margin: 0; font-size: 14px; font-weight: 600; }
+      .building-world { display: flex; align-items: baseline; gap: 8px; font-size: 12px; min-width: 0; }
+      .building-world-url { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .building-world-status { color: var(--muted); white-space: nowrap; }
+      .building-world-status[data-status="rejected"], .building-world-status[data-status="hidden"] { color: #ff9a8a; }
+      .building-world .wallet-link { margin: 0; }
+      .building-line { display: flex; align-items: center; gap: 8px; }
+      .building-line code { flex: 1; min-width: 0; overflow-x: auto; padding: 6px 8px; border-radius: 8px; background: var(--border); font-size: 12px; white-space: nowrap; user-select: all; }
+      .building-line .wallet-link { margin: 0; }
       .wallet-upload .wallet-link { margin: 0; align-self: flex-start; }
       .wallet-tile-thumb { width: 100%; aspect-ratio: 1; border-radius: 8px; object-fit: cover; }
       .wallet-tile[data-selected="true"], .wallet-none[data-selected="true"] { border-color: var(--text); box-shadow: 0 0 0 1px var(--text); }

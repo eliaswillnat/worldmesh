@@ -73,6 +73,22 @@ export interface ProviderBuilding {
   sourceUrl: string | null;
 }
 
+/**
+ * Where a saved building's file is right now (docs/specs/buildings.md §7.2):
+ * the platform's own storage, which the visitor's browser downloads from.
+ */
+export interface BuildingFile {
+  modelUrl: string;
+  /** Unix ms when `modelUrl` stops working, or null if it does not expire. */
+  expiresAt: number | null;
+  /**
+   * What the platform says the file is, to notice a replaced one before
+   * anything is downloaded (§5.3): the blob CID on AT Protocol, the GLB's size
+   * on Sketchfab. Null where the platform doesn't say.
+   */
+  version: string | null;
+}
+
 export interface BuildingRow {
   id: string;
   user_id: string;
@@ -83,6 +99,22 @@ export interface BuildingRow {
   custom_name: string | null;
   thumbnail_url: string | null;
   metadata_json: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+/** A building standing, or waiting to stand, on a world's block (docs/specs/buildings.md §5). */
+export interface BuildingLinkRow {
+  world_url: string;
+  building_id: string;
+  status: 'pending' | 'approved' | 'rejected' | 'hidden';
+  sha256: string | null;
+  version: string | null;
+  portal_json: string | null;
+  reason: string | null;
+  checked_at: number;
+  reviewed_at: number | null;
+  reviewed_by: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -178,6 +210,8 @@ export interface AvatarProvider {
   listBuildings?(ctx: ProviderContext, connection: ConnectionRow): Promise<ProviderBuilding[]>;
   /** One of them, verified to belong to this account, or null. Used when saving. */
   getBuilding?(ctx: ProviderContext, connection: ConnectionRow, id: string): Promise<ProviderBuilding | null>;
+  /** Where a saved building's file is now, or null once it is gone from the platform. */
+  resolveBuilding?(ctx: ProviderContext, connection: ConnectionRow, building: BuildingRow): Promise<BuildingFile | null>;
 }
 
 /** An error whose message is safe to show the user. */

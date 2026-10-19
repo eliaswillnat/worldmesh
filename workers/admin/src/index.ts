@@ -10,6 +10,7 @@
  *   GET  /worlds                directory (approved + waiting), views, who is in each
  *   GET  /worlds/edit?id=       edit a world's cover, description and labels
  *   POST /worlds/edit           save, approve, reject, or delete it
+ *   GET  /buildings             worlds' own buildings; each is reviewed on the hub's review page
  *   GET  /live                  presence rooms, auto-refreshing
  *   GET  /ads                   billboard ads and revenue (actions stay in workers/ads)
  *   GET  /federation            followers, deliveries, Avatar Wallet
@@ -22,7 +23,7 @@
  * Approving still goes through the hub's own approve link; ads review stays in workers/ads.
  */
 import { assertConfigured, type Env } from './env';
-import { adsPage, federationPage, livePage, overview, systemPage, trafficPage, usersPage, worldsPage } from './pages';
+import { adsPage, buildingsPage, federationPage, livePage, overview, systemPage, trafficPage, usersPage, worldsPage } from './pages';
 import { editPage, saveEdit } from './edit';
 import { esc, htmlResponse, messagePage } from './render';
 import { callback, currentAdmin, HANDOFF_PATH, handoff, isSameOrigin, logout, startLogin } from './session';
@@ -33,6 +34,7 @@ const PAGES = {
   '/': overview,
   '/users': usersPage,
   '/worlds': worldsPage,
+  '/buildings': buildingsPage,
   '/live': livePage,
   '/ads': adsPage,
   '/federation': federationPage,

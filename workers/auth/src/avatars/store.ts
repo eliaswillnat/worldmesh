@@ -4,7 +4,7 @@
  * selected, and the buildings they saved.
  */
 import { randomToken, seal } from './crypto';
-import type { AvatarProviderId, AvatarRow, BuildingRow, ConnectionRow, NewConnection, ProviderAvatar, ProviderBuilding } from './types';
+import type { AvatarProviderId, AvatarRow, BuildingLinkRow, BuildingRow, ConnectionRow, NewConnection, ProviderAvatar, ProviderBuilding } from './types';
 
 export function connectionsOf(db: D1Database, userId: string) {
   return db
@@ -250,4 +250,238 @@ export function renameBuilding(db: D1Database, userId: string, id: string, name:
 
 export function removeBuilding(db: D1Database, userId: string, id: string) {
   return db.prepare('delete from building where user_id = ?1 and id = ?2').bind(userId, id).run();
+}
+
+// ── Buildings on worlds ──────────────────────────────────────────────────────
+
+/** All links of the user's buildings, oldest first. */
+export function linksOf(db: D1Database, userId: string) {
+  return db
+    .prepare(
+      `select l.* from building_link l join building b on b.id = l.building_id
+       where b.user_id = ?1 order by l.created_at`,
+    )
+    .bind(userId)
+    .all<BuildingLinkRow>()
+    .then((r) => r.results);
+}
+
+export async function linkCount(db: D1Database, userId: string): Promise<number> {
+  const row = await db
+    .prepare('select count(*) as n from building_link l join building b on b.id = l.building_id where b.user_id = ?1')
+    .bind(userId)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
+export function linkOf(db: D1Database, worldUrl: string) {
+  return db.prepare('select * from building_link where world_url = ?1').bind(worldUrl).first<BuildingLinkRow>();
+}
+
+/** The world shows `buildingId` once reviewed: a new link, or one that replaces the world's previous building. */
+export function saveLink(db: D1Database, worldUrl: string, buildingId: string) {
+  const now = Date.now();
+  return db
+    .prepare(
+      `insert into building_link (world_url, building_id, status, checked_at, created_at, updated_at)
+       values (?1, ?2, 'pending', ?3, ?3, ?3)
+       on conflict (world_url) do update set
+         building_id = excluded.building_id, status = 'pending', sha256 = null, version = null, portal_json = null,
+         reason = null, checked_at = excluded.checked_at, reviewed_at = null, reviewed_by = null,
+         created_at = excluded.created_at, updated_at = excluded.updated_at`,
+    )
+    .bind(worldUrl, buildingId, now)
+    .run();
+}
+
+/** The world's manifest still names its building. */
+export function touchLink(db: D1Database, worldUrl: string) {
+  const now = Date.now();
+  return db.prepare('update building_link set checked_at = ?2, updated_at = ?2 where world_url = ?1').bind(worldUrl, now).run();
+}
+
+/** Takes one of the user's buildings off a world. */
+export function unlink(db: D1Database, userId: string, buildingId: string, worldUrl: string) {
+  return db
+    .prepare(
+      `delete from building_link where world_url = ?1 and building_id = ?2
+       and building_id in (select id from building where user_id = ?3)`,
+    )
+    .bind(worldUrl, buildingId, userId)
+    .run();
+}
+
+/** A world's building is gone from its manifest. Only if the link is still for that building. */
+export function dropLink(db: D1Database, worldUrl: string, buildingId: string) {
+  return db.prepare('delete from building_link where world_url = ?1 and building_id = ?2').bind(worldUrl, buildingId).run();
+}
+
+/** Worlds whose building visitors may see, with the file it must be. */
+export function approvedLinks(db: D1Database) {
+  return db
+    .prepare("select world_url, sha256 from building_link where status = 'approved' and sha256 is not null order by world_url")
+    .all<{ world_url: string; sha256: string }>()
+    .then((r) => r.results);
+}
+
+/** Links whose manifest was last read before `before`, oldest first. */
+export function staleLinks(db: D1Database, before: number, limit: number) {
+  return db
+    .prepare(
+      `select world_url, building_id, checked_at from building_link
+       where status in ('pending', 'approved') and checked_at < ?1 order by checked_at limit ?2`,
+    )
+    .bind(before, limit)
+    .all<Pick<BuildingLinkRow, 'world_url' | 'building_id' | 'checked_at'>>()
+    .then((r) => r.results);
+}
+
+/** Claims a stale link for re-checking, so two requests don't both read its manifest. */
+export async function claimLink(db: D1Database, worldUrl: string, was: number): Promise<boolean> {
+  const { meta } = await db
+    .prepare('update building_link set checked_at = ?3 where world_url = ?1 and checked_at = ?2')
+    .bind(worldUrl, was, Date.now())
+    .run();
+  return meta.changes > 0;
+}
+
+/** Approved links of these worlds, with their building and its connection, for resolving. */
+export function approvedFor(db: D1Database, worldUrls: string[]) {
+  return db
+    .prepare(
+      `select l.world_url, l.sha256, l.version, b.*,
+         c.user_id as c_user_id, c.provider_account_id as c_provider_account_id, c.display_name as c_display_name,
+         c.service_endpoint as c_service_endpoint, c.token_enc as c_token_enc, c.status as c_status,
+         c.created_at as c_created_at, c.updated_at as c_updated_at
+       from building_link l
+       join building b on b.id = l.building_id
+       join avatar_connection c on c.id = b.connection_id
+       where l.world_url in (select value from json_each(?1)) and l.status = 'approved' and l.sha256 is not null`,
+    )
+    .bind(JSON.stringify(worldUrls))
+    .all<ApprovedRow>()
+    .then((r) => r.results);
+}
+
+/** An approved building whose file changed: back to review (§5.3). */
+export function sendBackToReview(db: D1Database, worldUrl: string, sha256: string, reason: string) {
+  return db
+    .prepare(
+      `update building_link set status = 'pending', reason = ?3, updated_at = ?4
+       where world_url = ?1 and status = 'approved' and sha256 = ?2`,
+    )
+    .bind(worldUrl, sha256, reason, Date.now())
+    .run();
+}
+
+/** Links for review, waiting ones first. */
+export function reviewQueue(db: D1Database, limit = 200) {
+  return db
+    .prepare(
+      `select l.world_url, l.status, l.reason, l.created_at, l.updated_at, l.reviewed_at,
+         b.id as building_id, coalesce(b.custom_name, b.display_name) as building_name, b.provider
+       from building_link l join building b on b.id = l.building_id
+       order by case l.status when 'pending' then 0 when 'approved' then 1 else 2 end, l.updated_at desc
+       limit ?1`,
+    )
+    .bind(limit)
+    .all<ReviewQueueRow>()
+    .then((r) => r.results);
+}
+
+/** One link, its building, the building's connection and its owner, for review. */
+export function reviewLink(db: D1Database, worldUrl: string) {
+  return db
+    .prepare(
+      `select l.world_url, l.status, l.sha256, l.version, l.reason, l.created_at as link_created_at,
+         l.reviewed_at, l.reviewed_by, b.*,
+         c.user_id as c_user_id, c.provider_account_id as c_provider_account_id, c.display_name as c_display_name,
+         c.service_endpoint as c_service_endpoint, c.token_enc as c_token_enc, c.status as c_status,
+         c.created_at as c_created_at, c.updated_at as c_updated_at,
+         u.name as owner_name, u.email as owner_email, u.username as owner_username
+       from building_link l
+       join building b on b.id = l.building_id
+       join avatar_connection c on c.id = b.connection_id
+       join "user" u on u.id = b.user_id
+       where l.world_url = ?1`,
+    )
+    .bind(worldUrl)
+    .first<ReviewRow>();
+}
+
+/** A reviewer's decision, only while the world still links the building they looked at. */
+export function decideLink(
+  db: D1Database,
+  worldUrl: string,
+  buildingId: string,
+  decision: { status: 'approved' | 'rejected' | 'hidden'; sha256: string | null; version: string | null; portalJson: string | null; reason: string | null; by: string },
+) {
+  const now = Date.now();
+  return db
+    .prepare(
+      `update building_link set status = ?3, sha256 = ?4, version = ?5, portal_json = ?6, reason = ?7,
+         reviewed_at = ?8, reviewed_by = ?9, updated_at = ?8
+       where world_url = ?1 and building_id = ?2`,
+    )
+    .bind(worldUrl, buildingId, decision.status, decision.sha256, decision.version, decision.portalJson, decision.reason, now, decision.by)
+    .run();
+}
+
+/** The connection columns of a joined row, as a connection. */
+export function connectionFrom(row: ApprovedRow | ReviewRow): ConnectionRow {
+  return {
+    id: row.connection_id,
+    user_id: row.c_user_id,
+    provider: row.provider,
+    provider_account_id: row.c_provider_account_id,
+    display_name: row.c_display_name,
+    service_endpoint: row.c_service_endpoint,
+    token_enc: row.c_token_enc,
+    status: row.c_status,
+    created_at: row.c_created_at,
+    updated_at: row.c_updated_at,
+  };
+}
+
+interface JoinedConnection {
+  c_user_id: string;
+  c_provider_account_id: string;
+  c_display_name: string | null;
+  c_service_endpoint: string | null;
+  c_token_enc: string | null;
+  c_status: ConnectionRow['status'];
+  c_created_at: number;
+  c_updated_at: number;
+}
+
+export interface ApprovedRow extends BuildingRow, JoinedConnection {
+  world_url: string;
+  sha256: string;
+  version: string | null;
+}
+
+export interface ReviewRow extends BuildingRow, JoinedConnection {
+  world_url: string;
+  status: BuildingLinkRow['status'];
+  sha256: string | null;
+  version: string | null;
+  reason: string | null;
+  link_created_at: number;
+  reviewed_at: number | null;
+  reviewed_by: string | null;
+  owner_name: string | null;
+  owner_email: string | null;
+  owner_username: string | null;
+}
+
+export interface ReviewQueueRow {
+  world_url: string;
+  status: BuildingLinkRow['status'];
+  reason: string | null;
+  created_at: number;
+  updated_at: number;
+  reviewed_at: number | null;
+  building_id: string;
+  building_name: string | null;
+  provider: string;
 }

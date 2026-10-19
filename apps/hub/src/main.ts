@@ -460,7 +460,7 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
   walkToggle.disabled = true;
   let imported = false;
   try {
-    const { createLobby } = await import('./walk/lobby');
+    const [{ createLobby }, { hubBuildingDirectory }] = await Promise.all([import('./walk/lobby'), import('./walk/buildingDirectory')]);
     imported = true;
     if (walkAbandoned) return;
     walkRoot = document.createElement('div');
@@ -477,8 +477,8 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
       private: loadWalkPrivate(),
       color,
       ads: adsEnabled(),
-      // ?buildings=demo: demo buildings on the city's first lots (docs/specs/buildings.md).
-      buildings: new URLSearchParams(window.location.search).get('buildings') === 'demo' ? 'demo' : undefined,
+      // Worlds' approved buildings (docs/specs/buildings.md); ?buildings=demo puts the demo ones on the city's first lots.
+      buildings: new URLSearchParams(window.location.search).get('buildings') === 'demo' ? 'demo' : hubBuildingDirectory,
       onPresenceCount: (count) => {
         const prev = walkOnline.dataset.count != null ? Number(walkOnline.dataset.count) : null;
         if (count === null) {

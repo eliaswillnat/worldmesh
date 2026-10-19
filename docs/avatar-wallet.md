@@ -86,6 +86,15 @@ to **My buildings** the way characters are saved to My characters, as
 pointers only. Uploading one uses this page's upload grant with
 `{ upload: 'building' }`. See [specs/buildings.md](specs/buildings.md) §4.
 
+A saved building goes on a world once the world's own `worldmesh.json` names
+it (`"building": "bld_…"`) and a reviewer approves it (§5). The city then asks
+`POST /api/account/building/resolve` where to download it, much as worlds ask
+`/api/account/avatar/resolve` for a character: for Sketchfab the Worker gets
+the presigned GLB link with the owner's stored tokens and shares it with
+visitors for a few minutes; for AT Protocol it is the blob's `getBlob` URL.
+The file goes from the platform to each visitor's browser, which shows it
+only if it hashes to the approved SHA-256.
+
 ## Providers
 
 | | Sketchfab | VRoid Hub | at3d (AT Protocol) |

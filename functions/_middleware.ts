@@ -28,6 +28,9 @@ const EXACT = new Set([
   '/privacy.html',
   '/protocol',
   '/protocol.html',
+  // Reviewing worlds' buildings (docs/specs/buildings.md §5.2): usable by reviewers only.
+  '/review-building',
+  '/review-building.html',
   '/terms',
   '/terms.html',
   '/connect.md',

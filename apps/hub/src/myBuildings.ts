@@ -33,6 +33,13 @@ interface Model {
   sourceUrl: string | null;
 }
 
+/** A world a saved building stands on, or waits to (docs/specs/buildings.md §5). */
+interface BuildingWorld {
+  url: string;
+  status: 'pending' | 'approved' | 'rejected' | 'hidden';
+  reason: string | null;
+}
+
 interface SavedBuilding {
   id: string;
   connectionId: string;
@@ -43,6 +50,7 @@ interface SavedBuilding {
   bytes: number | null;
   sourceUrl: string | null;
   reachable: boolean;
+  worlds: BuildingWorld[];
 }
 
 interface BuildingList {
@@ -74,6 +82,9 @@ let uploading = false;
 /** The chosen file, checked: null while checking or before one is chosen. */
 let check: BuildingCheck | null = null;
 let checking = false;
+/** The saved building being put on a world, and the address typed so far. */
+let linking: string | null = null;
+let linkWorld = '';
 let rerender: () => void = () => {};
 
 /**
@@ -131,7 +142,12 @@ export function buildingsSummary(onManage: () => void): HTMLElement {
   label.textContent = 'Buildings';
   const count = document.createElement('p');
   count.className = 'wallet-summary-name';
-  count.textContent = list.buildings.length ? `${list.buildings.length} saved` : 'Your world as a building in the city';
+  const standing = list.buildings.reduce((n, b) => n + b.worlds.filter((w) => w.status === 'approved').length, 0);
+  count.textContent = !list.buildings.length
+    ? 'Your world as a building in the city'
+    : standing
+      ? `${list.buildings.length} saved · ${standing} in the city`
+      : `${list.buildings.length} saved`;
   text.append(label, count);
   const manage = document.createElement('button');
   manage.type = 'button';
@@ -149,7 +165,7 @@ export function buildingsView(onBack: () => void): HTMLElement[] {
     note(
       "A building of your own can stand in the hub city in place of your world's block. Give the face visitors walk through a material named portal, and export it as a GLB of up to 10 MB.",
     ),
-    note('Buildings stay on the platforms they come from. WorldMesh only remembers which ones you saved. Putting one on your world comes next.'),
+    note('Buildings stay on the platforms they come from. WorldMesh only remembers which ones you saved, and which worlds they stand on.'),
   );
 
   if (!list) {
@@ -205,6 +221,16 @@ function savedSection(current: BuildingList): HTMLElement {
         building,
         building.reachable ? null : 'Connect this platform again',
         [
+          {
+            label: 'Use',
+            title: 'Put it on one of your worlds',
+            onClick: () => {
+              linking = linking === building.id ? null : building.id;
+              linkWorld = '';
+              message = null;
+              rerender();
+            },
+          },
           { label: 'Rename', onClick: () => void rename(building) },
           { label: 'Remove', onClick: () => void remove(building) },
         ],
@@ -212,7 +238,135 @@ function savedSection(current: BuildingList): HTMLElement {
     );
   }
   section.append(grid);
+  const choosing = current.buildings.find((b) => b.id === linking);
+  if (choosing) section.append(linkForm(choosing));
+  const linked = current.buildings.flatMap((building) => building.worlds.map((world) => ({ building, world })));
+  if (linked.length) section.append(worldsList(linked));
   return section;
+}
+
+const STATUS_TEXT: Record<BuildingWorld['status'], string> = {
+  pending: 'In review',
+  approved: 'In the city',
+  rejected: 'Not approved',
+  hidden: 'Taken down',
+};
+
+/** Which buildings stand on which worlds, and how their review went. */
+function worldsList(linked: { building: SavedBuilding; world: BuildingWorld }[]): HTMLElement {
+  const box = document.createElement('div');
+  box.className = 'building-worlds';
+  const title = document.createElement('h3');
+  title.textContent = 'On your worlds';
+  box.append(title);
+  for (const { building, world } of linked) {
+    const row = document.createElement('div');
+    row.className = 'building-world';
+    const where = document.createElement('a');
+    where.className = 'building-world-url';
+    where.href = world.url;
+    where.target = '_blank';
+    where.rel = 'noopener';
+    where.textContent = `${building.name || 'Unnamed'} → ${world.url.replace(/^https:\/\//, '')}`;
+    where.title = world.url;
+    const status = document.createElement('span');
+    status.className = 'building-world-status';
+    status.dataset.status = world.status;
+    status.textContent = STATUS_TEXT[world.status];
+    const off = document.createElement('button');
+    off.type = 'button';
+    off.className = 'wallet-link';
+    off.textContent = 'Take off';
+    off.disabled = busy;
+    off.setAttribute('aria-label', `Take ${building.name || 'the building'} off ${world.url}`);
+    off.addEventListener('click', () => void unlink(building, world));
+    row.append(where, status, off);
+    box.append(row);
+    if (world.reason && (world.status === 'rejected' || world.status === 'hidden' || world.status === 'pending')) {
+      const reason = note(world.reason);
+      reason.className = 'account-message';
+      reason.dataset.error = String(world.status !== 'pending');
+      box.append(reason);
+    }
+  }
+  if (linked.some(({ world }) => world.status === 'pending')) {
+    box.append(note('A person looks at each building before it stands in the city. That usually takes a day or two.'));
+  }
+  return box;
+}
+
+/**
+ * Putting a building on a world: the world's own worldmesh.json names it,
+ * which shows the world is yours wherever it is hosted, then WorldMesh
+ * reads that file and the building goes to review.
+ */
+function linkForm(building: SavedBuilding): HTMLElement {
+  const form = document.createElement('form');
+  form.className = 'wallet-upload';
+  const title = document.createElement('h3');
+  title.textContent = `Put ${building.name || 'this building'} on a world`;
+  const line = `"building": "${building.id}"`;
+  const lineRow = document.createElement('div');
+  lineRow.className = 'building-line';
+  const code = document.createElement('code');
+  code.textContent = line;
+  const copy = document.createElement('button');
+  copy.type = 'button';
+  copy.className = 'wallet-link';
+  copy.textContent = 'Copy';
+  copy.addEventListener('click', () => {
+    void navigator.clipboard?.writeText(line).then(
+      () => {
+        copy.textContent = 'Copied';
+      },
+      () => undefined,
+    );
+  });
+  lineRow.append(code, copy);
+
+  const input = document.createElement('input');
+  input.type = 'url';
+  input.placeholder = 'https://your-world.example';
+  input.required = true;
+  input.maxLength = 2048;
+  input.autocomplete = 'off';
+  input.spellcheck = false;
+  input.value = linkWorld;
+  input.setAttribute('aria-label', "Your world's address");
+  input.disabled = busy;
+  input.addEventListener('input', () => {
+    linkWorld = input.value;
+  });
+  const submit = document.createElement('button');
+  submit.type = 'submit';
+  submit.textContent = 'Link';
+  submit.disabled = busy;
+  const row = document.createElement('div');
+  row.className = 'account-username-row';
+  row.append(input, submit);
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'wallet-link';
+  cancel.textContent = 'Cancel';
+  cancel.disabled = busy;
+  cancel.addEventListener('click', () => {
+    linking = null;
+    linkWorld = '';
+    rerender();
+  });
+  form.append(
+    title,
+    note("1. Add this line to your world's worldmesh.json (at /worldmesh.json or /.well-known/worldmesh.json):"),
+    lineRow,
+    note("2. Enter your world's address. WorldMesh reads that file to check, and a person reviews the building before it stands in the city."),
+    row,
+    cancel,
+  );
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    void link(building, input.value);
+  });
+  return form;
 }
 
 function providerSection(provider: { id: string; label: string }, connection: Connection | undefined): HTMLElement {
@@ -272,7 +426,7 @@ function providerSection(provider: { id: string; label: string }, connection: Co
 function modelItem(
   model: { name: string | null; thumbnail: string | null; bytes: number | null; sourceUrl: string | null },
   warning: string | null,
-  actions: { label: string; onClick?: () => void; disabled?: boolean }[],
+  actions: { label: string; title?: string; onClick?: () => void; disabled?: boolean }[],
 ): HTMLElement {
   const item = document.createElement('div');
   item.className = 'wallet-item';
@@ -295,7 +449,8 @@ function modelItem(
     button.className = 'wallet-link wallet-item-action';
     button.textContent = action.label;
     button.disabled = busy || !!action.disabled;
-    button.setAttribute('aria-label', `${action.label} ${model.name || 'unnamed building'}`);
+    if (action.title) button.title = action.title;
+    button.setAttribute('aria-label', `${action.title ?? action.label} ${model.name || 'unnamed building'}`);
     if (action.onClick) button.addEventListener('click', action.onClick);
     row.append(button);
   }
@@ -448,6 +603,8 @@ async function loadList(): Promise<void> {
 }
 
 function applyList(next: BuildingList): void {
+  // A Worker deployed before links existed sends no worlds: none, then.
+  for (const saved of next.buildings) saved.worlds ??= [];
   list = next;
   for (const id of [...listings.keys()]) {
     if (!next.connections.some((c) => c.id === id && c.status === 'active')) listings.delete(id);
@@ -501,8 +658,26 @@ async function rename(saved: SavedBuilding): Promise<void> {
   });
 }
 
+async function link(saved: SavedBuilding, world: string): Promise<void> {
+  await run(async () => {
+    applyList(await building<BuildingList>('/link', { buildingId: saved.id, world: world.trim() }));
+    linking = null;
+    linkWorld = '';
+    message = { text: `${saved.name || 'Your building'} is linked. It stands in the city once it has been reviewed.`, error: false };
+  });
+}
+
+async function unlink(saved: SavedBuilding, world: BuildingWorld): Promise<void> {
+  if (!confirm(`Take ${saved.name || 'this building'} off ${world.url}? The world goes back to its plain block.`)) return;
+  await run(async () => {
+    applyList(await building<BuildingList>('/unlink', { buildingId: saved.id, world: world.url }));
+    message = { text: 'Taken off. You can remove the "building" line from its worldmesh.json too.', error: false };
+  });
+}
+
 async function remove(saved: SavedBuilding): Promise<void> {
-  if (!confirm(`Remove ${saved.name || 'this building'} from My buildings? It stays on its platform.`)) return;
+  const where = saved.worlds.length ? ` It comes off ${saved.worlds.length === 1 ? 'its world' : `its ${saved.worlds.length} worlds`} too.` : '';
+  if (!confirm(`Remove ${saved.name || 'this building'} from My buildings? It stays on its platform.${where}`)) return;
   await run(async () => {
     applyList(await building<BuildingList>('/remove', { buildingId: saved.id }));
     message = { text: `${saved.name || 'Building'} removed.`, error: false };

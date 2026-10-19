@@ -56,7 +56,7 @@ import { doorFrameGeometry, frameOuterCorner, openingCorner } from './doorShape'
 import { describeBillboard } from './layout';
 import { planAvenues, type CityPlan } from './avenuePlan';
 import { buildAvenues, dressHall } from './avenues';
-import { Buildings, DEMO_BUILDINGS, type BuildingLot, type BuildingSource } from './buildings';
+import { Buildings, DEMO_BUILDINGS, type BuildingDirectory, type BuildingLot, type BuildingSource } from './buildings';
 import { LOT_FORECOURT, LOT_HEIGHT, STOREFRONT_WIDTH } from './facade';
 import { playSendSound, playWarpSound } from './sounds';
 import { chatRejection } from '../../../../templates/relay/src/chatFilter';
@@ -139,11 +139,12 @@ export interface LobbyOptions {
   /** How many times people have entered a world, by URL; shown beside its doors. */
   entries?: (url: string) => number | undefined;
   /**
-   * 'demo': demo buildings stand on the city's first lots, in place of their
-   * storefronts, to see how buildings look (docs/specs/buildings.md). Off
-   * otherwise: no world has a building of its own yet.
+   * Worlds' own buildings (docs/specs/buildings.md): where approved ones are
+   * downloaded from, each standing in place of its world's block. 'demo'
+   * puts the demo buildings on the city's first lots instead, to see how
+   * buildings look. Without either, every world keeps its block.
    */
-  buildings?: 'demo';
+  buildings?: BuildingDirectory | 'demo';
 }
 
 export interface Lobby {
@@ -979,7 +980,13 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const cityColliders: Mesh[] = [];
   /** Each world's block that a building can replace, solid until the building stands there. */
   const lotColliders: Mesh[] = [];
-  const buildings = new Buildings(scene, renderer, !alias);
+  const directory = options.buildings && options.buildings !== 'demo' ? options.buildings : null;
+  // Collision snapshots its colliders: a block giving way to its building has to be looked at again.
+  const buildings = new Buildings(scene, renderer, !alias, directory, () => world.refreshColliders());
+  /** World (canonical URL) → the hash of its approved building, once the directory answered. */
+  let approvedBuildings = new Map<string, string>();
+  /** How far out the city starts, once it is built, to build it again when buildings arrive. */
+  let cityOuter: number | null = null;
   let nearEmpty: Door | null = null;
   let time = 0;
   let warping = false;
@@ -1969,6 +1976,18 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   // a moment later and shift every door, and these already match the full list.
   if (options.start) emerge(options.start);
   startOccupancyPolling();
+  // Which worlds have a building of their own. The city is up meanwhile, every world on its block.
+  directory
+    ?.approved()
+    .then((approved) => {
+      if (disposed) return;
+      approvedBuildings = approved;
+      // Built again only if one of the city's doors has a building now.
+      if (cityOuter === null || !cityDoors.some((door) => door.world && approved.has(canonicalUrl(door.world.url)))) return;
+      buildCity(cityOuter);
+      world.refreshColliders();
+    })
+    .catch((error: unknown) => console.warn('[buildings] could not read which worlds have buildings:', error instanceof Error ? error.message : error));
 
   if (import.meta.env.DEV) Object.assign(window, { lobby: world, spawnFx: () => triggerSpawnFx() });
 
@@ -2787,9 +2806,15 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     cityMeshes.length = 0;
     cityColliders.length = 0;
     lotColliders.length = 0;
-    // Blocks a building replaces: for now only the demo's, standing in on the first doors of the city.
+    cityOuter = outer;
+    // Blocks a building replaces: approved worlds' own, or the demo's on the first doors of the city.
     const sources = new Map<number, BuildingSource>();
     if (options.buildings === 'demo') DEMO_BUILDINGS.slice(0, cityDoors.length).forEach((source, i) => sources.set(i, source));
+    else cityDoors.forEach((door, i) => {
+      const url = door.world && canonicalUrl(door.world.url);
+      const sha256 = url && approvedBuildings.get(url);
+      if (url && sha256) sources.set(i, { world: url, sha256 });
+    });
     const blocks = buildAvenues(city, cityDoors.length, new Set(sources.keys()));
     // Each storefront's sign hangs from its door, so it comes and goes with the world.
     cityDoors.forEach((door, i) => {
