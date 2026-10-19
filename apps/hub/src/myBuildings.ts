@@ -603,6 +603,8 @@ async function loadList(): Promise<void> {
 }
 
 function applyList(next: BuildingList): void {
+  // A Worker deployed before links existed sends no worlds: none, then.
+  for (const saved of next.buildings) saved.worlds ??= [];
   list = next;
   for (const id of [...listings.keys()]) {
     if (!next.connections.some((c) => c.id === id && c.status === 'active')) listings.delete(id);
