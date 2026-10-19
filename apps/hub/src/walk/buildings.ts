@@ -168,6 +168,25 @@ export class Buildings {
     this.sinceLook = LOOK_SECONDS;
   }
 
+  /**
+   * The world's building standing nearest (x, z), its door within `reach`
+   * metres: the one a visitor there would report (§8). Demo buildings,
+   * which belong to no world, are never offered.
+   */
+  shownNear(x: number, z: number, reach: number): { world: string; door: Door } | null {
+    let nearest: LotState | null = null;
+    let best = reach;
+    for (const lot of this.lots) {
+      if (lot.status !== 'shown' || !lot.source.world) continue;
+      const distance = Math.hypot(lot.door.group.position.x - x, lot.door.group.position.z - z);
+      if (distance <= best) {
+        nearest = lot;
+        best = distance;
+      }
+    }
+    return nearest && { world: nearest.source.world!, door: nearest.door };
+  }
+
   /** What stops walkers on the lots: each default block until its building shows, then the building. */
   colliders(): Mesh[] {
     return this.lots.flatMap((lot) => (lot.status !== 'shown' ? [lot.block.collider] : lot.collider ? [lot.collider] : []));

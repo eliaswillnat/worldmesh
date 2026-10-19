@@ -170,11 +170,18 @@ export interface Lobby {
   setColor(color: string): void;
   /** The made-up name while private, or null while public. */
   readonly alias: string | null;
+  /**
+   * The world's building standing nearest this visitor, close enough to be
+   * the one they mean (docs/specs/buildings.md §8: reporting it), or null.
+   */
+  nearbyBuilding(): { world: string; name: string } | null;
   dispose(): void;
 }
 
 /** How often walk-mode doors ask presence how full each world room is. */
 const OCCUPANCY_MS = 15_000;
+/** A building this close (metres, to its door) is the one a visitor would report. */
+const REPORT_REACH = 30;
 
 /** Presence WebSocket base → HTTP base for the public occupancy read. */
 function presenceHttpBase(endpoint: string): string {
@@ -1999,6 +2006,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     setColor,
     get alias() {
       return pendingAlias;
+    },
+    nearbyBuilding() {
+      const [x, , z] = world.getState().position;
+      const near = buildings.shownNear(x, z, REPORT_REACH);
+      return near && { world: near.world, name: near.door.world?.name ?? near.world };
     },
     dispose,
   };
