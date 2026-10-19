@@ -4,10 +4,8 @@ import type { ViewMode, ViewOptions } from '../types.js';
 
 const HALF_PI = Math.PI / 2;
 const PITCH_LIMIT = HALF_PI - 0.01;
-/** The bird's-eye view looks down between these pitches: never flat, never straight down. */
-const AERIAL_PITCH_MIN = -1.45;
-const AERIAL_PITCH_MAX = -0.55;
-const AERIAL_PITCH = -1;
+/** The bird's-eye view's fixed tilt: a three-quarter look down, close to isometric but in perspective. */
+const AERIAL_PITCH = -0.75;
 const AERIAL_MIN_DISTANCE = 12;
 const AERIAL_MAX_DISTANCE = 200;
 /** The bird's-eye camera never goes higher than this above the ground it looks at, unless the world says otherwise. */
@@ -66,7 +64,11 @@ export class CameraRig {
   /** After snapBoom: ease back out slowly, a pull-back rather than a jump. */
   private gentle = false;
   /** Bird's-eye pitch, kept apart so the walking camera comes back the way it was. */
-  private aerialPitch = AERIAL_PITCH;
+  private readonly aerialPitch = AERIAL_PITCH;
+  /** Where on screen the bird's-eye view aims (normalized device coordinates); null aims nowhere. */
+  private aim: { x: number; y: number } | null = null;
+  private origin = new Vector3();
+  private ray = new Vector3();
   /** The ground point the bird's-eye camera looks at, moved by panning. */
   private focus = new Vector3();
   private focusSet = false;
@@ -97,10 +99,8 @@ export class CameraRig {
 
   look(dx: number, dy: number): void {
     this.yaw -= dx * this.sensitivity;
-    if (this.mode === 'aerial') {
-      this.aerialPitch = clamp(this.aerialPitch - dy * this.sensitivity, AERIAL_PITCH_MIN, AERIAL_PITCH_MAX);
-      return;
-    }
+    // The bird's-eye view only turns: its tilt stays three-quarter.
+    if (this.mode === 'aerial') return;
     this.pitch -= dy * this.sensitivity;
     this.pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, this.pitch));
   }
@@ -129,6 +129,7 @@ export class CameraRig {
       this.focusSet = true;
     } else {
       this.landing = null;
+      this.aim = null;
     }
     // Into or out of the bird's-eye view, the camera swoops instead of cutting.
     if (mode === 'aerial' || previous === 'aerial') {
@@ -146,11 +147,10 @@ export class CameraRig {
     return Math.min(this.aerialDistance, height);
   }
 
-  /** The mode V goes to next: first → third → bird's-eye → first. */
+  /** The mode V goes to next: first ↔ third. From the bird's-eye view, back to walking. */
   nextMode(): ViewMode {
-    if (this.mode === 'first') return 'third';
-    if (this.mode === 'third') return this.aerialEnabled ? 'aerial' : 'first';
-    return 'first';
+    if (this.mode === 'aerial') return this.walkingMode;
+    return this.mode === 'first' ? 'third' : 'first';
   }
 
   /** Put the third-person camera this far back right now; it eases back to `distance` from there. */
@@ -175,6 +175,31 @@ export class CameraRig {
     const cos = Math.cos(this.yaw);
     this.focus.x += (x * cos + z * sin) * speed;
     this.focus.z += (z * cos - x * sin) * speed;
+  }
+
+  /**
+   * Slide the bird's-eye view by a drag of `dx`/`dy` CSS pixels on a view
+   * `viewHeight` pixels tall, so the ground under the finger or cursor
+   * follows it.
+   */
+  drag(dx: number, dy: number, viewHeight: number): void {
+    if (this.mode !== 'aerial' || (dx === 0 && dy === 0) || viewHeight <= 0) return;
+    const fov = this.camera instanceof PerspectiveCamera ? this.camera.fov : 60;
+    const perPixel = (2 * this.aerialReach * Math.tan(((fov / 2) * Math.PI) / 180)) / viewHeight;
+    // Up and down the screen covers more ground: the floor is seen at a slant.
+    const right = -dx * perPixel;
+    const back = -dy * perPixel / Math.sin(-this.aerialPitch);
+    const sin = Math.sin(this.yaw);
+    const cos = Math.cos(this.yaw);
+    this.focus.x += right * cos + back * sin;
+    this.focus.z += back * cos - right * sin;
+  }
+
+  /** Aim the bird's-eye view at a point on screen (normalized device coordinates), or nowhere. */
+  aimAt(x: number, y: number): void;
+  aimAt(point: null): void;
+  aimAt(x: number | null, y = 0): void {
+    this.aim = x === null ? null : { x, y };
   }
 
   /** Point the camera at the player. `feet` is the player's base position. */
@@ -236,28 +261,31 @@ export class CameraRig {
     this.camera.quaternion.setFromEuler(this.euler);
     this.offset.set(0, 0, 1).applyQuaternion(this.camera.quaternion);
     this.camera.position.copy(this.focus).addScaledVector(this.offset, reach);
-    this.landing = this.findLanding();
+    this.camera.updateMatrixWorld();
+    this.landing = this.aim ? this.landingAt(this.aim.x, this.aim.y) : null;
   }
 
   /**
-   * What the middle of the screen points at: along the view to the first
-   * thing it meets, then straight down from just in front of it to a floor,
-   * so pointing at a wall lands at its foot, not inside it.
+   * What a point on screen (normalized device coordinates) points at from
+   * the bird's-eye view: along that line of sight to the first thing it
+   * meets, then straight down from just in front of it to a floor, so
+   * pointing at a wall lands at its foot, not inside it. Null over nothing.
    */
-  private findLanding(): Vector3 | null {
-    const position = this.camera.position;
-    this.offset.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
+  landingAt(x: number, y: number): Vector3 | null {
+    if (this.mode !== 'aerial') return null;
+    const position = this.origin.setFromMatrixPosition(this.camera.matrixWorld);
+    const direction = this.ray.set(x, y, 0.5).unproject(this.camera).sub(position).normalize();
     if (this.collision.isEmpty) {
       // No colliders: the world is a flat floor at its ground level.
-      if (this.offset.y >= 0) return null;
-      const along = (this.collision.groundLevel - position.y) / this.offset.y;
-      return this.landingPoint.copy(position).addScaledVector(this.offset, along);
+      if (direction.y >= 0) return null;
+      const along = (this.collision.groundLevel - position.y) / direction.y;
+      return this.landingPoint.copy(position).addScaledVector(direction, along);
     }
     const reach = this.aerialReach * 4;
-    const hit = this.collision.castLandable(position, this.offset, reach);
+    const hit = this.collision.castLandable(position, direction, reach);
     if (!hit) return null;
     const along = Math.max(0, hit.distanceTo(position) - LANDING_STANDOFF);
-    this.probe.copy(position).addScaledVector(this.offset, along);
+    this.probe.copy(position).addScaledVector(direction, along);
     const ground = this.groundUnder(this.probe.x, this.probe.z, this.probe.y + 0.5, reach);
     if (ground === null) return null;
     return this.landingPoint.set(this.probe.x, ground, this.probe.z);

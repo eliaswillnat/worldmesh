@@ -6,8 +6,9 @@ export type Vec3Tuple = [number, number, number];
 
 /**
  * Camera modes every WorldMesh world supports. `aerial` is the bird's-eye
- * view: a high three-quarter look down at the world, panned with the move
- * keys, from which a click (or E) lands the player where it points.
+ * view, in worlds that offer it: a high three-quarter look down at the
+ * world, switched on and off with its own key (M), panned by dragging or
+ * with the move keys, from which a click lands the player where it points.
  */
 export type ViewMode = 'first' | 'third' | 'aerial';
 
@@ -51,6 +52,8 @@ export interface Keymap {
   /** Held while flying in any direction: fly twice as fast. */
   flyFast: string[];
   dash: string[];
+  /** The bird's-eye view, on and off, in worlds that offer it (`view.aerial`). */
+  birdsEye: string[];
 }
 
 export type InputAction = keyof Keymap;
@@ -120,7 +123,7 @@ export interface ViewOptions {
   /** Start looking along this yaw, in radians. 0 looks down -Z. */
   yaw?: number;
   pitch?: number;
-  /** Offer the bird's-eye view: V then cycles first → third → bird's-eye. Off unless set to true. */
+  /** Offer the bird's-eye view, on its own key (M) and button. Off unless set to true. */
   aerial?: boolean;
   /** How far the bird's-eye camera sits from the point it looks at, in metres. Defaults to 60, within aerialMaxHeight. */
   aerialDistance?: number;
