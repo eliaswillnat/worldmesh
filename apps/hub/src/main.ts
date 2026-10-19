@@ -174,7 +174,7 @@ function lobbyWorlds(): WorldEntry[] {
   return ALL_WORLDS;
 }
 
-import { getAccountId, getUsername, initAccount, onAccountChange } from './account';
+import { getAccountId, getUsername, initAccount, onAccountChange, openAccountDialog } from './account';
 
 initAccount();
 
@@ -573,6 +573,8 @@ function showWalkOnline(): void {
 }
 
 function exitWalkMode(): void {
+  pauseWatch?.disconnect();
+  pauseWatch = null;
   lobbyMusic.setActive(false);
   lobby?.dispose();
   lobby = null;
@@ -834,9 +836,16 @@ function mountPauseActions(): void {
     theme.appendChild(button);
   }
 
+  // Shown while paused near a world's building (docs/specs/buildings.md §8).
+  const report = document.createElement('button');
+  report.type = 'button';
+  report.className = 'walk-report';
+  report.textContent = 'Report this building';
+  report.hidden = true;
+
   const colors = walkColors.cloneNode(true) as HTMLDivElement;
   colors.removeAttribute('id');
-  bar.append(gallery, discord, priv);
+  bar.append(gallery, discord, priv, report);
   if (lobbyMusic.supported) {
     const music = document.createElement('button');
     music.type = 'button';
@@ -857,7 +866,55 @@ function mountPauseActions(): void {
   applyThemeChoice(choice);
   showWalkColor(walkColor);
   showLobbyMusic();
+  watchPauseForBuildings(report);
 }
+
+let pauseWatch: { disconnect(): void } | null = null;
+
+/**
+ * While the pause screen is open: is a world's building standing near enough
+ * to report? Looked at as it opens, and again each second, since a building
+ * can finish loading while the screen is up.
+ */
+function watchPauseForBuildings(report: HTMLButtonElement): void {
+  pauseWatch?.disconnect();
+  const overlay = document.querySelector<HTMLElement>('.wm-overlay');
+  if (!overlay) return;
+  const update = () => {
+    const near = overlay.dataset.locked !== 'true' ? lobby?.nearbyBuilding() : null;
+    report.hidden = !near;
+    if (near) report.setAttribute('aria-label', `Report the building of ${near.name}`);
+  };
+  const observer = new MutationObserver(update);
+  observer.observe(overlay, { attributes: true, attributeFilter: ['data-locked'] });
+  const timer = window.setInterval(update, 1000);
+  pauseWatch = {
+    disconnect() {
+      observer.disconnect();
+      window.clearInterval(timer);
+    },
+  };
+  update();
+}
+
+document.addEventListener('click', (event) => {
+  const target = event.target instanceof Element ? event.target : null;
+  if (!target?.closest('.walk-report') || !lobby) return;
+  const near = lobby.nearbyBuilding();
+  if (!near) return;
+  void import('./walk/reportBuilding').then(({ openBuildingReport }) =>
+    openBuildingReport({
+      ...near,
+      light: walkIsLight(),
+      signedIn: getAccountId() !== null,
+      // The account dialog lives in the gallery: walk mode would cover it.
+      onSignIn: () => {
+        exitWalkMode();
+        openAccountDialog();
+      },
+    }),
+  );
+});
 
 /** An empty door in the lobby was picked: back to the list, straight into the add form. */
 function openAddFormFromWalk(): void {

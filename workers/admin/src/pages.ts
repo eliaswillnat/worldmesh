@@ -136,9 +136,10 @@ export const overview: Page = async (_request, env, admin) => {
       `<li>Ad waiting: <strong>${esc(ad.advertiser_name)}</strong> on <code>${esc(ad.billboard_id)}</code> · <a href="${esc(hubOrigin(env))}/api/ads/admin/review?id=${esc(ad.id)}" target="_blank" rel="noopener">Review</a></li>`,
     );
   }
-  for (const building of value(links)?.filter((row) => row.status === 'pending') ?? []) {
+  for (const building of value(links)?.filter((row) => row.status === 'pending' || row.reports > 0) ?? []) {
+    const what = building.status === 'pending' ? 'Building waiting' : `Building reported (${num(building.reports)})`;
     todo.push(
-      `<li>Building waiting: <strong>${esc(building.building_name ?? 'Unnamed')}</strong> for ${link(building.world_url)} · <a href="${esc(buildingReviewLink(env, building.world_url))}" target="_blank" rel="noopener">Review</a></li>`,
+      `<li>${what}: <strong>${esc(building.building_name ?? 'Unnamed')}</strong> for ${link(building.world_url)} · <a href="${esc(buildingReviewLink(env, building.world_url))}" target="_blank" rel="noopener">Review</a></li>`,
     );
   }
   for (const check of down) todo.push(`<li><strong>${esc(check.name)}</strong> is not answering (${esc(check.status ?? check.error ?? '')}).</li>`);
@@ -355,21 +356,23 @@ export const buildingsPage: Page = async (_request, env, admin) => {
   const tiles = stats(
     stat('Waiting for review', n('pending')),
     stat('In the city', n('approved')),
+    stat('Reported', rows ? num(rows.filter((row) => row.reports > 0).length) : '—', 'open reports from visitors'),
     stat('Rejected', n('rejected')),
     stat('Hidden', n('hidden')),
   );
   const list = guarded('Buildings on worlds', links, (v) =>
     table(
-      ['', 'World', 'Building', 'Owner', 'Status', 'Since'],
+      ['', 'World', 'Building', 'Owner', 'Status', 'Reports', 'Since'],
       v.map((row) => {
         const [label, tone] = BUILDING_STATUS[row.status];
         const thumb = row.thumbnail_url?.startsWith('https://') ? `<img class="cover" src="${esc(row.thumbnail_url)}" alt="" loading="lazy" />` : '';
         return [
           thumb,
-          `${link(row.world_url)}<div class="cell-sub"><a href="${esc(buildingReviewLink(env, row.world_url))}" target="_blank" rel="noopener">${row.status === 'pending' ? 'Review' : 'Open'} ↗</a></div>`,
+          `${link(row.world_url)}<div class="cell-sub"><a href="${esc(buildingReviewLink(env, row.world_url))}" target="_blank" rel="noopener">${row.status === 'pending' || row.reports ? 'Review' : 'Open'} ↗</a></div>`,
           `<span class="cell-main">${esc(row.building_name ?? 'Unnamed')}</span><div class="cell-sub">${esc(row.provider)} · <code>${esc(row.building_id)}</code></div>`,
           esc(row.owner ?? '—'),
           `${pill(label, tone)}${row.reason ? `<div class="cell-sub">${esc(row.reason)}</div>` : ''}${row.reviewed_by ? `<div class="cell-sub">by ${esc(row.reviewed_by)}</div>` : ''}`,
+          row.reports ? pill(`${num(row.reports)} open`, 'bad') : '<span class="muted">0</span>',
           esc(ago(Number(row.updated_at), at)),
         ];
       }),

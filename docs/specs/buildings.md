@@ -1,9 +1,9 @@
 # Buildings: a world's own front in the hub city
 
-**Status:** Draft 0.4, October 2026. Steps 1 to 3 (§9) are built: demo
+**Status:** Draft 0.5, October 2026. Steps 1 to 4 (§9) are built: demo
 buildings stand on the city's first lots with `?buildings=demo`, accounts
-have My buildings, and a building linked to a world and approved stands in
-place of that world's block.
+have My buildings, a building linked to a world and approved stands in place
+of that world's block, and visitors can report one.
 **Owner:** Elias Willnat.
 **Builds on:** [avatar-wallet.md](../avatar-wallet.md) (where models live and
 how they load), [doorway.md](doorway.md) (what a door can show and how
@@ -471,9 +471,22 @@ metallic materials get a soft studio environment of their own
 
 - **Review** before anything shows (§5.2), and the **hash pin** (§5.3)
   means what was approved is what's shown.
-- **Report:** a door's info card gets *Report this building*. Reports reach
-  the admin dashboard, where *Hide* takes the building down at once
-  (`status = 'hidden'`) and tells its owner why.
+- **Report:** walk mode has no info card per door, so the pause screen
+  offers *Report this building* whenever a world's building stands within
+  30 m of the visitor (`walk/reportBuilding.ts`): a reason (offensive,
+  sexual, violent, someone else's work, broken or in the way, something
+  else) and a note. Reports come from signed-in accounts, so a person can
+  follow up and one person can't pile them up: one open report per person
+  per building (`building_report`, `db/migrations/0010_building_reports.sql`;
+  `POST /api/account/building/report`, rate-limited). Reports reach the
+  admin dashboard (reported buildings right after waiting ones, and on the
+  overview) and the review page, which lists them with their notes.
+  *Dismiss reports* closes them and leaves the building standing; *Hide*
+  takes it down at once (`status = 'hidden'`), closes them as acted on, and
+  the owner sees why in My buildings. Where email is set up
+  (`RESEND_API_KEY`, `AUTH_FROM_EMAIL`), the first open report on a building
+  emails the reviewers, and rejecting or hiding one emails its owner the
+  reason.
 - **Parsing limits** (§7.3) are enforced in every browser, whatever the
   server said.
 - **Privacy:** downloading a building tells Sketchfab or the PDS the
@@ -499,7 +512,9 @@ metallic materials get a soft studio environment of their own
    and the review page on the hub (viewer, checks, hash), `/worlds` and
    `/resolve`, the city resolving and caching approved buildings, and
    *Use* in My buildings.
-4. **Reports and hiding.**
+4. **Reports and hiding.** *Built.* `building_report`, `/report`, the pause
+   screen's *Report this building*, reports on the dashboard and the review
+   page, *Dismiss reports*, and the emails to reviewers and owners.
 5. **Creator docs.** A page on worldmesh.net (next to `creators.html`) with
    the Blender steps, the limits and a downloadable example building.
 

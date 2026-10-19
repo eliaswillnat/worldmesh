@@ -1401,6 +1401,12 @@
       }
       .world-claim-frame[hidden] { display: none; }
       .world-claim-actions { display: flex; gap: 10px; justify-content: flex-end; }
+      .building-report-reasons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; margin: 0 0 12px; padding: 0; border: 0; }
+      .building-report-reasons legend { padding: 0; margin: 0 0 8px; font-size: 13px; color: var(--muted); }
+      .building-report-reasons label { display: flex; align-items: center; gap: 8px; font-size: 15px; color: var(--text); cursor: pointer; }
+      @media (max-width: 480px) { .building-report-reasons { grid-template-columns: minmax(0, 1fr); } }
+      .building-report-note { display: block; box-sizing: border-box; width: 100%; margin: 0 0 6px; padding: 12px 16px; resize: vertical; border-radius: 16px; border: 1px solid var(--border); background: var(--input-bg); color: var(--text); font: inherit; font-size: 14px; }
+      .building-report-note:focus { outline: none; border-color: var(--accent); }
       .world-claim-close {
         position: absolute;
         top: 12px;
@@ -1984,7 +1990,8 @@
       html.walking .wm-lock .walk-pause-actions .walk-gallery,
       html.walking .wm-lock .walk-pause-actions .walk-discord,
       html.walking .wm-lock .walk-pause-actions .walk-private,
-      html.walking .wm-lock .walk-pause-actions .walk-music {
+      html.walking .wm-lock .walk-pause-actions .walk-music,
+      html.walking .wm-lock .walk-pause-actions .walk-report {
         box-sizing: border-box;
         width: var(--pause-w);
         height: var(--pause-h);
@@ -2011,7 +2018,8 @@
       html.walking .wm-lock .walk-pause-actions .walk-gallery:hover,
       html.walking .wm-lock .walk-pause-actions .walk-discord:hover,
       html.walking .wm-lock .walk-pause-actions .walk-private:hover,
-      html.walking .wm-lock .walk-pause-actions .walk-music:hover {
+      html.walking .wm-lock .walk-pause-actions .walk-music:hover,
+      html.walking .wm-lock .walk-pause-actions .walk-report:hover {
         background: var(--pause-hover);
         border-color: var(--pause-fg);
       }
@@ -2048,6 +2056,7 @@
       html.walking .wm-lock .walk-pause-actions .walk-now-playing:hover,
       html.walking .wm-lock .walk-pause-actions .walk-now-playing:focus-visible { opacity: 1; text-decoration: underline; }
       html.walking .wm-lock .walk-pause-actions .walk-private svg { width: 18px; height: 18px; }
+      html.walking .wm-lock .walk-pause-actions .walk-report[hidden] { display: none; }
       html.walking .wm-lock .walk-pause-actions .walk-private[aria-pressed="true"] {
         color: #bfe9ff;
         border-color: rgba(92, 200, 255, 0.7);

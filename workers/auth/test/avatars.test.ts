@@ -50,6 +50,7 @@ const STUBBED = new Set([
   'alice.pds-fixture.net',
   '10.0.0.1',
   'forest.worlds.example.org',
+  'api.resend.com',
 ]);
 const realFetch = globalThis.fetch;
 
@@ -1585,6 +1586,96 @@ describe('Buildings on worlds', { timeout: 20_000 }, () => {
     await recheckStale(env, ORIGIN);
     expect(await approvedWorlds()).toEqual([]);
     expect((await buildingList(owner.cookie)).buildings[0].worlds).toEqual([]);
+  });
+
+  it('lets signed-in visitors report a standing building once, and reviewers dismiss reports or act on them', async () => {
+    const owner = await linked('reported-owner@example.com');
+    const reviewerUser = await reviewer();
+    await decide(reviewerUser.cookie, { buildingId: owner.buildingId, action: 'approve', sha256: SHA });
+    const report = (cookie: string | null, body: Record<string, unknown>) => post('/api/account/building/report', cookie, { world: WORLD, ...body });
+
+    const first = await signedInUser('reporter-one@example.com');
+    const second = await signedInUser('reporter-two@example.com');
+    expect((await report(null, { reason: 'offensive' })).status).toBe(401);
+    expect((await report(first.cookie, { reason: 'boring' })).status).toBe(400);
+    expect((await report(first.cookie, { reason: 'offensive' })).status).toBe(200);
+    expect((await post('/api/account/building/report', first.cookie, { world: 'https://nowhere.example.org', reason: 'other' })).status).toBe(404);
+    expect((await post('/api/account/building/report', first.cookie, { world: WORLD, reason: 'other' }, 'https://evil.example')).status).toBe(403);
+    // Reporting again changes nothing.
+    expect(await (await report(first.cookie, { reason: 'violent' })).json()).toEqual({ ok: true, alreadyReported: true });
+    expect(await (await report(second.cookie, { reason: 'copyright', note: '  my   castle,  copied ' })).json()).toEqual({ ok: true, alreadyReported: false });
+
+    const queue = (await (await call('/api/account/building/review/queue', { headers: { Cookie: reviewerUser.cookie } })).json()) as {
+      links: { world: string; reports: number }[];
+    };
+    expect(queue.links.find((link) => link.world === WORLD)?.reports).toBe(2);
+    sketchfabDownload();
+    const details = (await (await call(`/api/account/building/review?world=${encodeURIComponent(WORLD)}`, { headers: { Cookie: reviewerUser.cookie } })).json()) as {
+      reports: { reason: string; note: string | null; sameFile: boolean; reporter: string }[];
+    };
+    expect(details.reports).toEqual([
+      expect.objectContaining({ reason: 'offensive', note: null, sameFile: true, reporter: 'reporter-one@example.com' }),
+      expect.objectContaining({ reason: 'copyright', note: 'my castle, copied', sameFile: true }),
+    ]);
+
+    // Dismissed: the building stays, the reports are closed, and a new one can be made.
+    expect((await decide(owner.cookie, { buildingId: owner.buildingId, action: 'dismiss' })).status).toBe(403);
+    expect(await (await decide(reviewerUser.cookie, { buildingId: owner.buildingId, action: 'dismiss' })).json()).toEqual({ ok: true, dismissed: 2 });
+    expect(await approvedWorlds()).toHaveLength(1);
+    expect(await (await report(first.cookie, { reason: 'broken' })).json()).toEqual({ ok: true, alreadyReported: false });
+
+    // Hidden: down at once, and its reports acted on.
+    await decide(reviewerUser.cookie, { buildingId: owner.buildingId, action: 'hide', reason: 'Copied from someone else.' });
+    expect(await approvedWorlds()).toEqual([]);
+    expect((await report(second.cookie, { reason: 'other' })).status).toBe(404);
+    const statuses = await env.DB.prepare('select status, count(*) as n from building_report group by status order by status').all<{ status: string; n: number }>();
+    expect(statuses.results).toEqual([
+      { status: 'actioned', n: 1 },
+      { status: 'dismissed', n: 2 },
+    ]);
+    expect((await buildingList(owner.cookie)).buildings[0].worlds).toEqual([{ url: WORLD, status: 'hidden', reason: 'Copied from someone else.' }]);
+    await env.DB.prepare('delete from building_report').run();
+  });
+
+  it('emails reviewers about a first report, and owners about a decision, where email is set up', async () => {
+    const mailEnv = { ...env, RESEND_API_KEY: 're_test', AUTH_FROM_EMAIL: 'WorldMesh <accounts@worldmesh.net>' } as Env;
+    const sent: { to: string; subject: string; text: string }[] = [];
+    route('POST', 'https://api.resend.com/emails', async (request) => {
+      sent.push((await request.json()) as { to: string; subject: string; text: string });
+      return reply({ id: 'email-1' });
+    });
+    const withMail = async (path: string, cookie: string, body: unknown) => {
+      const pending: Promise<unknown>[] = [];
+      const ctx = { waitUntil: (promise: Promise<unknown>) => void pending.push(promise), passThroughOnException() {} } as unknown as ExecutionContext;
+      const response = await worker.fetch(
+        new Request(`${ORIGIN}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN, Cookie: cookie }, body: JSON.stringify(body) }),
+        mailEnv,
+        ctx,
+      );
+      await Promise.all(pending);
+      return response;
+    };
+
+    const owner = await linked('mailed-owner@example.com');
+    const reviewerUser = await reviewer();
+    await decide(reviewerUser.cookie, { buildingId: owner.buildingId, action: 'approve', sha256: SHA });
+    const first = await signedInUser('mail-reporter-one@example.com');
+    const second = await signedInUser('mail-reporter-two@example.com');
+    expect((await withMail('/api/account/building/report', first.cookie, { world: WORLD, reason: 'sexual' })).status).toBe(200);
+    expect(sent.map((mail) => mail.to)).toEqual(['reviewer@example.com', 'someone@example.com']);
+    expect(sent[0].subject).toBe('A building in the city was reported');
+    expect(sent[0].text).toContain('Gatehouse, standing on https://forest.worlds.example.org in the hub city, was reported as sexual content.');
+    expect(sent[0].text).toContain(`${ORIGIN}/review-building?world=${encodeURIComponent(WORLD)}`);
+    expect(sent[0].text).not.toMatch(/If this wasn't you/);
+    // More reports pile up on the dashboard without more email.
+    await withMail('/api/account/building/report', second.cookie, { world: WORLD, reason: 'other' });
+    expect(sent).toHaveLength(2);
+
+    await withMail('/api/account/building/review', reviewerUser.cookie, { world: WORLD, buildingId: owner.buildingId, action: 'hide', reason: 'Not for everyone.' });
+    expect(sent).toHaveLength(3);
+    expect(sent[2]).toMatchObject({ to: 'mailed-owner@example.com', subject: 'Your building was taken down' });
+    expect(sent[2].text).toContain('Gatehouse was taken down from https://forest.worlds.example.org in the hub city: Not for everyone.');
+    await env.DB.prepare('delete from building_report').run();
   });
 
   it('gives a world to the building its manifest names now, and lets links go with their building', async () => {

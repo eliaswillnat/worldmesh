@@ -48,12 +48,27 @@ interface QueueEntry {
   buildingName: string | null;
   provider: string;
   updatedAt: number;
+  /** Open reports from visitors. */
+  reports: number;
+}
+
+type ReportReason = 'offensive' | 'sexual' | 'violent' | 'copyright' | 'broken' | 'other';
+
+interface Report {
+  id: string;
+  reason: ReportReason;
+  note: string | null;
+  /** About the file standing now, rather than one approved before it. */
+  sameFile: boolean;
+  createdAt: number;
+  reporter: string;
 }
 
 interface Details {
   link: { world: string; status: Status; reason: string | null; sha256: string | null; version: string | null; createdAt: number; reviewedAt: number | null; reviewedBy: string | null };
   building: { id: string; name: string | null; provider: string; providerLabel: string; modelId: string; thumbnail: string | null; bytes: number | null; sourceUrl: string | null };
   owner: { name: string | null; email: string | null; username: string | null };
+  reports: Report[];
   file: { modelUrl: string; expiresAt: string | null; version: string | null } | null;
   fileError: string | null;
 }
@@ -68,6 +83,14 @@ interface Check {
 }
 
 const API = '/api/account/building';
+const REASONS: Record<ReportReason, string> = {
+  offensive: 'Offensive or hateful',
+  sexual: 'Sexual content',
+  violent: 'Violent or graphic',
+  copyright: "Someone else's work",
+  broken: 'Broken or in the way',
+  other: 'Something else',
+};
 const STATUS: Record<Status, [string, string]> = {
   pending: ['Waiting for review', 'warn'],
   approved: ['In the city', 'good'],
@@ -96,7 +119,9 @@ async function showQueue(): Promise<void> {
       const [label, tone] = STATUS[entry.status];
       const open = el('a', entry.buildingName || 'Unnamed') as HTMLAnchorElement;
       open.href = `?world=${encodeURIComponent(entry.world)}`;
-      item.append(el('span', label, `pill ${tone}`), open, el('span', `for ${entry.world.replace(/^https:\/\//, '')} · ${entry.provider}`, 'muted'));
+      item.append(el('span', label, `pill ${tone}`));
+      if (entry.reports) item.append(el('span', `${entry.reports} report${entry.reports === 1 ? '' : 's'}`, 'pill bad'));
+      item.append(open, el('span', `for ${entry.world.replace(/^https:\/\//, '')} · ${entry.provider}`, 'muted'));
       list.append(item);
     }
     section.append(list);
@@ -163,8 +188,28 @@ function aside(details: Details, fileSection: HTMLElement, decide: HTMLElement):
     ['Owner', [details.owner.name, details.owner.username && `@${details.owner.username}`, details.owner.email].filter(Boolean).join(' · ') || '—'],
   ]));
 
-  box.append(worldSection, buildingSection, fileSection, decide);
+  box.append(worldSection);
+  if (details.reports.length) box.append(reportsSection(details));
+  box.append(buildingSection, fileSection, decide);
   return box;
+}
+
+/** What visitors reported, and a way to set the reports aside if the building is fine. */
+function reportsSection(details: Details): HTMLElement {
+  const section = el('section');
+  section.append(el('h2', `Reports (${details.reports.length})`));
+  for (const report of details.reports) {
+    const item = el('p');
+    item.append(el('strong', REASONS[report.reason]), ` · ${when(report.createdAt)} · ${report.reporter}`);
+    if (!report.sameFile) item.append(el('span', ' · about a file approved before this one', 'warn'));
+    section.append(item);
+    if (report.note) section.append(el('p', `“${report.note}”`, 'muted'));
+  }
+  const dismiss = el('button', 'Dismiss reports') as HTMLButtonElement;
+  dismiss.type = 'button';
+  dismiss.addEventListener('click', () => void send(details, { action: 'dismiss' }));
+  section.append(el('p', 'Hiding the building closes them too.', 'muted'), dismiss);
+  return section;
 }
 
 /** Downloads, hashes and checks the model the way the city does, and stands it on a block. */

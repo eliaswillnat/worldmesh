@@ -378,10 +378,14 @@ export function sendBackToReview(db: D1Database, worldUrl: string, sha256: strin
 export function reviewQueue(db: D1Database, limit = 200) {
   return db
     .prepare(
-      `select l.world_url, l.status, l.reason, l.created_at, l.updated_at, l.reviewed_at,
-         b.id as building_id, coalesce(b.custom_name, b.display_name) as building_name, b.provider
-       from building_link l join building b on b.id = l.building_id
-       order by case l.status when 'pending' then 0 when 'approved' then 1 else 2 end, l.updated_at desc
+      `select * from (
+         select l.world_url, l.status, l.reason, l.created_at, l.updated_at, l.reviewed_at,
+           b.id as building_id, coalesce(b.custom_name, b.display_name) as building_name, b.provider,
+           (select count(*) from building_report r
+            where r.world_url = l.world_url and r.building_id = l.building_id and r.status = 'open') as reports
+         from building_link l join building b on b.id = l.building_id
+       )
+       order by case when status = 'pending' then 0 when reports > 0 then 1 when status = 'approved' then 2 else 3 end, updated_at desc
        limit ?1`,
     )
     .bind(limit)
@@ -398,7 +402,7 @@ export function reviewLink(db: D1Database, worldUrl: string) {
          c.user_id as c_user_id, c.provider_account_id as c_provider_account_id, c.display_name as c_display_name,
          c.service_endpoint as c_service_endpoint, c.token_enc as c_token_enc, c.status as c_status,
          c.created_at as c_created_at, c.updated_at as c_updated_at,
-         u.name as owner_name, u.email as owner_email, u.username as owner_username
+         u.name as owner_name, u.email as owner_email, u.username as owner_username, u."emailVerified" as owner_email_verified
        from building_link l
        join building b on b.id = l.building_id
        join avatar_connection c on c.id = b.connection_id
@@ -409,7 +413,7 @@ export function reviewLink(db: D1Database, worldUrl: string) {
     .first<ReviewRow>();
 }
 
-/** A reviewer's decision, only while the world still links the building they looked at. */
+/** A reviewer's decision, only while the world still links the building they looked at. A statement, to batch. */
 export function decideLink(
   db: D1Database,
   worldUrl: string,
@@ -423,8 +427,7 @@ export function decideLink(
          reviewed_at = ?8, reviewed_by = ?9, updated_at = ?8
        where world_url = ?1 and building_id = ?2`,
     )
-    .bind(worldUrl, buildingId, decision.status, decision.sha256, decision.version, decision.portalJson, decision.reason, now, decision.by)
-    .run();
+    .bind(worldUrl, buildingId, decision.status, decision.sha256, decision.version, decision.portalJson, decision.reason, now, decision.by);
 }
 
 /** The connection columns of a joined row, as a connection. */
@@ -472,9 +475,12 @@ export interface ReviewRow extends BuildingRow, JoinedConnection {
   owner_name: string | null;
   owner_email: string | null;
   owner_username: string | null;
+  owner_email_verified: number | boolean | null;
 }
 
 export interface ReviewQueueRow {
+  /** Open reports on it. */
+  reports: number;
   world_url: string;
   status: BuildingLinkRow['status'];
   reason: string | null;
@@ -484,4 +490,70 @@ export interface ReviewQueueRow {
   building_id: string;
   building_name: string | null;
   provider: string;
+}
+
+// ── Reports ──────────────────────────────────────────────────────────────────
+
+/** Why a visitor reports a building (docs/specs/buildings.md §8). */
+export const REPORT_REASONS = ['offensive', 'sexual', 'violent', 'copyright', 'broken', 'other'] as const;
+export type ReportReason = (typeof REPORT_REASONS)[number];
+
+/**
+ * A visitor's report on the building standing on `link`'s world. One open
+ * report per person: reporting again changes nothing. Returns whether it is
+ * new, and how many open reports the building has now.
+ */
+export async function saveReport(
+  db: D1Database,
+  link: Pick<BuildingLinkRow, 'world_url' | 'building_id' | 'sha256'>,
+  reporterId: string,
+  reason: ReportReason,
+  note: string | null,
+): Promise<{ created: boolean; open: number }> {
+  const [insert, count] = await db.batch<{ n: number }>([
+    db
+      .prepare(
+        `insert into building_report (id, world_url, building_id, sha256, reporter_id, reason, note, status, created_at)
+         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'open', ?8)
+         on conflict do nothing`,
+      )
+      .bind(`rpt_${randomToken(12)}`, link.world_url, link.building_id, link.sha256, reporterId, reason, note, Date.now()),
+    db
+      .prepare("select count(*) as n from building_report where world_url = ?1 and building_id = ?2 and status = 'open'")
+      .bind(link.world_url, link.building_id),
+  ]);
+  return { created: insert.meta.changes > 0, open: count.results[0]?.n ?? 0 };
+}
+
+/** The open reports on a world's building, oldest first, with who made them. */
+export function openReports(db: D1Database, worldUrl: string, buildingId: string) {
+  return db
+    .prepare(
+      `select r.id, r.reason, r.note, r.sha256, r.created_at, u.username as reporter_username, u.email as reporter_email
+       from building_report r left join "user" u on u.id = r.reporter_id
+       where r.world_url = ?1 and r.building_id = ?2 and r.status = 'open' order by r.created_at`,
+    )
+    .bind(worldUrl, buildingId)
+    .all<OpenReportRow>()
+    .then((r) => r.results);
+}
+
+/** Closes a building's open reports: `actioned` when it came down, `dismissed` when it stays. */
+export function resolveReports(db: D1Database, worldUrl: string, buildingId: string, status: 'dismissed' | 'actioned', by: string) {
+  return db
+    .prepare(
+      `update building_report set status = ?3, resolved_at = ?4, resolved_by = ?5
+       where world_url = ?1 and building_id = ?2 and status = 'open'`,
+    )
+    .bind(worldUrl, buildingId, status, Date.now(), by);
+}
+
+export interface OpenReportRow {
+  id: string;
+  reason: ReportReason;
+  note: string | null;
+  sha256: string | null;
+  created_at: number;
+  reporter_username: string | null;
+  reporter_email: string | null;
 }
