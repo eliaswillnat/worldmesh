@@ -6,6 +6,7 @@ import {
   avatars,
   directory,
   federation,
+  formatCharacter,
   ownedWorlds,
   presence,
   runChecks,
@@ -183,7 +184,7 @@ export const usersPage: Page = async (request, env, admin) => {
     list,
     (rows) =>
       table(
-        ['Account', 'Username', 'Sign-in', 'Joined', 'Last seen', 'Avatars', 'Followers'],
+        ['Account', 'Username', 'Sign-in', 'Joined', 'Last seen', 'Character', 'Followers'],
         rows.map((user) => {
           const image = typeof user.image === 'string' && /^https:\/\//.test(user.image) ? `<img class="avatar" src="${esc(user.image)}" alt="" loading="lazy" referrerpolicy="no-referrer" />` : '';
           const verified = user.emailVerified === 1 || user.emailVerified === true || user.emailVerified === '1';
@@ -193,7 +194,7 @@ export const usersPage: Page = async (request, env, admin) => {
             esc((user.providers ?? '').split(',').filter(Boolean).join(', ') || '—'),
             esc(ago(toMillis(user.createdAt), at)),
             esc(ago(toMillis(user.lastSeen), at)),
-            `<span class="mono">${num(Number(user.avatars))}</span>`,
+            esc(formatCharacter(user)),
             `<span class="mono">${num(Number(user.followers))}</span>`,
           ];
         }),
