@@ -15,7 +15,7 @@ positions or chat.
    plan is enough: SQLite-backed Durable Objects and rate limits are on it.
 2. Point your world at it:
    ```js
-   createWorldMesh({
+   await loadWorldMesh({
      scene, camera, renderer,
      multiplayer: { server: 'wss://worldmesh-relay.<your-subdomain>.workers.dev' },
    });
