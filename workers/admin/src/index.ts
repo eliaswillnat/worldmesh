@@ -9,7 +9,7 @@
  *   GET  /users?q=              accounts, search
  *   GET  /worlds                directory (approved + waiting), views, who is in each
  *   GET  /worlds/edit?id=       edit a world's cover, description and labels
- *   POST /worlds/edit           save, approve or reject it
+ *   POST /worlds/edit           save, approve, reject, or delete it
  *   GET  /live                  presence rooms, auto-refreshing
  *   GET  /ads                   billboard ads and revenue (actions stay in workers/ads)
  *   GET  /federation            followers, deliveries, Avatar Wallet

@@ -212,8 +212,20 @@ function cover(entry: DirectoryEntry): string {
   return `<img class="cover" src="${esc(entry.cover)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`;
 }
 
-export const worldsPage: Page = async (_request, env, admin) => {
+function worldActions(env: Env, world: DirectoryEntry, kind: 'pending' | 'approved'): string {
+  const id = esc(encodeURIComponent(world.id));
+  const review = `<a class="button" href="/worlds/edit?id=${id}">${kind === 'pending' ? 'Review' : 'Edit'}</a>`;
+  const approve = kind === 'pending' ? approveLink(env, world) : null;
+  const approveAsIs = approve
+    ? `<a class="button" href="${esc(approve)}" target="_blank" rel="noopener noreferrer">Approve as is</a>`
+    : '';
+  const del = `<a class="button danger" href="/worlds?confirm_delete=${id}">Delete</a>`;
+  return `<div class="row-actions">${review}${approveAsIs}${del}</div>`;
+}
+
+export const worldsPage: Page = async (request, env, admin) => {
   const at = now(env);
+  const params = new URL(request.url).searchParams;
   const [dir, counts, owned] = await Promise.all([attempt(() => directory(env)), attempt(() => views(env)), attempt(() => ownedWorlds(env))]);
   const listed = value(dir)?.approved ?? [];
   const rooms = value(await attempt(() => presence(env, listed.filter((w) => w.url).map((w) => ({ name: w.name ?? w.id, url: w.url! })))));
@@ -234,6 +246,23 @@ export const worldsPage: Page = async (_request, env, admin) => {
   };
 
   const d = value(dir);
+  const confirmId = params.get('confirm_delete') ?? '';
+  const confirmWorld = confirmId
+    ? (d?.approved.find((world) => world.id === confirmId) ?? d?.pending.find((world) => world.id === confirmId))
+    : undefined;
+  const confirmBanner = confirmId
+    ? `<form class="notice confirm-delete" method="post" action="/worlds/edit">
+  <input type="hidden" name="id" value="${esc(confirmId)}" />
+  <input type="hidden" name="action" value="delete" />
+  <p>Delete <strong>${esc(confirmWorld?.name ?? confirmId)}</strong> from the directory? This cannot be undone.</p>
+  <div class="row-actions">
+    <button type="submit" name="confirm" value="1" class="danger">Yes, delete</button>
+    <a class="button" href="/worlds">Cancel</a>
+  </div>
+</form>`
+    : '';
+  const deletedNotice = params.get('deleted') ? '<p class="notice">World deleted.</p>' : '';
+
   const tiles = stats(
     stat('Listed', d ? num(d.approved.length) : '—'),
     stat('Waiting for review', d ? num(d.pending.length) : '—'),
@@ -244,17 +273,13 @@ export const worldsPage: Page = async (_request, env, admin) => {
 
   const pending = guarded('Waiting for review', dir, (v) =>
     table(
-      ['', 'World', 'Creator', 'Submitted', ''],
-      v.pending.map((world) => {
-        const approve = approveLink(env, world);
-        return [
-          cover(world),
-          `<span class="cell-main">${esc(world.name ?? world.id)}</span><div class="cell-sub">${link(world.url)}</div>${world.description ? `<div class="cell-sub">${esc(world.description)}</div>` : ''}`,
-          `${esc(world.creator ?? '—')}<div class="cell-sub">${esc(world.email ?? '')}</div>${world.portfolio ? `<div class="cell-sub">${link(world.portfolio)}</div>` : ''}`,
-          esc(ago(Date.parse(world.submittedAt ?? ''), at)),
-          `<a class="button" href="/worlds/edit?id=${esc(encodeURIComponent(world.id))}">Review</a>${approve ? ` <a href="${esc(approve)}" target="_blank" rel="noopener noreferrer">Approve as is</a>` : ''}`,
-        ];
-      }),
+      ['', 'World', 'Creator', 'Submitted'],
+      v.pending.map((world) => [
+        cover(world),
+        `<span class="cell-main">${esc(world.name ?? world.id)}</span><div class="cell-sub">${link(world.url)}</div>${world.description ? `<div class="cell-sub">${esc(world.description)}</div>` : ''}${worldActions(env, world, 'pending')}`,
+        `${esc(world.creator ?? '—')}<div class="cell-sub">${esc(world.email ?? '')}</div>${world.portfolio ? `<div class="cell-sub">${link(world.portfolio)}</div>` : ''}`,
+        esc(ago(Date.parse(world.submittedAt ?? ''), at)),
+      ]),
       'No submissions waiting.',
     ),
   );
@@ -269,7 +294,7 @@ export const worldsPage: Page = async (_request, env, admin) => {
           const live = liveByOrigin.get(originOf(world.url));
           return [
             cover(world),
-            `<a class="cell-main" href="/worlds/edit?id=${esc(encodeURIComponent(world.id))}">${esc(world.name ?? world.id)}</a> ${world.curatedBy ? pill('curated', 'info') : ''}<div class="cell-sub">${link(world.url)}</div>`,
+            `<a class="cell-main" href="/worlds/edit?id=${esc(encodeURIComponent(world.id))}">${esc(world.name ?? world.id)}</a> ${world.curatedBy ? pill('curated', 'info') : ''}<div class="cell-sub">${link(world.url)}</div>${worldActions(env, world, 'approved')}`,
             `${esc(world.creator ?? '—')}<div class="cell-sub">${esc(world.email ?? '')}</div>`,
             esc(ago(Date.parse(world.approvedAt ?? world.addedAt ?? ''), at)),
             `<span class="mono">${viewMap ? num(viewMap.get(world.url ?? '') ?? 0) : '—'}</span>`,
@@ -295,7 +320,7 @@ export const worldsPage: Page = async (_request, env, admin) => {
       : '<p class="muted">No account-owned worlds yet — the directory still lives in KV (above).</p>',
   );
 
-  return render(env, admin, '/worlds', 'Worlds', `${tiles}${pending}${approved}${accountWorlds}`);
+  return render(env, admin, '/worlds', 'Worlds', `${deletedNotice}${confirmBanner}${tiles}${pending}${approved}${accountWorlds}`);
 };
 
 // ── Live ───────────────────────────────────────────────────────────────────
