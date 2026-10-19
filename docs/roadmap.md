@@ -53,6 +53,10 @@ push hosting costs onto WorldMesh instead of onto the creators.
    bodies instead of the default figure, names for signed-in visitors, chat
    in worlds, and world-hosted servers for creators who want shared game
    state.
+7. **Buildings.** A world's creator replaces its standard storefront in the
+   hub city with their own model, whose `portal` face becomes the door.
+   Models stay on Sketchfab or the creator's PDS, like characters. See
+   [specs/buildings.md](specs/buildings.md).
 
 ## Open questions
 
