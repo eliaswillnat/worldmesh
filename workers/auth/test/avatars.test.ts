@@ -3,7 +3,7 @@ import { getPlatformProxy } from 'wrangler';
 import { createTestDatabase, type TestDatabase } from '../../../db/test/d1';
 import worker, { type Env } from '../src/index';
 import { createAuth } from '../src/auth';
-import { atprotoClientId, UPLOAD_SCOPE } from '../src/avatars/atproto';
+import { atprotoClientId, BUILDING_UPLOAD_SCOPE, UPLOAD_SCOPE } from '../src/avatars/atproto';
 import { fromBase64url, pkceChallenge, seal } from '../src/avatars/crypto';
 import { sharePayload, type SignedShare } from '../src/avatars/share';
 
@@ -21,6 +21,9 @@ const SKETCHFAB_API = 'https://api.sketchfab.com';
 const SKETCHFAB_GLB = 'https://sketchfab-prod-media.s3.amazonaws.com/archives/model.glb?X-Amz-Signature=def';
 const SKETCHFAB_USER = '2e56234e58bb433b86def3a6274166e9';
 const SKETCHFAB_MODEL = '1cb3298227d5469284fe122dbd8baf5f';
+
+/** Everything the client may ask for: uploading characters and buildings, nothing more. */
+const CLIENT_SCOPE = 'atproto repo:app.at3d.avatar?action=create repo:net.worldmesh.building?action=create blob:model/gltf-binary';
 
 const DID = 'did:plc:abcdefghijklmnopqrstuvwx';
 const HANDLE = 'alice.pds-fixture.net';
@@ -360,7 +363,8 @@ describe('VRoid Hub', () => {
     expect((await post('/api/account/avatar/collect', other.cookie, { connectionId, avatarId: 'model-1' })).status).toBe(404);
     }, 20_000);
 
-  it('renames a saved character for its owner only, across re-saves and in worlds', async () => {
+  // Many real D1 round trips: more than the default 5 s on a slow machine.
+  it('renames a saved character for its owner only, across re-saves and in worlds', { timeout: 15_000 }, async () => {
     const { cookie } = await signedInUser('vroid-rename@example.com');
     const connectionId = await connectVroid(cookie);
     await selectVroidModel(cookie, connectionId);
@@ -646,12 +650,12 @@ describe('at3d / AT Protocol', () => {
       grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],
       redirect_uris: [`${ORIGIN}/api/account/avatar/callback/atproto`, `${ORIGIN}/api/auth/atproto/callback`],
-      scope: 'atproto repo:app.at3d.avatar?action=create blob:model/gltf-binary',
+      scope: CLIENT_SCOPE,
       token_endpoint_auth_method: 'none',
       dpop_bound_access_tokens: true,
     });
     expect(atprotoClientId('http://127.0.0.1:5170', 'http://127.0.0.1:5170/api/account/avatar/callback/atproto')).toBe(
-      `http://localhost?redirect_uri=http%3A%2F%2F127.0.0.1%3A5170%2Fapi%2Faccount%2Favatar%2Fcallback%2Fatproto&scope=${encodeURIComponent(UPLOAD_SCOPE).replace(/%20/g, '+')}`,
+      `http://localhost?redirect_uri=http%3A%2F%2F127.0.0.1%3A5170%2Fapi%2Faccount%2Favatar%2Fcallback%2Fatproto&scope=${encodeURIComponent(CLIENT_SCOPE).replace(/%20/g, '+')}`,
     );
     expect(() => atprotoClientId('http://localhost:5170', 'x')).toThrow(/127\.0\.0\.1/);
   });
@@ -1103,5 +1107,229 @@ describe('Sketchfab', () => {
     const res = await post('/api/account/avatar/disconnect', cookie, { connectionId });
     expect(((await res.json()) as { connections: unknown[] }).connections).toEqual([]);
     expect(calls.some((c) => c.url === `${SKETCHFAB}/oauth2/revoke_token/`)).toBe(true);
+  });
+});
+
+// ── My buildings ─────────────────────────────────────────────────────────────
+
+interface BuildingList {
+  enabled: boolean;
+  providers: { id: string; label: string }[];
+  connections: { id: string; provider: string; label: string }[];
+  buildings: { id: string; connectionId: string; provider: string; modelId: string; name: string | null; bytes: number | null; sourceUrl: string | null; reachable: boolean }[];
+}
+
+async function buildingList(cookie: string): Promise<BuildingList> {
+  const res = await call('/api/account/building/list', { headers: { Cookie: cookie } });
+  expect(res.status).toBe(200);
+  return (await res.json()) as BuildingList;
+}
+
+const BUILDING_MODEL = 'b1d1b1d1b1d1b1d1b1d1b1d1b1d1b1d1';
+
+function buildingRecord(rkey: string, name: string, mimeType = 'model/gltf-binary') {
+  return {
+    uri: `at://${DID}/net.worldmesh.building/${rkey}`,
+    cid: 'bafyreibuilding',
+    value: {
+      $type: 'net.worldmesh.building',
+      name,
+      model: { $type: 'blob', ref: { $link: 'bafkreibuildingmodel' }, mimeType, size: 2_500_000 },
+      createdAt: '2026-10-19T00:00:00Z',
+    },
+  };
+}
+
+// Each test signs in and connects through several real D1 round trips: more than the default 5 s on a busy machine.
+describe('My buildings', { timeout: 15_000 }, () => {
+  it('is off until AVATAR_SECRET is set, needs a session, and offers only platforms that hold buildings', async () => {
+    const { AVATAR_SECRET: _secret, ...withoutSecret } = env;
+    const off = await call('/api/account/building/list', {}, withoutSecret as Env);
+    expect(await off.json()).toEqual({ enabled: false, providers: [], connections: [], buildings: [] });
+    expect((await call('/api/account/building/list')).status).toBe(401);
+
+    const { cookie } = await signedInUser('buildings-empty@example.com');
+    await connectVroid(cookie, 'vroid-building-user');
+    const list = await buildingList(cookie);
+    expect(list).toEqual({
+      enabled: true,
+      providers: [
+        { id: 'sketchfab', label: 'Sketchfab' },
+        { id: 'atproto', label: 'AT Protocol' },
+      ],
+      // VRoid Hub holds characters only.
+      connections: [],
+      buildings: [],
+    });
+    const wallet = (await (await call('/api/account/avatar/wallet', { headers: { Cookie: cookie } })).json()) as { connections: { id: string }[] };
+    expect((await call(`/api/account/building/connections/${wallet.connections[0].id}/models`, { headers: { Cookie: cookie } })).status).toBe(400);
+    expect((await post('/api/account/building/collect', cookie, { connectionId: 'nope', modelId: 'x' }, 'https://evil.example')).status).toBe(403);
+  });
+
+  it("lists the user's own Sketchfab models with their GLB size", async () => {
+    const { cookie } = await signedInUser('buildings-sketchfab@example.com');
+    const connectionId = await connectSketchfab(cookie);
+    route('GET', `${SKETCHFAB_API}/v3/me/models`, () =>
+      reply({
+        results: [
+          sketchfabModel(BUILDING_MODEL, SKETCHFAB_USER, 'Gatehouse', { archives: { glb: { size: 3_200_000 } } }),
+          sketchfabModel('c0ffeec0ffeec0ffeec0ffeec0ffee00', SKETCHFAB_USER, 'Processing', { status: { processing: 'PROCESSING' } }),
+        ],
+        next: null,
+      }),
+    );
+    const models = (await (await call(`/api/account/building/connections/${connectionId}/models`, { headers: { Cookie: cookie } })).json()) as {
+      models: unknown[];
+    };
+    expect(models.models).toEqual([
+      {
+        id: BUILDING_MODEL,
+        name: 'Gatehouse',
+        thumbnail: `https://media.sketchfab.com/models/${BUILDING_MODEL}/thumbnails/medium.jpeg`,
+        bytes: 3_200_000,
+        sourceUrl: `${SKETCHFAB}/3d-models/gatehouse-${BUILDING_MODEL}`,
+      },
+    ]);
+  });
+
+  it('saves only the user\'s own models, once each, and renames and removes them for their owner only', async () => {
+    const { cookie } = await signedInUser('buildings-save@example.com');
+    const connectionId = await connectSketchfab(cookie);
+    route('GET', `${SKETCHFAB_API}/v3/models/${BUILDING_MODEL}`, () => reply(sketchfabModel(BUILDING_MODEL, SKETCHFAB_USER, 'Gatehouse')));
+    const saved = (await (await post('/api/account/building/collect', cookie, { connectionId, modelId: BUILDING_MODEL })).json()) as BuildingList;
+    expect(saved.connections).toEqual([{ id: connectionId, provider: 'sketchfab', label: 'Sketchfab', displayName: 'Mesh Maker', status: 'active' }]);
+    expect(saved.buildings).toHaveLength(1);
+    const building = saved.buildings[0];
+    expect(building).toMatchObject({ connectionId, provider: 'sketchfab', modelId: BUILDING_MODEL, name: 'Gatehouse', bytes: 4_000_000, reachable: true });
+    expect(building.id).toMatch(/^bld_[A-Za-z0-9_-]{16}$/);
+
+    // Saving it again keeps its id, and does not count twice.
+    const again = (await (await post('/api/account/building/collect', cookie, { connectionId, modelId: BUILDING_MODEL })).json()) as BuildingList;
+    expect(again.buildings.map((b) => b.id)).toEqual([building.id]);
+
+    // Someone else's model is not offered, even if downloadable.
+    route('GET', `${SKETCHFAB_API}/v3/models/${SKETCHFAB_MODEL}`, () => reply(sketchfabModel(SKETCHFAB_MODEL, 'ffffffffffffffffffffffffffffffff', 'Not mine')));
+    expect((await post('/api/account/building/collect', cookie, { connectionId, modelId: SKETCHFAB_MODEL })).status).toBe(404);
+
+    const renamed = (await (await post('/api/account/building/rename', cookie, { buildingId: building.id, name: '  The   Forest Gate ' })).json()) as BuildingList;
+    expect(renamed.buildings[0].name).toBe('The Forest Gate');
+    // Only its owner can rename or remove it.
+    const other = await signedInUser('buildings-other@example.com');
+    expect((await post('/api/account/building/rename', other.cookie, { buildingId: building.id, name: 'Mine now' })).status).toBe(404);
+    await post('/api/account/building/remove', other.cookie, { buildingId: building.id });
+    expect((await buildingList(cookie)).buildings).toHaveLength(1);
+
+    const removed = (await (await post('/api/account/building/remove', cookie, { buildingId: building.id })).json()) as BuildingList;
+    expect(removed.buildings).toEqual([]);
+  });
+
+  it('holds at most 20, and lets them go with their platform', async () => {
+    const { user, cookie } = await signedInUser('buildings-full@example.com');
+    const connectionId = await connectSketchfab(cookie);
+    const now = Date.now();
+    await env.DB.batch(
+      Array.from({ length: 20 }, (_, i) =>
+        env.DB.prepare(
+          `insert into building (id, user_id, connection_id, provider, external_id, created_at, updated_at) values (?1, ?2, ?3, 'sketchfab', ?4, ?5, ?5)`,
+        ).bind(`bld_full${String(i).padStart(12, '0')}`, user.id, connectionId, `model-${i}`, now + i),
+      ),
+    );
+    route('GET', `${SKETCHFAB_API}/v3/models/${BUILDING_MODEL}`, () => reply(sketchfabModel(BUILDING_MODEL, SKETCHFAB_USER, 'Gatehouse')));
+    const full = await post('/api/account/building/collect', cookie, { connectionId, modelId: BUILDING_MODEL });
+    expect(full.status).toBe(409);
+    expect(((await full.json()) as { error: string }).error).toMatch(/full/);
+
+    route('POST', `${SKETCHFAB}/oauth2/revoke_token/`, () => reply({}));
+    expect((await post('/api/account/avatar/disconnect', cookie, { connectionId })).status).toBe(200);
+    expect((await buildingList(cookie)).buildings).toEqual([]);
+  });
+
+  it('lists net.worldmesh.building records with a GLB, and saves only ones in the account', async () => {
+    const { cookie } = await signedInUser('buildings-atproto@example.com');
+    const { flow } = await startAtproto(cookie);
+    await finishAtproto(cookie, flow, await flowState(flow), GOOD_TOKEN);
+    const connectionId = (await buildingList(cookie)).connections[0].id;
+
+    const gate = buildingRecord('3kgate', 'Gate');
+    route('GET', `${PDS}/xrpc/com.atproto.repo.listRecords`, (request) => {
+      const q = new URL(request.url).searchParams;
+      expect(q.get('repo')).toBe(DID);
+      expect(q.get('collection')).toBe('net.worldmesh.building');
+      return reply({ records: [gate, buildingRecord('3kzip', 'Zipped', 'application/zip')] });
+    });
+    const models = (await (await call(`/api/account/building/connections/${connectionId}/models`, { headers: { Cookie: cookie } })).json()) as {
+      models: unknown[];
+    };
+    expect(models.models).toEqual([{ id: gate.uri, name: 'Gate', thumbnail: null, bytes: 2_500_000, sourceUrl: null }]);
+
+    route('GET', `${PDS}/xrpc/com.atproto.repo.getRecord`, (request) => {
+      expect(new URL(request.url).searchParams.get('collection')).toBe('net.worldmesh.building');
+      return reply(gate);
+    });
+    const saved = (await (await post('/api/account/building/collect', cookie, { connectionId, modelId: gate.uri })).json()) as BuildingList;
+    expect(saved.buildings[0]).toMatchObject({ provider: 'atproto', modelId: gate.uri, name: 'Gate', bytes: 2_500_000 });
+    // A record elsewhere, or a character record, cannot be saved as a building.
+    for (const modelId of [`at://did:plc:zzzzzzzzzzzzzzzzzzzzzzzz/net.worldmesh.building/3kgate`, `at://${DID}/app.at3d.avatar/3kgate`]) {
+      expect((await post('/api/account/building/collect', cookie, { connectionId, modelId })).status).toBe(404);
+    }
+  });
+
+  it('asks Sketchfab for permission to upload a building, and says so on the way back', async () => {
+    const { cookie } = await signedInUser('buildings-sf-upload@example.com');
+    await connectSketchfab(cookie);
+    const start = await post('/api/account/avatar/connect/sketchfab', cookie, { upload: 'building' });
+    expect(start.status).toBe(200);
+    const state = new URL(((await start.json()) as { url: string }).url).searchParams.get('state');
+    route('POST', `${SKETCHFAB}/oauth2/token/`, () => reply({ access_token: 'sf-building-access', refresh_token: 'sf-building-refresh', expires_in: 3600 }));
+    route('GET', `${SKETCHFAB_API}/v3/me`, () => reply({ uid: SKETCHFAB_USER, username: 'mesh-maker' }));
+    const callback = await call(`/api/account/avatar/callback/sketchfab?code=sf-code-3&state=${state}`, {
+      headers: { Cookie: `${cookie}; ${FLOW_COOKIE}=${cookieValue(start, FLOW_COOKIE)}` },
+    });
+    expect(callback.headers.get('Location')).toBe(`${ORIGIN}/?avatar=upload&provider=sketchfab&kind=building`);
+    const withGrant = `${cookie}; ${UPLOAD_COOKIE}=${cookieValue(callback, UPLOAD_COOKIE)}`;
+    const grant = (await (await post('/api/account/avatar/upload/grant', withGrant, {})).json()) as Record<string, unknown>;
+    expect(grant).toMatchObject({ provider: 'sketchfab', kind: 'building', accessToken: 'sf-building-access' });
+  });
+
+  it('asks AT Protocol for permission to create buildings only, and refuses a grant without it', async () => {
+    const { cookie } = await signedInUser('buildings-at-upload@example.com');
+    const first = await startAtproto(cookie);
+    await finishAtproto(cookie, first.flow, await flowState(first.flow), GOOD_TOKEN);
+
+    route('POST', `${AS}/oauth/par`, async (request) => {
+      const form = Object.fromEntries(new URLSearchParams(await request.text()));
+      expect(form).toMatchObject({ scope: BUILDING_UPLOAD_SCOPE, login_hint: HANDLE });
+      return reply({ request_uri: 'urn:ietf:params:oauth:request_uri:req-b' }, 201, { 'DPoP-Nonce': 'nonce-2' });
+    });
+    const flowFor = async () => cookieValue(await post('/api/account/avatar/connect/atproto', cookie, { upload: 'building' }), FLOW_COOKIE);
+
+    // A grant for characters is not one for buildings.
+    const wrong = await flowFor();
+    const refused = await finishAtproto(cookie, wrong, await flowState(wrong), { ...GOOD_TOKEN, scope: UPLOAD_SCOPE });
+    expect(refused.headers.get('Location')).toBe(`${ORIGIN}/?avatar=error`);
+
+    const flow = await flowFor();
+    const callback = await finishAtproto(cookie, flow, await flowState(flow), { ...GOOD_TOKEN, scope: BUILDING_UPLOAD_SCOPE });
+    expect(callback.headers.get('Location')).toBe(`${ORIGIN}/?avatar=upload&provider=atproto&kind=building`);
+    const withGrant = `${cookie}; ${UPLOAD_COOKIE}=${cookieValue(callback, UPLOAD_COOKIE)}`;
+    const grant = (await (await post('/api/account/avatar/upload/grant', withGrant, {})).json()) as Record<string, unknown>;
+    expect(grant).toMatchObject({ provider: 'atproto', kind: 'building', service: PDS, account: DID });
+  });
+
+  it('forgets the old account’s buildings when a platform is reconnected as another', async () => {
+    const { cookie } = await signedInUser('buildings-reconnect@example.com');
+    const connectionId = await connectSketchfab(cookie);
+    route('GET', `${SKETCHFAB_API}/v3/models/${BUILDING_MODEL}`, () => reply(sketchfabModel(BUILDING_MODEL, SKETCHFAB_USER, 'Gatehouse')));
+    await post('/api/account/building/collect', cookie, { connectionId, modelId: BUILDING_MODEL });
+    expect((await buildingList(cookie)).buildings).toHaveLength(1);
+
+    const start = await post('/api/account/avatar/connect/sketchfab', cookie, {});
+    const state = new URL(((await start.json()) as { url: string }).url).searchParams.get('state');
+    route('POST', `${SKETCHFAB}/oauth2/token/`, () => reply({ access_token: 'sf-other', refresh_token: 'sf-other-r', expires_in: 3600 }));
+    route('GET', `${SKETCHFAB_API}/v3/me`, () => reply({ uid: 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', username: 'someone-else' }));
+    await call(`/api/account/avatar/callback/sketchfab?code=sf-code-4&state=${state}`, {
+      headers: { Cookie: `${cookie}; ${FLOW_COOKIE}=${cookieValue(start, FLOW_COOKIE)}` },
+    });
+    expect((await buildingList(cookie)).buildings).toEqual([]);
   });
 });

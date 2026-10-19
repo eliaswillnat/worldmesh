@@ -1,12 +1,10 @@
 import {
   Box3,
   Group,
-  Matrix4,
   Mesh,
   MeshBasicMaterial,
   PMREMGenerator,
   Texture,
-  Vector3,
   type Material,
   type Object3D,
   type Scene,
@@ -16,7 +14,8 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import type { Door, DoorShape } from './door';
 import { prismRoof, prismWalls } from './avenues';
-import { findPortalFace, fitToLot, portalTooSmall, portalYaw, type Lot } from './buildingFit';
+import { planBuilding, type Lot } from './buildingFit';
+import { BUILDING_LIMITS, checkWeight, parseBuilding } from './buildingModel';
 import demoBuildings from './demoBuildings.json';
 
 /**
@@ -39,10 +38,6 @@ export interface BuildingSource {
 /** Demo buildings, standing in on the first lots of the city with `?buildings=demo`. */
 export const DEMO_BUILDINGS: readonly BuildingSource[] = demoBuildings;
 
-/** What a building may weigh (§3.1). */
-export const BUILDING_LIMITS = { bytes: 10 * 1024 * 1024, triangles: 150_000, texture: 2048 };
-/** Compression these files may not use: each would mean hosting a decoder. */
-const REFUSED_EXTENSIONS = ['KHR_draco_mesh_compression', 'EXT_meshopt_compression'];
 /** Load within, unload beyond (metres), at most so many loaded and downloading at once (§7.1). */
 export const STREAMING = { load: 90, unload: 140, loaded: 8, downloads: 2 };
 /**
@@ -184,7 +179,7 @@ export class Buildings {
     lot.abort = abort;
     try {
       const data = await download(lot.source, abort.signal);
-      const object = await parse(data);
+      const object = await parseBuilding(data);
       if (abort.signal.aborted || this.disposed) {
         disposeObject(object);
         return;
@@ -203,27 +198,12 @@ export class Buildings {
 
   /** Turn, scale and move the model onto its lot, round its door (§6). */
   private place(lot: LotState, model: Object3D): void {
-    const search = findPortalFace(model);
-    if (search.problem) throw new Error(search.problem);
-    const yaw = search.face ? portalYaw(search.face) : 0;
-    const turn = new Matrix4().makeRotationY(yaw);
-    const turned = new Group();
-    turned.rotation.y = yaw;
-    turned.add(model);
-    const bounds = new Box3().setFromObject(turned, true);
-    const anchor = search.face
-      ? search.face.center.clone().setY(search.face.center.y - search.face.height / 2).applyMatrix4(turn)
-      : new Vector3((bounds.min.x + bounds.max.x) / 2, bounds.min.y, bounds.max.z);
-    turned.remove(model);
-    const fit = fitToLot(bounds, anchor, lot.lot, lot.out);
-    if (search.face) {
-      const small = portalTooSmall(search.face, fit.scale);
-      if (small) throw new Error(small);
-      const width = search.face.width * fit.scale;
-      lot.shape = { width, height: search.face.height * fit.scale, span: width + 0.4 };
-    }
+    const plan = planBuilding(model, lot.lot, lot.out);
+    if (plan.problem) throw new Error(plan.problem);
+    const { fit, turn, bounds } = plan;
+    if (plan.door) lot.shape = { ...plan.door, span: plan.door.width + 0.4 };
     // The door takes the portal face's place.
-    for (const mesh of search.meshes) mesh.visible = false;
+    for (const mesh of plan.portalMeshes) mesh.visible = false;
     model.traverse((object) => {
       if (!(object instanceof Mesh)) return;
       for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
@@ -369,46 +349,6 @@ async function download(source: BuildingSource, signal: AbortSignal): Promise<Ar
     if (hex !== source.sha256.toLowerCase()) throw new Error('Model is not the approved file (hash differs)');
   }
   return buffer;
-}
-
-/** The GLB's own description of itself: refused before parsing if it needs a decoder. */
-function readGlbJson(buffer: ArrayBuffer): { extensionsUsed?: string[]; extensionsRequired?: string[] } {
-  const view = new DataView(buffer);
-  // "glTF", version 2, then the first chunk (JSON) length and type.
-  if (buffer.byteLength < 20 || view.getUint32(0, true) !== 0x46546c67 || view.getUint32(4, true) !== 2 || view.getUint32(16, true) !== 0x4e4f534a) {
-    throw new Error('Not a glTF 2.0 binary (.glb)');
-  }
-  const length = view.getUint32(12, true);
-  return JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, 20, Math.min(length, buffer.byteLength - 20))));
-}
-
-async function parse(buffer: ArrayBuffer): Promise<Group> {
-  const json = readGlbJson(buffer);
-  const needs = [...(json.extensionsUsed ?? []), ...(json.extensionsRequired ?? [])].filter((name) => REFUSED_EXTENSIONS.includes(name));
-  if (needs.length) throw new Error(`Uses ${needs[0]}, which buildings may not`);
-  const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
-  const gltf = await new GLTFLoader().parseAsync(buffer, '');
-  return gltf.scene;
-}
-
-/** Over the triangle or texture limit: refused, after parsing, before it is shown. */
-function checkWeight(object: Object3D): void {
-  let triangles = 0;
-  let largest = 0;
-  object.traverse((child) => {
-    if (!(child instanceof Mesh)) return;
-    const geometry = child.geometry;
-    triangles += (geometry.index ? geometry.index.count : (geometry.getAttribute('position')?.count ?? 0)) / 3;
-    for (const material of Array.isArray(child.material) ? child.material : [child.material]) {
-      for (const value of Object.values(material)) {
-        if (!(value instanceof Texture)) continue;
-        const image = value.image as { width?: number; height?: number } | undefined;
-        largest = Math.max(largest, image?.width ?? 0, image?.height ?? 0);
-      }
-    }
-  });
-  if (triangles > BUILDING_LIMITS.triangles) throw new Error(`${Math.round(triangles)} triangles, over ${BUILDING_LIMITS.triangles}`);
-  if (largest > BUILDING_LIMITS.texture) throw new Error(`A ${largest} px texture, over ${BUILDING_LIMITS.texture} px`);
 }
 
 /** Let go of a model's geometry, materials and textures; `keep` is shared, and stays. */

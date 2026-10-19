@@ -1,9 +1,10 @@
 /**
  * D1 access for the Avatar Wallet. Only references live here: which provider
- * accounts a user connected, the avatars they collected, and which one is selected.
+ * accounts a user connected, the avatars they collected, which one is
+ * selected, and the buildings they saved.
  */
-import { seal } from './crypto';
-import type { AvatarProviderId, AvatarRow, ConnectionRow, NewConnection, ProviderAvatar } from './types';
+import { randomToken, seal } from './crypto';
+import type { AvatarProviderId, AvatarRow, BuildingRow, ConnectionRow, NewConnection, ProviderAvatar, ProviderBuilding } from './types';
 
 export function connectionsOf(db: D1Database, userId: string) {
   return db
@@ -60,9 +61,12 @@ export async function saveConnection(
       )
       .bind(id, userId, provider, account.providerAccountId, account.displayName, account.serviceEndpoint ?? null, tokenEnc, now),
   ];
-  // Reconnected as a different account: the old account's avatars no longer apply.
+  // Reconnected as a different account: the old account's avatars and buildings no longer apply.
   if (existing && existing.provider_account_id !== account.providerAccountId) {
-    statements.unshift(db.prepare('delete from avatar where connection_id = ?1').bind(id));
+    statements.unshift(
+      db.prepare('delete from avatar where connection_id = ?1').bind(id),
+      db.prepare('delete from building where connection_id = ?1').bind(id),
+    );
   }
   await db.batch(statements);
   return id;
@@ -91,7 +95,7 @@ export function markReconnect(db: D1Database, connectionId: string) {
 }
 
 export function deleteConnection(db: D1Database, userId: string, id: string) {
-  // avatar rows cascade.
+  // avatar and building rows cascade.
   return db.prepare('delete from avatar_connection where id = ?1 and user_id = ?2').bind(id, userId).run();
 }
 
@@ -178,4 +182,72 @@ export function renameAvatar(db: D1Database, userId: string, connectionId: strin
 /** "Continue without character": the collection stays. */
 export function clearSelection(db: D1Database, userId: string) {
   return db.prepare('update avatar set selected = 0 where user_id = ?1 and selected = 1').bind(userId).run();
+}
+
+// ── My buildings ─────────────────────────────────────────────────────────────
+
+/** The user's saved buildings, oldest first, with whether their platform is still connected. */
+export function buildingsOf(db: D1Database, userId: string) {
+  return db
+    .prepare(
+      `select b.*, c.status as connection_status from building b
+       join avatar_connection c on c.id = b.connection_id
+       where b.user_id = ?1 order by b.created_at`,
+    )
+    .bind(userId)
+    .all<BuildingRow & { connection_status: ConnectionRow['status'] }>()
+    .then((r) => r.results);
+}
+
+export async function buildingCount(db: D1Database, userId: string): Promise<number> {
+  const row = await db.prepare('select count(*) as n from building where user_id = ?1').bind(userId).first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
+export function isBuildingSaved(db: D1Database, connectionId: string, externalId: string) {
+  return db
+    .prepare('select 1 as found from building where connection_id = ?1 and external_id = ?2')
+    .bind(connectionId, externalId)
+    .first<{ found: number }>()
+    .then((row) => !!row);
+}
+
+/** Saves `model` to the user's buildings, or refreshes its details if it is already there. Its id stays. */
+export function saveBuilding(db: D1Database, userId: string, connection: ConnectionRow, model: ProviderBuilding) {
+  const now = Date.now();
+  return db
+    .prepare(
+      `insert into building
+         (id, user_id, connection_id, provider, external_id, display_name, thumbnail_url, metadata_json, created_at, updated_at)
+       values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)
+       on conflict (connection_id, external_id) do update set
+         display_name = excluded.display_name,
+         thumbnail_url = excluded.thumbnail_url,
+         metadata_json = excluded.metadata_json,
+         updated_at = excluded.updated_at`,
+    )
+    .bind(
+      `bld_${randomToken(12)}`,
+      userId,
+      connection.id,
+      connection.provider,
+      model.id,
+      model.name,
+      model.thumbnail,
+      JSON.stringify({ bytes: model.bytes, sourceUrl: model.sourceUrl }),
+      now,
+    )
+    .run();
+}
+
+/** Names a saved building for this user only; null goes back to the platform's name. */
+export function renameBuilding(db: D1Database, userId: string, id: string, name: string | null) {
+  return db
+    .prepare('update building set custom_name = ?3, updated_at = ?4 where user_id = ?1 and id = ?2')
+    .bind(userId, id, name, Date.now())
+    .run();
+}
+
+export function removeBuilding(db: D1Database, userId: string, id: string) {
+  return db.prepare('delete from building where user_id = ?1 and id = ?2').bind(userId, id).run();
 }

@@ -16,11 +16,21 @@
  * Uploading: a fresh authorization just for the upload (the stored tokens
  * are left alone). Its access token goes to the user's browser, which posts
  * the GLB straight to /v3/models as a draft; then both tokens are revoked.
+ *
+ * The same models can be saved to "My buildings" (docs/specs/buildings.md):
+ * any of the user's own models with a GLB can stand as a building.
  */
 import type { Env } from '../auth';
 import { pkceChallenge, randomToken } from './crypto';
 import { dig, jsonObject, parseMetadata, providerFetch } from './net';
-import { AvatarError, type AvatarProvider, type ConnectionRow, type ProviderAvatar, type ProviderContext } from './types';
+import {
+  AvatarError,
+  type AvatarProvider,
+  type ConnectionRow,
+  type ProviderAvatar,
+  type ProviderBuilding,
+  type ProviderContext,
+} from './types';
 
 export const SKETCHFAB = 'https://sketchfab.com';
 export const SKETCHFAB_API = 'https://api.sketchfab.com';
@@ -60,7 +70,7 @@ export const sketchfabProvider: AvatarProvider = {
     }).toString();
     return {
       url: url.toString(),
-      flow: { provider: 'sketchfab', userId, state, verifier, expiresAt: Date.now() + 10 * 60_000, ...(upload ? { extra: { upload: true } } : {}) },
+      flow: { provider: 'sketchfab', userId, state, verifier, expiresAt: Date.now() + 10 * 60_000, ...(upload ? { extra: { upload } } : {}) },
     };
   },
 
@@ -85,6 +95,7 @@ export const sketchfabProvider: AvatarProvider = {
         credentials: null,
         uploadGrant: {
           provider: 'sketchfab',
+          kind: flow.extra.upload === 'building' ? 'building' : 'avatar',
           service: SKETCHFAB_API,
           account: me.uid,
           accessToken: tokens.access,
@@ -110,28 +121,12 @@ export const sketchfabProvider: AvatarProvider = {
   },
 
   async listAvatars(ctx, connection) {
-    const token = await accessToken(ctx, connection);
-    const avatars: ProviderAvatar[] = [];
-    let path: string | null = '/v3/me/models?count=24&sort_by=-createdAt';
-    for (let page = 0; path && page < MAX_PAGES; page++) {
-      const body = await api(ctx, token, path);
-      const models = Array.isArray(body.results) ? (body.results as Json[]) : [];
-      for (const model of models) {
-        const avatar = toAvatar(model);
-        if (avatar) avatars.push(avatar);
-      }
-      path = nextPage(body.next);
-    }
-    return avatars;
+    return (await ownModels(ctx, connection)).map(toAvatar).filter((a): a is ProviderAvatar => !!a);
   },
 
   async getAvatar(ctx, connection, avatarId) {
-    if (!UID.test(avatarId)) return null;
-    const token = await accessToken(ctx, connection);
-    const model = await api(ctx, token, `/v3/models/${avatarId}`, { allowNotFound: true });
-    // Only the user's own models: those are the ones whose license the user can speak for.
-    if (dig(model, 'user', 'uid') !== connection.provider_account_id) return null;
-    return toAvatar(model);
+    const model = await ownModel(ctx, connection, avatarId);
+    return model && toAvatar(model);
   },
 
   async resolveAvatar(ctx, connection, avatar) {
@@ -173,7 +168,42 @@ export const sketchfabProvider: AvatarProvider = {
     await ctx.saveCredentials(connection, next);
     return next;
   },
+
+  buildingLabel: 'Sketchfab',
+
+  async listBuildings(ctx, connection) {
+    return (await ownModels(ctx, connection)).map(toBuilding).filter((b): b is ProviderBuilding => !!b);
+  },
+
+  async getBuilding(ctx, connection, id) {
+    const model = await ownModel(ctx, connection, id);
+    return model && toBuilding(model);
+  },
 };
+
+/** The user's models, newest first, a few pages of them. */
+async function ownModels(ctx: ProviderContext, connection: ConnectionRow): Promise<Json[]> {
+  const token = await accessToken(ctx, connection);
+  const models: Json[] = [];
+  let path: string | null = '/v3/me/models?count=24&sort_by=-createdAt';
+  for (let page = 0; path && page < MAX_PAGES; page++) {
+    const body = await api(ctx, token, path);
+    if (Array.isArray(body.results)) models.push(...(body.results as Json[]));
+    path = nextPage(body.next);
+  }
+  return models;
+}
+
+/**
+ * One model, only if it is the user's own: those are the ones whose license
+ * the user can speak for.
+ */
+async function ownModel(ctx: ProviderContext, connection: ConnectionRow, uid: string): Promise<Json | null> {
+  if (!UID.test(uid)) return null;
+  const token = await accessToken(ctx, connection);
+  const model = await api(ctx, token, `/v3/models/${uid}`, { allowNotFound: true });
+  return dig(model, 'user', 'uid') === connection.provider_account_id ? model : null;
+}
 
 /** Not in Sketchfab's docs, but their OAuth server answers the standard revocation endpoint. */
 function revokeToken(ctx: ProviderContext, token: string) {
@@ -239,27 +269,43 @@ function nextPage(next: unknown): string | null {
   }
 }
 
-function toAvatar(model: Json): ProviderAvatar | null {
+/** What a model offers as a GLB, or null where worlds and the hub cannot load it. */
+function glbModel(model: Json): { uid: string; name: string | null; viewerUrl: string | null; bytes: number | null } | null {
   if (typeof model.uid !== 'string' || !UID.test(model.uid)) return null;
   // Models still processing, or whose GLB archive is missing, cannot be shown.
   const status = dig(model, 'status', 'processing');
   if (typeof status === 'string' && status !== 'SUCCEEDED') return null;
   const archives = model.archives;
   if (archives && typeof archives === 'object' && !dig(archives, 'glb')) return null;
-  const viewerUrl = typeof model.viewerUrl === 'string' && model.viewerUrl.startsWith(`${SKETCHFAB}/`) ? model.viewerUrl : null;
   const size = dig(archives, 'glb', 'size');
   return {
-    id: model.uid,
+    uid: model.uid,
     name: typeof model.name === 'string' && model.name ? model.name : null,
+    viewerUrl: typeof model.viewerUrl === 'string' && model.viewerUrl.startsWith(`${SKETCHFAB}/`) ? model.viewerUrl : null,
+    bytes: typeof size === 'number' ? size : null,
+  };
+}
+
+function toAvatar(model: Json): ProviderAvatar | null {
+  const glb = glbModel(model);
+  if (!glb) return null;
+  return {
+    id: glb.uid,
+    name: glb.name,
     thumbnail: thumbnail(model),
     format: 'glb',
     metadata: {
-      viewerUrl,
+      viewerUrl: glb.viewerUrl,
       animationCount: typeof model.animationCount === 'number' ? model.animationCount : null,
-      glbBytes: typeof size === 'number' ? size : null,
+      glbBytes: glb.bytes,
       private: model.isPrivate === true,
     },
   };
+}
+
+function toBuilding(model: Json): ProviderBuilding | null {
+  const glb = glbModel(model);
+  return glb && { id: glb.uid, name: glb.name, thumbnail: thumbnail(model), bytes: glb.bytes, sourceUrl: glb.viewerUrl };
 }
 
 /** The smallest https thumbnail at least 256 px wide, else the largest one. */

@@ -551,7 +551,8 @@ async function upload(connection: WalletConnection): Promise<void> {
     const info = await inspectModel(file);
     const name = uploadName.trim() || 'My character';
     const grant = await api<UploadGrant>('/upload/grant', {});
-    if (grant.provider !== connection.provider) throw new Error('Start the upload again.');
+    // An auth Worker deployed before buildings answers without a kind.
+    if (grant.provider !== connection.provider || (grant.kind ?? 'avatar') !== 'avatar') throw new Error('Start the upload again.');
     let id: string;
     try {
       id = grant.provider === 'sketchfab' ? await uploadToSketchfab(grant, file, name) : await uploadToAt3d(grant, file, name, info);

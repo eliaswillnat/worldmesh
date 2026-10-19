@@ -78,6 +78,14 @@ uploads use `app.at3d.avatar#gltfAppearance`, VRM uploads `#vrmAppearance`.
 4. Sketchfab processes the model for a few minutes; it then appears in the
    Sketchfab listing, where it can be saved like any other.
 
+## My buildings
+
+The same connections hold buildings for the hub city: Sketchfab models and
+`net.worldmesh.building` records in the user's AT Protocol repository, saved
+to **My buildings** the way characters are saved to My characters, as
+pointers only. Uploading one uses this page's upload grant with
+`{ upload: 'building' }`. See [specs/buildings.md](specs/buildings.md) §4.
+
 ## Providers
 
 | | Sketchfab | VRoid Hub | at3d (AT Protocol) |

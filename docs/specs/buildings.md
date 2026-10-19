@@ -1,7 +1,8 @@
 # Buildings: a world's own front in the hub city
 
-**Status:** Draft 0.2, October 2026. Step 1 (§9) is built: demo buildings
-stand on the city's first lots with `?buildings=demo`.
+**Status:** Draft 0.3, October 2026. Steps 1 and 2 (§9) are built: demo
+buildings stand on the city's first lots with `?buildings=demo`, and
+accounts have My buildings.
 **Owner:** Elias Willnat.
 **Builds on:** [avatar-wallet.md](../avatar-wallet.md) (where models live and
 how they load), [doorway.md](doorway.md) (what a door can show and how
@@ -171,17 +172,23 @@ for characters doesn't connect again.
 
 The AT Protocol record type is **our own** (`net.worldmesh.building`, under
 the worldmesh.net domain), not an `app.at3d.*` one: at3d's namespace belongs
-to at3d, and `app.at3d.avatar` means a character. Its shape:
+to at3d, and `app.at3d.avatar` means a character. Its lexicon is
+[docs/lexicons/net.worldmesh.building.json](../lexicons/net.worldmesh.building.json).
+The hub writes the name, the model and when; a thumbnail and a source link are
+optional:
 
 ```json
 {
   "$type": "net.worldmesh.building",
   "name": "The Forest Gate",
   "model": { "$type": "blob", "ref": { "$link": "bafkrei…" }, "mimeType": "model/gltf-binary", "size": 4182016 },
-  "sourceUrl": "https://sketchfab.com/3d-models/…",
   "createdAt": "2026-10-19T12:00:00.000Z"
 }
 ```
+
+Only records whose model is a `model/gltf-binary` blob are offered. The
+AT Protocol client's metadata asks for both upload scopes, characters' and
+buildings', and each upload asks for only the one it needs.
 
 Only the user's **own** models can be picked, as with characters: the
 licence question is theirs to answer.
@@ -193,28 +200,35 @@ building too big for the user's PDS goes to Sketchfab instead.
 
 ### 4.2 My buildings
 
-Next to **My characters**, the account gets **My buildings**: up to 20 saved
-buildings, each a pointer. A new table, shaped like `avatar`:
+Next to **My characters**, the account dialog has **My buildings**
+(`apps/hub/src/myBuildings.ts`): up to 20 saved buildings, each a pointer,
+in the `building` table (`db/migrations/0008_buildings.sql`). Each gets an
+id, `bld_` and 16 random characters, which only its owner sees; it is what a
+world's manifest will name (§5).
 
-```sql
-create table building (
-  id text primary key,                -- 'bld_' + random, shown to the owner only
-  user_id text not null references "user" (id) on delete cascade,
-  connection_id text not null references avatar_connection (id) on delete cascade,
-  provider text not null,             -- 'sketchfab' | 'atproto'
-  external_id text not null,          -- Sketchfab uid, or the at:// URI of the record
-  display_name text,
-  thumbnail_url text,                 -- provider-hosted, for the UI only
-  metadata_json text,                 -- size, triangle count, portal face found, …
-  created_at integer not null,
-  updated_at integer not null,
-  unique (connection_id, external_id)
-);
-```
+Endpoints, under `/api/account/building` in `workers/auth`
+(`src/avatars/buildings.ts`), same-origin and signed in:
 
-Endpoints, under `/api/account/building/` in `workers/auth`, mirroring the
-avatar ones: `POST /collect`, `POST /rename`, `POST /remove`, `GET /list`.
-Disconnecting a provider removes its saved buildings and their links.
+| | |
+| --- | --- |
+| `GET /list` | The platforms that hold buildings, their connections, and the saved buildings |
+| `GET /connections/:id/models` | The account's models, live from the platform, with each GLB's size |
+| `POST /collect` `{ connectionId, modelId }` | Saves one, checked with the platform: only the account's own models |
+| `POST /rename` `{ buildingId, name }` | Names it here; `null` goes back to the platform's name |
+| `POST /remove` `{ buildingId }` | |
+
+Connecting a platform, and the permission to upload, go through the Avatar
+Wallet's endpoints: `POST /api/account/avatar/connect/:provider` with
+`{ upload: 'building' }` asks for a grant that can only upload a building, and
+the platform sends the browser back to `/?avatar=upload&provider=…&kind=building`.
+VRoid Hub holds characters only. Disconnecting a platform, or connecting it
+again as another account, removes its saved buildings.
+
+**Before uploading, the file is checked in the browser** the way the city
+checks it before showing it (`walk/buildingModel.ts`, `inspectBuilding`): the
+size, compression, triangles and textures, then the portal face, fitted to a
+block. Its maker sees straight away why a file won't stand, or the door it
+will have ("Its portal face makes a 5.7 × 10.1 m door on a block").
 
 ## 5. Linking a building to a world
 
@@ -437,9 +451,9 @@ metallic materials get a soft studio environment of their own
    `node apps/hub/scripts/demo-buildings.mjs`, which writes the GLBs to
    `apps/hub/public/buildings/` and their hashes to
    `apps/hub/src/walk/demoBuildings.json`.
-2. **My buildings.** The `building` table and endpoints, listing from
-   Sketchfab and AT Protocol, uploading (reusing both upload paths), the UI
-   next to My characters.
+2. **My buildings.** *Built.* The `building` table and endpoints, listing
+   from Sketchfab and AT Protocol, uploading (reusing both upload paths) with
+   the file checked first, the UI next to My characters (§4.2).
 3. **Links and review.** `building_link`, the manifest check, the admin
    review page with the viewer and the hash, `/resolve`, the `building`
    flag in `/api/worlds`.
@@ -465,8 +479,11 @@ metallic materials get a soft studio environment of their own
 - **Compression.** Draco or meshopt would let buildings be much smaller.
   Both need decoder files served from somewhere; worth it once buildings
   hit the 10 MB limit in practice.
-- **Lexicon.** `net.worldmesh.building` should be published (a lexicon
-  file and DNS for `net.worldmesh`) before AT Protocol uploads ship.
+- **Publishing the lexicon.** The file is in
+  [docs/lexicons](../lexicons/net.worldmesh.building.json), and servers accept
+  the records without it. Publishing it for others to resolve takes a
+  `_lexicon.worldmesh.net` DNS record naming a DID, and the schema as a
+  `com.atproto.lexicon.schema` record in that DID's repository.
 - **Fab.com and other stores.** No public download API is known that would
   let a visitor's browser fetch a creator's own model. Sketchfab and AT
   Protocol cover it for now.

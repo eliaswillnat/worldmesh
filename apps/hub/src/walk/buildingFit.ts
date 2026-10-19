@@ -1,4 +1,4 @@
-import { Box3, Matrix4, Mesh, Vector3, type BufferAttribute, type Material, type Object3D } from 'three';
+import { Box3, Group, Matrix4, Mesh, Vector3, type BufferAttribute, type Material, type Object3D } from 'three';
 
 /**
  * A building's portal face, and how the building fits its lot
@@ -172,4 +172,46 @@ export function portalTooSmall(face: PortalFace, scale: number): string | null {
   const height = face.height * scale;
   if (width >= MIN_PORTAL_WIDTH && height >= MIN_PORTAL_HEIGHT) return null;
   return `The portal face comes out ${width.toFixed(1)} m × ${height.toFixed(1)} m in its lot; it needs at least ${MIN_PORTAL_WIDTH} m × ${MIN_PORTAL_HEIGHT} m.`;
+}
+
+/** A model worked out for its lot (§6): how to turn and fit it, and the doorway it makes. */
+export interface BuildingPlan {
+  /** Why it can't stand there, or null. */
+  problem: string | null;
+  /** Turns the model so its door faces +Z. */
+  turn: Matrix4;
+  /** The turned model's box. */
+  bounds: Box3;
+  fit: Fit;
+  /** The doorway its portal face makes, in metres, or null for the standard door at its front. */
+  door: { width: number; height: number } | null;
+  /** The meshes the door takes the place of. */
+  portalMeshes: Mesh[];
+}
+
+/** Find the portal face, turn the model to it and fit it to `lot`, its door `out` metres in front of the wall line. */
+export function planBuilding(model: Object3D, lot: Lot, out: number): BuildingPlan {
+  const search = findPortalFace(model);
+  const yaw = search.face ? portalYaw(search.face) : 0;
+  const turn = new Matrix4().makeRotationY(yaw);
+  const turned = new Group();
+  turned.rotation.y = yaw;
+  const parent = model.parent;
+  turned.add(model);
+  const bounds = new Box3().setFromObject(turned, true);
+  turned.remove(model);
+  parent?.add(model);
+  const anchor = search.face
+    ? search.face.center.clone().setY(search.face.center.y - search.face.height / 2).applyMatrix4(turn)
+    : new Vector3((bounds.min.x + bounds.max.x) / 2, bounds.min.y, bounds.max.z);
+  const fit = fitToLot(bounds, anchor, lot, out);
+  const small = search.face && portalTooSmall(search.face, fit.scale);
+  return {
+    problem: search.problem ?? small ?? null,
+    turn,
+    bounds,
+    fit,
+    door: search.face ? { width: search.face.width * fit.scale, height: search.face.height * fit.scale } : null,
+    portalMeshes: search.meshes,
+  };
 }
