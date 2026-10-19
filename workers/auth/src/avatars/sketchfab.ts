@@ -130,18 +130,9 @@ export const sketchfabProvider: AvatarProvider = {
   },
 
   async resolveAvatar(ctx, connection, avatar) {
-    const token = await accessToken(ctx, connection);
-    const download = await api(ctx, token, `/v3/models/${avatar.external_avatar_id}/download`);
-    const raw = dig(download, 'glb', 'url');
-    let modelUrl: URL | null = null;
-    try {
-      modelUrl = typeof raw === 'string' ? new URL(raw) : null;
-    } catch {
-      modelUrl = null;
-    }
+    const glb = await glbDownload(ctx, connection, avatar.external_avatar_id);
     // The glTF archive is a zip, which worlds cannot load; only GLB will do.
-    if (!modelUrl || modelUrl.protocol !== 'https:') throw new AvatarError('Sketchfab did not provide this model as GLB.', 502);
-    const expires = dig(download, 'glb', 'expires');
+    if (!glb) throw new AvatarError('Sketchfab did not provide this model as GLB.', 502);
     const metadata = parseMetadata(avatar.metadata_json);
     return {
       provider: 'sketchfab',
@@ -149,8 +140,8 @@ export const sketchfabProvider: AvatarProvider = {
       name: avatar.display_name,
       thumbnail: avatar.thumbnail_url,
       format: 'glb',
-      modelUrl: modelUrl.toString(),
-      expiresAt: typeof expires === 'number' && expires > 0 ? new Date(Date.now() + expires * 1000).toISOString() : null,
+      modelUrl: glb.url,
+      expiresAt: glb.expiresAt ? new Date(glb.expiresAt).toISOString() : null,
       sourceUrl: typeof metadata.viewerUrl === 'string' ? metadata.viewerUrl : null,
     };
   },
@@ -179,7 +170,42 @@ export const sketchfabProvider: AvatarProvider = {
     const model = await ownModel(ctx, connection, id);
     return model && toBuilding(model);
   },
+
+  async resolveBuilding(ctx, connection, building) {
+    if (!UID.test(building.external_id)) return null;
+    const glb = await glbDownload(ctx, connection, building.external_id, { allowNotFound: true });
+    return glb && { modelUrl: glb.url, expiresAt: glb.expiresAt, version: glb.size === null ? null : `size:${glb.size}` };
+  },
 };
+
+/**
+ * The GLB Sketchfab offers for a model now: a presigned URL on its storage,
+ * good for a few minutes, or null where there is no GLB (or no model).
+ */
+async function glbDownload(
+  ctx: ProviderContext,
+  connection: ConnectionRow,
+  uid: string,
+  options: { allowNotFound?: boolean } = {},
+): Promise<{ url: string; expiresAt: number | null; size: number | null } | null> {
+  const token = await accessToken(ctx, connection);
+  const download = await api(ctx, token, `/v3/models/${uid}/download`, options);
+  const raw = dig(download, 'glb', 'url');
+  let url: URL | null = null;
+  try {
+    url = typeof raw === 'string' ? new URL(raw) : null;
+  } catch {
+    url = null;
+  }
+  if (!url || url.protocol !== 'https:') return null;
+  const expires = dig(download, 'glb', 'expires');
+  const size = dig(download, 'glb', 'size');
+  return {
+    url: url.toString(),
+    expiresAt: typeof expires === 'number' && expires > 0 ? Date.now() + expires * 1000 : null,
+    size: typeof size === 'number' && size >= 0 ? size : null,
+  };
+}
 
 /** The user's models, newest first, a few pages of them. */
 async function ownModels(ctx: ProviderContext, connection: ConnectionRow): Promise<Json[]> {

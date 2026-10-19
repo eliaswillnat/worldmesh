@@ -416,6 +416,41 @@ export async function avatars(env: Env) {
   return { connections: connections.map((row) => ({ ...row, n: Number(row.n) })), total, selected };
 }
 
+// ── Buildings on worlds (docs/specs/buildings.md §5) ───────────────────────
+
+export interface BuildingLinkRow {
+  world_url: string;
+  status: 'pending' | 'approved' | 'rejected' | 'hidden';
+  reason: string | null;
+  created_at: number;
+  updated_at: number;
+  reviewed_at: number | null;
+  reviewed_by: string | null;
+  building_id: string;
+  building_name: string | null;
+  provider: string;
+  thumbnail_url: string | null;
+  owner: string | null;
+}
+
+/** Every world's building, waiting ones first. Reviewing happens on the hub (review-building.html). */
+export async function buildingLinks(env: Env): Promise<BuildingLinkRow[]> {
+  return all<BuildingLinkRow>(
+    env,
+    `select l.world_url, l.status, l.reason, l.created_at, l.updated_at, l.reviewed_at, l.reviewed_by,
+       b.id as building_id, coalesce(b.custom_name, b.display_name) as building_name, b.provider, b.thumbnail_url,
+       coalesce(u.username, u.email) as owner
+     from building_link l join building b on b.id = l.building_id left join "user" u on u.id = b.user_id
+     order by case l.status when 'pending' then 0 when 'approved' then 1 else 2 end, l.updated_at desc
+     limit 500`,
+  );
+}
+
+/** The hub page where a building is checked, shown on its block and approved. */
+export function buildingReviewLink(env: Env, worldUrl: string): string {
+  return `${hubOrigin(env)}/review-building?world=${encodeURIComponent(worldUrl)}`;
+}
+
 // ── Cloudflare analytics (optional: needs an API token) ────────────────────
 
 export interface TrafficDay {

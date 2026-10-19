@@ -165,7 +165,11 @@ beforeEach(async () => {
     NOW: () => clock,
     FETCH: fakeFetch,
   };
-  await database.db.batch(['ap_follower', 'ap_actor', 'ad_submission', 'avatar', 'avatar_connection', '"session"', 'account', '"user"'].map((t) => database.db.prepare(`delete from ${t}`)));
+  await database.db.batch(
+    ['ap_follower', 'ap_actor', 'ad_submission', 'building_link', 'building', 'avatar', 'avatar_connection', '"session"', 'account', '"user"'].map((t) =>
+      database.db.prepare(`delete from ${t}`),
+    ),
+  );
   for (const kv of [env.WORLDS!, env.VIEWS!]) {
     const list = await kv.list();
     await Promise.all(list.keys.map((key) => kv.delete(key.name)));
@@ -330,6 +334,42 @@ describe('what an admin sees', () => {
     // plain + admin: no wallet → Default (column replaced Avatars count)
     expect(html).not.toMatch(/>Avatars</);
     expect(html).toMatch(/Character/);
+  });
+
+  it("lists worlds' buildings, waiting ones first with a link to review them on the hub", async () => {
+    await addUser('maker', 'maker@example.com', { username: 'maker' });
+    await addAvatarConnection('c_maker', 'maker', 'atproto');
+    const insertBuilding = (id: string, name: string) =>
+      env.DB.prepare(
+        `insert into building (id, user_id, connection_id, provider, external_id, display_name, created_at, updated_at)
+         values (?1, 'maker', 'c_maker', 'atproto', ?2, ?3, ?4, ?4)`,
+      )
+        .bind(id, `at://did:plc:maker/net.worldmesh.building/${id}`, name, clock)
+        .run();
+    await insertBuilding('bld_gate000000000000', 'Forest Gate');
+    await insertBuilding('bld_tower00000000000', 'Neon Tower');
+    const insertLink = (world: string, building: string, status: string, reason: string | null = null) =>
+      env.DB.prepare(
+        `insert into building_link (world_url, building_id, status, reason, checked_at, created_at, updated_at) values (?1, ?2, ?3, ?4, ?5, ?5, ?5)`,
+      )
+        .bind(world, building, status, reason, clock - DAY)
+        .run();
+    await insertLink('https://forest.example.org', 'bld_gate000000000000', 'approved');
+    await insertLink('https://neon.example.org', 'bld_tower00000000000', 'pending');
+    await insertLink('https://old.example.org', 'bld_tower00000000000', 'rejected', 'The door is behind a wall.');
+
+    const html = await page('/buildings', cookie);
+    expect(html.indexOf('https://neon.example.org')).toBeLessThan(html.indexOf('https://forest.example.org'));
+    expect(html).toContain(`${HUB}/review-building?world=${encodeURIComponent('https://neon.example.org')}`);
+    expect(html).toContain('Neon Tower');
+    expect(html).toContain('in the city');
+    expect(html).toContain('The door is behind a wall.');
+    expect(html).toContain('maker');
+    // Read-only: no forms to decide with here.
+    expect(html).not.toMatch(/<form[^>]*action="\/buildings/);
+
+    const overviewHtml = await page('/', cookie);
+    expect(overviewHtml).toContain('Building waiting: <strong>Neon Tower</strong>');
   });
 
   it('edits a waiting world, approves it through the hub, and rejects another', async () => {

@@ -18,6 +18,9 @@ workers_dev = false
 BETTER_AUTH_URL = "https://worldmesh.net"
 # The domain in public handles: @username@worldmesh.net
 FEDERATION_DOMAIN = "worldmesh.net"
+# Accounts that review buildings for the city (docs/specs/buildings.md §5.2):
+# verified emails, comma-separated. Keep in step with workers/admin's list.
+ADMIN_EMAILS = "elias.willnat@gmail.com"
 
 [[d1_databases]]
 binding = "DB"
@@ -77,6 +80,7 @@ workers_dev = false
 [env.preview.vars]
 BETTER_AUTH_URL = "https://preview.worldmesh.net"
 FEDERATION_DOMAIN = "preview.worldmesh.net"
+ADMIN_EMAILS = "elias.willnat@gmail.com"
 
 [[env.preview.d1_databases]]
 binding = "DB"

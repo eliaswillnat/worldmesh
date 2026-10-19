@@ -1,8 +1,9 @@
 # Buildings: a world's own front in the hub city
 
-**Status:** Draft 0.3, October 2026. Steps 1 and 2 (§9) are built: demo
-buildings stand on the city's first lots with `?buildings=demo`, and
-accounts have My buildings.
+**Status:** Draft 0.4, October 2026. Steps 1 to 3 (§9) are built: demo
+buildings stand on the city's first lots with `?buildings=demo`, accounts
+have My buildings, and a building linked to a world and approved stands in
+place of that world's block.
 **Owner:** Elias Willnat.
 **Builds on:** [avatar-wallet.md](../avatar-wallet.md) (where models live and
 how they load), [doorway.md](doorway.md) (what a door can show and how
@@ -32,6 +33,7 @@ creator                      hub (worldmesh.net)                          visito
       to Sketchfab or PDS     worldmesh.json names it       │
                               review: approve + pin hash ───┤
                                                             ▼
+                              /api/account/building/worlds  ──► which worlds, which hash
                               /api/account/building/resolve ──► modelUrl ──► GET from Sketchfab S3 / PDS
                                                                              fit to lot, portal face → Door
 ```
@@ -215,7 +217,11 @@ Endpoints, under `/api/account/building` in `workers/auth`
 | `GET /connections/:id/models` | The account's models, live from the platform, with each GLB's size |
 | `POST /collect` `{ connectionId, modelId }` | Saves one, checked with the platform: only the account's own models |
 | `POST /rename` `{ buildingId, name }` | Names it here; `null` goes back to the platform's name |
-| `POST /remove` `{ buildingId }` | |
+| `POST /remove` `{ buildingId }` | Its links go with it |
+| `POST /link` `{ buildingId, world }` | Puts it on a world whose manifest names it, for review (§5.1) |
+| `POST /unlink` `{ buildingId, world }` | |
+
+`GET /list` gives each saved building its `worlds`: `{ url, status, reason }`.
 
 Connecting a platform, and the permission to upload, go through the Avatar
 Wallet's endpoints: `POST /api/account/avatar/connect/:provider` with
@@ -236,8 +242,8 @@ will have ("Its portal face makes a 5.7 × 10.1 m door on a block").
 
 A building shows on a world's lot only when **both** say so:
 
-1. **The building's owner** picks it in My buildings, chooses *Use for a
-   world* and pastes the world's URL.
+1. **The building's owner** picks it in My buildings, chooses *Use* and
+   pastes the world's URL.
 2. **The world's site** names it, in its own manifest (`worldmesh.json`,
    [compatibility.md](../compatibility.md#the-manifest)):
 
@@ -249,26 +255,36 @@ A building shows on a world's lot only when **both** say so:
    }
    ```
 
-The hub shows the line to paste. `POST /link { buildingId, worldUrl }` reads
+The hub shows the line to paste. `POST /link { buildingId, world }` reads
 the manifest server-side (both `/.well-known/worldmesh.json` and
-`/worldmesh.json`, as the hub already does) and, if it names the building,
-records a pending link. This proves control of the world without WorldMesh
-having to know who owns which world, and it works for worlds hosted
-anywhere.
+`/worldmesh.json`, as the hub already does, through the same guarded fetch
+as the Avatar Wallet's: public https only, small and time-limited) and, if it
+names the building, records a pending link. This proves control of the world
+without WorldMesh having to know who owns which world, and it works for
+worlds hosted anywhere. The manifest belongs to the world's origin, so worlds
+sharing an origin (`?galaxy=…`) share the proof. A user's buildings stand on
+at most 20 worlds together.
 
-Removing the line from the manifest, or *Unlink* in My buildings, takes the
-building down. The manifest is re-checked daily.
+Removing the line from the manifest, or *Take off* in My buildings, takes the
+building down. The manifest is re-checked daily, without a cron: each look
+at the approved list (`GET /worlds`, §7.2) re-reads up to three manifests
+last read over a day ago, after answering. A manifest that names another
+building, or none, takes the building down; one that can't be read (the site
+is down) leaves it standing. Linking a building to a world that already has
+one replaces it, back in review: the manifest decides.
 
 ```sql
-create table building_link (
-  world_url text primary key,          -- canonical URL, as the directory keys it
+create table building_link (           -- db/migrations/0009_building_links.sql
+  world_url text primary key,          -- canonical URL, as the hub compares them
   building_id text not null references building (id) on delete cascade,
   status text not null check (status in ('pending', 'approved', 'rejected', 'hidden')),
   sha256 text,                         -- the approved file's hash (§5.3)
-  portal_json text,                    -- the portal face found at review (§6), for the admin view
+  version text,                        -- the platform's marker for that file (§5.3)
+  portal_json text,                    -- the portal face and fit the reviewer saw (§6)
   reason text,                         -- shown to the owner when rejected or hidden
-  checked_at integer,                  -- last manifest check
+  checked_at integer not null,         -- last manifest check
   reviewed_at integer,
+  reviewed_by text,
   created_at integer not null,
   updated_at integer not null
 );
@@ -281,25 +297,41 @@ reviewed on its own.
 ### 5.2 Review
 
 Worlds are already reviewed before they're listed; buildings are too, since
-they stand in a space everyone shares. Pending links appear in the admin
-dashboard (`workers/admin`) with the model in a viewer, fitted to its lot,
-the portal face highlighted, and the size and triangle count. *Approve*,
-*Reject* (with a reason the owner sees) and, later, *Hide*.
+they stand in a space everyone shares. The admin dashboard (`workers/admin`,
+*Buildings*) lists the links, waiting ones first. Reviewing happens on the
+hub, at `/review-building` (`apps/hub/src/review/buildingReview.ts`), since it
+needs a script and the dashboard's pages run none: the reviewer's browser
+downloads the model straight from its platform, checks it as the city does
+(§7.3), shows it standing on its block with the portal face in magenta, a
+1.8 m figure by the door and the block's room outlined, and lists its size,
+triangles, scale and door. *Approve*, *Reject* and *Hide*, the last two with
+a reason the owner sees in My buildings.
 
-Until a link is approved, the world keeps its default block.
+`workers/auth` answers the page's endpoints for verified emails in its
+`ADMIN_EMAILS` var only (the same accounts as the dashboard's):
+
+| | |
+| --- | --- |
+| `GET /review/queue` | Every link, waiting ones first |
+| `GET /review?world=` | The link, its building and owner, and where its file is now |
+| `POST /review` `{ world, buildingId, action, sha256, version, portal, reason }` | `approve`, `reject` or `hide`; refused if the world links another building by then |
+
+Until a link is approved, the world keeps its default block. A hidden link
+stays hidden: linking the same building again is refused.
 
 ### 5.3 Pinning the approved version
 
 A provider lets its user replace a file after it was approved. So approval
-pins the **exact file**: the admin's browser, which downloaded the model to
-show it, computes its SHA-256 and the approval stores that hash. The server
-never sees the file, only the hash.
+pins the **exact file**: the reviewer's browser, which downloaded the model
+to show it, computes its SHA-256 and the approval stores that hash. The
+server never sees the file, only the hash.
 
 Every visitor's browser hashes the file it downloads (SubtleCrypto, a few
-milliseconds for 10 MB) and **shows it only if the hash matches**. A
-replaced file falls back to the default block and puts the link back
-in review. For AT Protocol, a changed blob CID says the same thing before
-anything is downloaded.
+milliseconds for 10 MB) and **shows it only if the hash matches**, else the
+default block stays. The approval also stores what the platform said the
+file was (`version`): the blob's CID on AT Protocol, the GLB's size on
+Sketchfab. When resolving finds a different one, the building is taken back
+into review before anything is downloaded, and its owner sees why.
 
 ## 6. Fitting a building in
 
@@ -363,23 +395,31 @@ building with a short fade, and only while the visitor isn't standing in
 the doorway.
 
 Parsed buildings are kept in memory while loaded. Downloaded files are kept
-in the browser's Cache Storage under the building's hash, so a second visit
-costs no download; nothing is cached by WorldMesh. (Not built yet: step 1's
-demo files come from the hub itself, and the browser's ordinary cache keeps
-them. Sketchfab's links change every few minutes, so step 3 needs this.)
+in the browser's Cache Storage under the building's hash (24 at most, the
+oldest dropped first), so a second visit costs no download and no call to
+`/resolve`; a cached file is hashed again before it is used. Nothing is
+cached by WorldMesh.
 
 ### 7.2 Resolving
 
+`GET /api/account/building/worlds` (CORS, cookie-less) lists the worlds
+with an approved building and the hash each must have:
+`{ worlds: [{ url, sha256 }] }`. The hub reads it once as the city goes up
+(`walk/buildingDirectory.ts`) and lays out a lot only for those worlds'
+blocks, so it only resolves lots that have a building. (The spec first
+put a `building` flag in `GET /api/worlds`; that is a Pages Function on KV,
+which can't see the links in D1.)
+
 `POST /api/account/building/resolve { worlds: [url, …] }` (CORS,
 cookie-less, rate-limited, up to 16 URLs per call) answers, per approved
-link, `{ modelUrl, expiresAt, sha256 }`. For Sketchfab the Worker asks the
-download API with the owner's stored tokens and keeps the presigned URL
-until a minute before it expires, so visitors share it rather than each
-calling Sketchfab. That's a cached pointer; the model still goes straight
-from Sketchfab's storage to the visitor.
-
-`GET /api/worlds` gains a `building: true` flag on worlds with an approved
-link, so the hub only resolves lots that have one.
+link, `{ modelUrl, expiresAt, sha256 }`. The city asks it for the lots
+coming into reach that aren't in the browser's cache, nearest first, one
+call at a time. For Sketchfab the Worker asks the download API with the
+owner's stored tokens; for AT Protocol it reads the record again for its
+blob. Either answer is kept for up to five minutes (and never closer than a
+minute to the link expiring), so visitors share it rather than each calling
+the platform. That's a cached pointer; the model still goes straight from
+the platform's storage to the visitor.
 
 ### 7.3 Loading checks
 
@@ -454,9 +494,11 @@ metallic materials get a soft studio environment of their own
 2. **My buildings.** *Built.* The `building` table and endpoints, listing
    from Sketchfab and AT Protocol, uploading (reusing both upload paths) with
    the file checked first, the UI next to My characters (§4.2).
-3. **Links and review.** `building_link`, the manifest check, the admin
-   review page with the viewer and the hash, `/resolve`, the `building`
-   flag in `/api/worlds`.
+3. **Links and review.** *Built.* `building_link`, `/link` with the manifest
+   check and its daily re-check, the Buildings page in the admin dashboard
+   and the review page on the hub (viewer, checks, hash), `/worlds` and
+   `/resolve`, the city resolving and caching approved buildings, and
+   *Use* in My buildings.
 4. **Reports and hiding.**
 5. **Creator docs.** A page on worldmesh.net (next to `creators.html`) with
    the Blender steps, the limits and a downloadable example building.
@@ -484,6 +526,12 @@ metallic materials get a soft studio environment of their own
   the records without it. Publishing it for others to resolve takes a
   `_lexicon.worldmesh.net` DNS record naming a DID, and the schema as a
   `com.atproto.lexicon.schema` record in that DID's repository.
+- **Linking on the preview.** Preview worlds sit behind Cloudflare Access,
+  so the auth Worker reading their manifest gets Access's login page and
+  linking refuses them. Trying links on the preview needs a world hosted
+  elsewhere (any public https site with a `worldmesh.json`).
+- **Notifying reviewers.** A new link only shows on the dashboard's overview.
+  An email to the reviewers may be worth it once links come in regularly.
 - **Fab.com and other stores.** No public download API is known that would
   let a visitor's browser fetch a creator's own model. Sketchfab and AT
   Protocol cover it for now.

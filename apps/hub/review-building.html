@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Building review — WorldMesh</title>
+    <meta name="robots" content="noindex, nofollow" />
+    <link rel="icon" href="/favicon.webp" type="image/webp" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      /* Reviewing a world's building (docs/specs/buildings.md §5.2): reviewers only; the API refuses everyone else. */
+      :root {
+        color-scheme: light dark;
+        --bg: #0b0b0d; --panel: #16161a; --line: #2a2a30; --text: #e8e8ea; --muted: #9a9aa2; --good: #6fd39a; --bad: #ff8f80; --warn: #f2c46b;
+      }
+      @media (prefers-color-scheme: light) {
+        :root { --bg: #f6f6f7; --panel: #fff; --line: #e2e2e6; --text: #18181b; --muted: #6b6b73; --good: #1f8a50; --bad: #c43d2c; --warn: #9a6a00; }
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--bg); color: var(--text); font-family: "Urbanist", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+      header { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; padding: 16px 20px; border-bottom: 1px solid var(--line); }
+      header h1 { margin: 0; font-size: 18px; font-weight: 700; }
+      header a { color: var(--muted); font-size: 13px; }
+      main { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; padding: 16px 20px 40px; max-width: 1400px; margin: 0 auto; }
+      @media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr); } }
+      .viewer { position: relative; min-height: 420px; height: calc(100vh - 120px); max-height: 820px; border-radius: 14px; overflow: hidden; background: var(--panel); border: 1px solid var(--line); }
+      @media (max-width: 900px) { .viewer { height: 60vh; } }
+      .viewer canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+      .viewer .overlay { position: absolute; inset: auto 12px 12px 12px; font-size: 12px; color: var(--muted); pointer-events: none; }
+      aside { display: flex; flex-direction: column; gap: 12px; }
+      section { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
+      h2 { margin: 0; font-size: 14px; font-weight: 700; }
+      dl { margin: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px; font-size: 13px; }
+      dt { color: var(--muted); }
+      dd { margin: 0; overflow-wrap: anywhere; }
+      a { color: inherit; }
+      code { font-size: 12px; overflow-wrap: anywhere; }
+      p { margin: 0; font-size: 13px; line-height: 1.5; }
+      .muted { color: var(--muted); }
+      .good { color: var(--good); }
+      .bad { color: var(--bad); }
+      .warn { color: var(--warn); }
+      textarea { width: 100%; min-height: 64px; resize: vertical; font: inherit; font-size: 13px; padding: 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+      .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+      button { font: inherit; font-size: 13px; font-weight: 600; padding: 8px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg); color: var(--text); cursor: pointer; }
+      button.primary { background: var(--text); color: var(--bg); border-color: var(--text); }
+      button.danger { color: var(--bad); }
+      button:disabled { opacity: 0.45; cursor: default; }
+      ul.queue { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+      ul.queue li { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+      .pill { font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid currentColor; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Building review</h1>
+      <a id="dashboard" href="https://admin.worldmesh.net/buildings">Admin dashboard</a>
+      <a href="/review-building">All buildings</a>
+    </header>
+    <main id="app"><p class="muted">Loading…</p></main>
+    <script type="module" src="/src/review/buildingReview.ts"></script>
+  </body>
+</html>

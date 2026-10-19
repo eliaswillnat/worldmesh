@@ -25,6 +25,50 @@ export function readGlbJson(buffer: ArrayBuffer): { extensionsUsed?: string[]; e
   return JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, 20, Math.min(length, buffer.byteLength - 20))));
 }
 
+/** SHA-256 of a file, as lower-case hex: what an approval pins (§5.3). */
+export async function sha256Hex(data: ArrayBuffer): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', data));
+  return [...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * A building's bytes, straight from where it is hosted, no more than the
+ * limit; checked against `sha256` when one is given.
+ */
+export async function downloadBuilding(url: string, sha256?: string, signal?: AbortSignal): Promise<ArrayBuffer> {
+  const response = await fetch(url, { signal, credentials: 'omit' });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  if (Number(response.headers.get('Content-Length') ?? '0') > BUILDING_LIMITS.bytes) throw new Error('Model is over 10 MB');
+  const reader = response.body?.getReader();
+  let data: Uint8Array;
+  if (!reader) {
+    data = new Uint8Array(await response.arrayBuffer());
+    if (data.byteLength > BUILDING_LIMITS.bytes) throw new Error('Model is over 10 MB');
+  } else {
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > BUILDING_LIMITS.bytes) {
+        await reader.cancel();
+        throw new Error('Model is over 10 MB');
+      }
+      chunks.push(value);
+    }
+    data = new Uint8Array(size);
+    let at = 0;
+    for (const chunk of chunks) {
+      data.set(chunk, at);
+      at += chunk.byteLength;
+    }
+  }
+  const buffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
+  if (sha256 && (await sha256Hex(buffer)) !== sha256.toLowerCase()) throw new Error('Model is not the approved file (hash differs)');
+  return buffer;
+}
+
 /** The model in a GLB, refused before it is parsed if it needs a decoder buildings may not use. */
 export async function parseBuilding(buffer: ArrayBuffer): Promise<Group> {
   const json = readGlbJson(buffer);
@@ -95,7 +139,7 @@ export async function inspectBuilding(buffer: ArrayBuffer): Promise<BuildingChec
   }
 }
 
-function countTriangles(object: Object3D): number {
+export function countTriangles(object: Object3D): number {
   let triangles = 0;
   object.traverse((child) => {
     if (child instanceof Mesh) triangles += (child.geometry.index?.count ?? child.geometry.getAttribute('position')?.count ?? 0) / 3;

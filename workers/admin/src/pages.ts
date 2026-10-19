@@ -4,6 +4,8 @@ import {
   approveLink,
   attempt,
   avatars,
+  buildingLinks,
+  buildingReviewLink,
   directory,
   federation,
   formatCharacter,
@@ -16,6 +18,7 @@ import {
   userSummary,
   users,
   views,
+  type BuildingLinkRow,
   type CheckResult,
   type DirectoryEntry,
   type Result,
@@ -90,12 +93,13 @@ function healthTable(results: CheckResult[]): string {
 
 export const overview: Page = async (_request, env, admin) => {
   const at = now(env);
-  const [summary, dir, adData, fed, health] = await Promise.all([
+  const [summary, dir, adData, fed, health, links] = await Promise.all([
     attempt(() => userSummary(env)),
     attempt(() => directory(env)),
     attempt(() => ads(env)),
     attempt(() => federation(env)),
     attempt(() => runChecks(env, serviceChecks(env), 3000)),
+    attempt(() => buildingLinks(env)),
   ]);
   const listed = value(dir)?.approved ?? [];
   const live = await attempt(() => presence(env, listed.filter((w) => w.url).map((w) => ({ name: w.name ?? w.id, url: w.url! }))));
@@ -132,6 +136,11 @@ export const overview: Page = async (_request, env, admin) => {
       `<li>Ad waiting: <strong>${esc(ad.advertiser_name)}</strong> on <code>${esc(ad.billboard_id)}</code> · <a href="${esc(hubOrigin(env))}/api/ads/admin/review?id=${esc(ad.id)}" target="_blank" rel="noopener">Review</a></li>`,
     );
   }
+  for (const building of value(links)?.filter((row) => row.status === 'pending') ?? []) {
+    todo.push(
+      `<li>Building waiting: <strong>${esc(building.building_name ?? 'Unnamed')}</strong> for ${link(building.world_url)} · <a href="${esc(buildingReviewLink(env, building.world_url))}" target="_blank" rel="noopener">Review</a></li>`,
+    );
+  }
   for (const check of down) todo.push(`<li><strong>${esc(check.name)}</strong> is not answering (${esc(check.status ?? check.error ?? '')}).</li>`);
   if (f && f.failing > 0) todo.push(`<li>${num(f.failing)} fediverse deliveries are retrying. <a href="/federation">See errors</a></li>`);
   const sources: [string, Result<unknown>][] = [
@@ -140,6 +149,7 @@ export const overview: Page = async (_request, env, admin) => {
     ['who is online', live],
     ['ads', adData],
     ['fediverse', fed],
+    ['buildings', links],
   ];
   for (const [name, result] of sources) {
     if (!result.ok) todo.push(`<li><span class="error">Could not read ${esc(name)}:</span> ${esc(result.error)}</li>`);
@@ -321,6 +331,52 @@ export const worldsPage: Page = async (request, env, admin) => {
   );
 
   return render(env, admin, '/worlds', 'Worlds', `${deletedNotice}${confirmBanner}${tiles}${pending}${approved}${accountWorlds}`);
+};
+
+// ── Buildings ──────────────────────────────────────────────────────────────
+
+const BUILDING_STATUS: Record<BuildingLinkRow['status'], [string, 'good' | 'warn' | 'bad' | 'plain']> = {
+  pending: ['waiting', 'warn'],
+  approved: ['in the city', 'good'],
+  rejected: ['rejected', 'plain'],
+  hidden: ['hidden', 'bad'],
+};
+
+/**
+ * Worlds' own buildings (docs/specs/buildings.md §5). Read-only like the rest:
+ * a building is checked, shown on its block and approved on the hub's review
+ * page, where the reviewer's browser downloads and hashes the model.
+ */
+export const buildingsPage: Page = async (_request, env, admin) => {
+  const at = now(env);
+  const links = await attempt(() => buildingLinks(env));
+  const rows = value(links);
+  const n = (status: BuildingLinkRow['status']) => (rows ? num(rows.filter((row) => row.status === status).length) : '—');
+  const tiles = stats(
+    stat('Waiting for review', n('pending')),
+    stat('In the city', n('approved')),
+    stat('Rejected', n('rejected')),
+    stat('Hidden', n('hidden')),
+  );
+  const list = guarded('Buildings on worlds', links, (v) =>
+    table(
+      ['', 'World', 'Building', 'Owner', 'Status', 'Since'],
+      v.map((row) => {
+        const [label, tone] = BUILDING_STATUS[row.status];
+        const thumb = row.thumbnail_url?.startsWith('https://') ? `<img class="cover" src="${esc(row.thumbnail_url)}" alt="" loading="lazy" />` : '';
+        return [
+          thumb,
+          `${link(row.world_url)}<div class="cell-sub"><a href="${esc(buildingReviewLink(env, row.world_url))}" target="_blank" rel="noopener">${row.status === 'pending' ? 'Review' : 'Open'} ↗</a></div>`,
+          `<span class="cell-main">${esc(row.building_name ?? 'Unnamed')}</span><div class="cell-sub">${esc(row.provider)} · <code>${esc(row.building_id)}</code></div>`,
+          esc(row.owner ?? '—'),
+          `${pill(label, tone)}${row.reason ? `<div class="cell-sub">${esc(row.reason)}</div>` : ''}${row.reviewed_by ? `<div class="cell-sub">by ${esc(row.reviewed_by)}</div>` : ''}`,
+          esc(ago(Number(row.updated_at), at)),
+        ];
+      }),
+      'No world has asked for a building yet.',
+    ),
+  );
+  return render(env, admin, '/buildings', 'Buildings', `${tiles}${list}`);
 };
 
 // ── Live ───────────────────────────────────────────────────────────────────

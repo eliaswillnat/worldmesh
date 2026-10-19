@@ -116,6 +116,7 @@ const NAV: { href: string; label: string }[] = [
   { href: '/', label: 'Overview' },
   { href: '/users', label: 'Users' },
   { href: '/worlds', label: 'Worlds' },
+  { href: '/buildings', label: 'Buildings' },
   { href: '/live', label: 'Live' },
   { href: '/ads', label: 'Ads' },
   { href: '/federation', label: 'Fediverse' },

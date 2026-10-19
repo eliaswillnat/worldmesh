@@ -15,7 +15,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import type { Door, DoorShape } from './door';
 import { prismRoof, prismWalls } from './avenues';
 import { planBuilding, type Lot } from './buildingFit';
-import { BUILDING_LIMITS, checkWeight, parseBuilding } from './buildingModel';
+import { checkWeight, downloadBuilding, parseBuilding, sha256Hex } from './buildingModel';
 import demoBuildings from './demoBuildings.json';
 
 /**
@@ -30,9 +30,28 @@ import demoBuildings from './demoBuildings.json';
 
 /** Where a building's model is, and the file it must be (§5.3). */
 export interface BuildingSource {
-  modelUrl: string;
+  /** Where to download it. A world's approved building is resolved through the directory instead, just before. */
+  modelUrl?: string;
   /** SHA-256 of the approved file, as hex. The building shows only if the download matches. */
   sha256?: string;
+  /** The world (its canonical URL) whose approved building this is. */
+  world?: string;
+}
+
+/** A world's approved building, as the directory resolves it. */
+export interface ResolvedBuilding {
+  modelUrl: string;
+  /** Unix ms when `modelUrl` stops working, or null. */
+  expiresAt: number | null;
+  sha256: string;
+}
+
+/** Where worlds' approved buildings are downloaded from (§7.2; ./buildingDirectory.ts on the hub). */
+export interface BuildingDirectory {
+  /** Each world (canonical URL) with an approved building, and the SHA-256 its file must have. */
+  approved(): Promise<Map<string, string>>;
+  /** Where to download these worlds' buildings now. Worlds without one are missing from the answer. */
+  resolve(worlds: string[]): Promise<Map<string, ResolvedBuilding>>;
 }
 
 /** Demo buildings, standing in on the first lots of the city with `?buildings=demo`. */
@@ -54,6 +73,17 @@ const FADE_SECONDS = 0.6;
 const LOOK_SECONDS = 0.25;
 /** Nobody standing this close in front of the doorway: it doesn't change shape under them. */
 const SWAP_CLEAR = 1.5;
+/** Worlds resolved per call, at most (workers/auth MAX_RESOLVE). */
+const RESOLVE_BATCH = 16;
+/** A resolved download link is used only while it has this long left (ms). */
+const LINK_MARGIN_MS = 30_000;
+/**
+ * Downloaded buildings stay in the browser's Cache Storage under their hash
+ * (§7.1), so a second visit downloads nothing; this many at most, oldest
+ * dropped first. Nothing is cached by WorldMesh.
+ */
+const CACHE_NAME = 'worldmesh-buildings-v1';
+const CACHE_KEEP = 24;
 
 /** A world's block in the city, with a building to take its place. */
 export interface BuildingLot {
@@ -71,6 +101,10 @@ type Status = 'idle' | 'loading' | 'ready' | 'shown' | 'failed';
 
 interface LotState extends BuildingLot {
   status: Status;
+  /** Whether this browser already holds the file, by its hash. */
+  cache: 'unknown' | 'checking' | 'hit' | 'miss';
+  /** Where the directory said to download it, for a world's building. */
+  resolved: ResolvedBuilding | null;
   /** The building, placed in the door's frame; in the scene once shown. */
   object: Group | null;
   /** The doorway its portal face makes, or null for the standard door. */
@@ -95,11 +129,16 @@ export class Buildings {
    */
   private studio: Texture | null = null;
   private colliderMaterial = new MeshBasicMaterial({ visible: false });
+  /** A call to the directory is out: one at a time. */
+  private resolving = false;
 
   constructor(
     private scene: Scene,
     private renderer: WebGLRenderer,
     enabled = true,
+    private directory: BuildingDirectory | null = null,
+    /** What stops walkers changed (a block gave way to its building, or came back): collision has to look again. */
+    private onCollidersChange: () => void = () => {},
   ) {
     this.enabled = enabled;
   }
@@ -107,7 +146,18 @@ export class Buildings {
   /** The city was laid out afresh: these are its lots now. Buildings on the old ones come down. */
   setLots(lots: BuildingLot[]): void {
     for (const lot of this.lots) this.unload(lot);
-    this.lots = lots.map((lot) => ({ ...lot, status: 'idle', object: null, shape: null, collider: null, abort: null, shownFor: 0, fading: [] }));
+    this.lots = lots.map((lot) => ({
+      ...lot,
+      status: 'idle',
+      cache: lot.source.sha256 ? 'unknown' : 'miss',
+      resolved: null,
+      object: null,
+      shape: null,
+      collider: null,
+      abort: null,
+      shownFor: 0,
+      fading: [],
+    }));
     this.sinceLook = LOOK_SECONDS;
   }
 
@@ -140,10 +190,14 @@ export class Buildings {
       if (distance(lot) > STREAMING.unload || kept >= STREAMING.loaded) this.unload(lot);
       else kept++;
     }
+    const near = byDistance.filter((lot) => distance(lot) <= STREAMING.load);
+    // Ahead of loading: which files this browser has already, and where to download the rest.
+    for (const lot of near) if (lot.status === 'idle' && lot.cache === 'unknown') void this.checkCache(lot);
+    this.resolveSome(near.filter((lot) => lot.status === 'idle' && lot.cache === 'miss' && !lot.source.modelUrl && !fresh(lot.resolved)));
     let downloading = this.lots.filter((lot) => lot.status === 'loading').length;
-    for (const lot of byDistance) {
-      if (distance(lot) > STREAMING.load || kept >= STREAMING.loaded) break;
-      if (lot.status !== 'idle' || downloading >= STREAMING.downloads) continue;
+    for (const lot of near) {
+      if (kept >= STREAMING.loaded) break;
+      if (lot.status !== 'idle' || downloading >= STREAMING.downloads || !canLoad(lot)) continue;
       kept++;
       downloading++;
       void this.load(lot);
@@ -173,12 +227,58 @@ export class Buildings {
     return this.studio;
   }
 
+  private async checkCache(lot: LotState): Promise<void> {
+    lot.cache = 'checking';
+    lot.cache = (await cached(lot.source.sha256!)) ? 'hit' : 'miss';
+  }
+
+  /** Asks the directory where to download these worlds' buildings, nearest first, one call at a time. */
+  private resolveSome(lots: LotState[]): void {
+    const asking = lots.filter((lot) => lot.source.world).slice(0, RESOLVE_BATCH);
+    if (this.resolving || !asking.length) return;
+    if (!this.directory) {
+      for (const lot of asking) lot.status = 'failed';
+      return;
+    }
+    this.resolving = true;
+    this.directory
+      .resolve(asking.map((lot) => lot.source.world!))
+      .then((found) => {
+        for (const lot of asking) {
+          const building = found.get(lot.source.world!);
+          // No longer approved, or a different file than the city was told: the block stays.
+          if (building && building.sha256 === lot.source.sha256) lot.resolved = building;
+          else if (lot.status === 'idle') lot.status = 'failed';
+        }
+      })
+      .catch((error: unknown) => {
+        console.warn('[buildings] could not resolve buildings:', error instanceof Error ? error.message : error);
+        for (const lot of asking) if (lot.status === 'idle') lot.status = 'failed';
+      })
+      .finally(() => {
+        this.resolving = false;
+      });
+  }
+
   private async load(lot: LotState): Promise<void> {
     lot.status = 'loading';
     const abort = new AbortController();
     lot.abort = abort;
+    const label = lot.source.world ?? lot.source.modelUrl;
     try {
-      const data = await download(lot.source, abort.signal);
+      const sha256 = lot.source.sha256;
+      let data = lot.cache === 'hit' && sha256 ? await cached(sha256, true) : null;
+      if (!data) {
+        const url = lot.source.modelUrl ?? (fresh(lot.resolved) ? lot.resolved!.modelUrl : null);
+        if (!url) {
+          // Gone from this browser's cache after all: back in line, to be resolved first.
+          lot.cache = 'miss';
+          lot.status = 'idle';
+          return;
+        }
+        data = await downloadBuilding(url, sha256, abort.signal);
+        if (sha256) lot.cache = (await keep(sha256, data)) ? 'hit' : 'miss';
+      }
       const object = await parseBuilding(data);
       if (abort.signal.aborted || this.disposed) {
         disposeObject(object);
@@ -190,7 +290,7 @@ export class Buildings {
     } catch (error) {
       if (abort.signal.aborted) return;
       lot.status = 'failed';
-      console.warn(`[buildings] ${lot.source.modelUrl} keeps its storefront:`, error instanceof Error ? error.message : error);
+      console.warn(`[buildings] ${label} keeps its storefront:`, error instanceof Error ? error.message : error);
     } finally {
       if (lot.abort === abort) lot.abort = null;
     }
@@ -276,6 +376,7 @@ export class Buildings {
     });
     lot.shownFor = 0;
     this.scene.add(lot.object);
+    this.onCollidersChange();
   }
 
   private fade(lot: LotState, dt: number): void {
@@ -294,7 +395,8 @@ export class Buildings {
   private unload(lot: LotState): void {
     lot.abort?.abort();
     lot.abort = null;
-    if (lot.status === 'shown') {
+    const wasShown = lot.status === 'shown';
+    if (wasShown) {
       lot.door.setShape(null);
       lot.door.hideSign(false);
       for (const mesh of lot.block.meshes) mesh.visible = true;
@@ -309,46 +411,59 @@ export class Buildings {
     lot.shape = null;
     lot.fading = [];
     if (lot.status !== 'failed') lot.status = 'idle';
+    if (wasShown) this.onCollidersChange();
   }
 }
 
-/** The model's bytes, no more than the limit, checked against its hash when one was given. */
-async function download(source: BuildingSource, signal: AbortSignal): Promise<ArrayBuffer> {
-  const response = await fetch(source.modelUrl, { signal, credentials: 'omit' });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  if (Number(response.headers.get('Content-Length') ?? '0') > BUILDING_LIMITS.bytes) throw new Error('Model is over 10 MB');
-  const reader = response.body?.getReader();
-  let data: Uint8Array;
-  if (!reader) {
-    data = new Uint8Array(await response.arrayBuffer());
-    if (data.byteLength > BUILDING_LIMITS.bytes) throw new Error('Model is over 10 MB');
-  } else {
-    const chunks: Uint8Array[] = [];
-    let size = 0;
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > BUILDING_LIMITS.bytes) {
-        await reader.cancel();
-        throw new Error('Model is over 10 MB');
-      }
-      chunks.push(value);
-    }
-    data = new Uint8Array(size);
-    let at = 0;
-    for (const chunk of chunks) {
-      data.set(chunk, at);
-      at += chunk.byteLength;
-    }
+/** Whether a lot can start loading: its file is in this browser, or there is a link to download it from. */
+function canLoad(lot: LotState): boolean {
+  if (lot.cache === 'unknown' || lot.cache === 'checking') return false;
+  return lot.cache === 'hit' || !!lot.source.modelUrl || fresh(lot.resolved);
+}
+
+/** A resolved download link with time left to use it. */
+function fresh(resolved: ResolvedBuilding | null): boolean {
+  return !!resolved && (resolved.expiresAt === null || resolved.expiresAt - LINK_MARGIN_MS > Date.now());
+}
+
+async function buildingCache(): Promise<Cache | null> {
+  try {
+    return typeof caches === 'undefined' ? null : await caches.open(CACHE_NAME);
+  } catch {
+    // Storage blocked (private windows, some embedded browsers): download every time.
+    return null;
   }
-  const buffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
-  if (source.sha256) {
-    const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', buffer));
-    const hex = [...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-    if (hex !== source.sha256.toLowerCase()) throw new Error('Model is not the approved file (hash differs)');
+}
+
+const cacheKey = (sha256: string) => new URL(`/__buildings/${sha256}.glb`, location.href).toString();
+
+/** Whether this browser holds the file with this hash; with `read`, its bytes, checked again. */
+async function cached(sha256: string, read: true): Promise<ArrayBuffer | null>;
+async function cached(sha256: string): Promise<boolean>;
+async function cached(sha256: string, read = false): Promise<ArrayBuffer | boolean | null> {
+  try {
+    const response = await (await buildingCache())?.match(cacheKey(sha256));
+    if (!read) return !!response;
+    if (!response) return null;
+    const data = await response.arrayBuffer();
+    return (await sha256Hex(data)) === sha256.toLowerCase() ? data : null;
+  } catch {
+    return read ? null : false;
   }
-  return buffer;
+}
+
+/** Keeps a checked file for next time, letting the oldest go past CACHE_KEEP. */
+async function keep(sha256: string, data: ArrayBuffer): Promise<boolean> {
+  try {
+    const cache = await buildingCache();
+    if (!cache) return false;
+    await cache.put(cacheKey(sha256), new Response(data, { headers: { 'Content-Type': 'model/gltf-binary' } }));
+    const keys = await cache.keys();
+    for (const old of keys.slice(0, Math.max(0, keys.length - CACHE_KEEP))) await cache.delete(old);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Let go of a model's geometry, materials and textures; `keep` is shared, and stays. */
