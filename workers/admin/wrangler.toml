@@ -1,6 +1,10 @@
 name = "worldmesh-admin"
 main = "src/index.ts"
 compatibility_date = "2026-09-01"
+# Health checks fetch same-zone hub URLs (worldmesh.net/api/…). Without this
+# flag, those subrequests skip other Workers' routes and hit the hub Pages
+# origin (404). Public routing reaches workers/auth and friends.
+compatibility_flags = ["global_fetch_strictly_public"]
 
 # The admin dashboard. One Worker, two routes:
 #   admin.worldmesh.net        the dashboard (a Custom Domain: Cloudflare creates
@@ -70,6 +74,7 @@ script_name = "worldmesh-lobby"
 # deploy time from the resources of the same names.
 [env.preview]
 name = "worldmesh-admin-preview"
+compatibility_flags = ["global_fetch_strictly_public"]
 routes = [
   { pattern = "preview-admin.worldmesh.net", custom_domain = true },
   { pattern = "preview.worldmesh.net/api/dashboard/*", zone_name = "worldmesh.net" },

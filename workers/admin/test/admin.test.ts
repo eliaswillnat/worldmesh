@@ -3,7 +3,7 @@ import { getPlatformProxy } from 'wrangler';
 import { fileURLToPath } from 'node:url';
 import { createTestDatabase, type TestDatabase } from '../../../db/test/d1';
 import worker, { type Env } from '../src/index';
-import { perDay } from '../src/data';
+import { isUndeployedWorker, perDay, runChecks, type Check } from '../src/data';
 import type { RoomStats } from '../src/env';
 
 const HUB = 'https://worldmesh.net';
@@ -30,11 +30,21 @@ function fakeRooms(): DurableObjectNamespace {
   } as unknown as DurableObjectNamespace;
 }
 
+/** Hub SPA/Pages 404 — what same-zone fetches see when a Worker route is missing. */
+function hubHtml404(): Response {
+  return new Response('<!doctype html><html><body>Not found</body></html>', {
+    status: 404,
+    headers: { 'Content-Type': 'text/html; charset=utf-8' },
+  });
+}
+
 const fakeFetch: typeof fetch = async (input, init) => {
   const url = String(input instanceof Request ? input.url : input);
   fetched.push(url);
   methods.set(url, init?.method ?? 'GET');
   if (url.includes('down.example')) throw new TypeError('connection refused');
+  // Undeployed Workers: hub origin HTML 404 (same as Cloudflare same-zone miss).
+  if (url.includes('/.well-known/nodeinfo') || url.includes('/api/ads/billboards')) return hubHtml404();
   if (url.startsWith(HUB)) return new Response('ok', { status: 200 });
   return new Response('nope', { status: 404 });
 };
@@ -403,8 +413,42 @@ describe('what an admin sees', () => {
     expect(fetched).toContain('https://down.example/');
     expect(html).toContain('Gone');
     expect(html).toContain('Down');
+    expect(html).toContain('Not deployed');
+    expect(html).toContain('Federation (workers/federation)');
+    expect(html).toContain('Ads (workers/ads)');
     expect(html).toContain('Presence (workers/presence)');
     expect(html).toContain('0 of 1 up');
+  });
+});
+
+describe('service health checks', () => {
+  const workerJson: Check = { name: 'Worker', url: `${HUB}/api/thing`, expect: [200] };
+  const intentional404: Check = { name: 'Presence', url: 'https://presence.example/', expect: [404, 426] };
+
+  it('treats hub HTML 404 as not deployed for Worker JSON endpoints', () => {
+    expect(isUndeployedWorker(workerJson, 404, 'text/html; charset=utf-8')).toBe(true);
+    expect(isUndeployedWorker(workerJson, 404, 'application/json')).toBe(false);
+    expect(isUndeployedWorker(workerJson, 500, 'text/html')).toBe(false);
+    expect(isUndeployedWorker(intentional404, 404, 'text/html')).toBe(false);
+  });
+
+  it('marks undeployed Workers as notDeployed instead of Down', async () => {
+    env.FETCH = async (input) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.includes('missing')) return hubHtml404();
+      if (url.includes('broken')) return new Response('{"error":true}', { status: 500, headers: { 'Content-Type': 'application/json' } });
+      return new Response('{"ok":true}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    };
+    const results = await runChecks(env, [
+      { name: 'Live', url: `${HUB}/api/live`, expect: [200] },
+      { name: 'Missing', url: `${HUB}/api/missing`, expect: [200] },
+      { name: 'Broken', url: `${HUB}/api/broken`, expect: [200] },
+    ]);
+    expect(results.map((r) => ({ name: r.name, up: r.up, notDeployed: !!r.notDeployed, status: r.status }))).toEqual([
+      { name: 'Live', up: true, notDeployed: false, status: 200 },
+      { name: 'Missing', up: false, notDeployed: true, status: 404 },
+      { name: 'Broken', up: false, notDeployed: false, status: 500 },
+    ]);
   });
 });
 

@@ -67,12 +67,18 @@ function adTone(status: string): 'good' | 'warn' | 'bad' | 'info' | 'plain' {
   return 'plain';
 }
 
+function healthPill(check: CheckResult): string {
+  if (check.up) return pill('Up', 'good');
+  if (check.notDeployed) return pill('Not deployed', 'plain');
+  return pill('Down', 'bad');
+}
+
 function healthTable(results: CheckResult[]): string {
   return table(
     ['Service', 'Status'],
     results.map((check) => [
       `<span class="cell-main">${esc(check.name)}</span><div class="cell-sub">${esc(check.url)}</div>`,
-      `${check.up ? pill('Up', 'good') : pill('Down', 'bad')}<div class="cell-sub mono">${
+      `${healthPill(check)}<div class="cell-sub mono">${
         check.status === null ? esc(check.error ?? 'no answer') : `${check.status} · ${num(check.ms)} ms`
       }</div>`,
     ]),
@@ -100,7 +106,7 @@ export const overview: Page = async (_request, env, admin) => {
   const h = value(health);
   const liveNow = liveTotal(value(live));
   const adCount = (status: string) => a?.byStatus.find((row) => row.status === status)?.n ?? 0;
-  const down = h?.filter((check) => !check.up) ?? [];
+  const down = h?.filter((check) => !check.up && !check.notDeployed) ?? [];
 
   const tiles = stats(
     stat('Users', s ? num(s.total) : '—', s ? `+${num(s.new7d)} this week · +${num(s.new24h)} today` : ''),
