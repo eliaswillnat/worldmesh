@@ -16,6 +16,10 @@
  * and DPoP key go to the user's browser, which sends the model straight to
  * their PDS, and are revoked when it is done. WorldMesh never stores them.
  *
+ * Buildings for the hub city (docs/specs/buildings.md) are WorldMesh's own
+ * `net.worldmesh.building` records in the same repository, with the GLB as a
+ * blob; uploading one is its own authorization (BUILDING_UPLOAD_SCOPE).
+ *
  * Every host here (the handle's domain, did:web hosts, the PDS, the
  * authorization server) is user-controlled, so each request goes through the
  * public-https-only fetch in ./net.
@@ -28,15 +32,21 @@ import {
   type AvatarProvider,
   type ConnectionRow,
   type ProviderAvatar,
+  type ProviderBuilding,
+  type UploadKind,
 } from './types';
 
 export const AVATAR_COLLECTION = 'app.at3d.avatar';
-/** The MIME type at3d stores VRM and GLB models under. */
+/** Buildings for the hub city: WorldMesh's own record type (docs/lexicons/net.worldmesh.building.json). */
+export const BUILDING_COLLECTION = 'net.worldmesh.building';
+/** The MIME type at3d stores VRM and GLB models under, and buildings their GLB. */
 export const MODEL_MIME = 'model/gltf-binary';
 /** Create at3d avatars and upload their models; nothing else in the account. */
 export const UPLOAD_SCOPE = `atproto repo:${AVATAR_COLLECTION}?action=create blob:${MODEL_MIME}`;
+/** Create buildings and upload their models; nothing else in the account. */
+export const BUILDING_UPLOAD_SCOPE = `atproto repo:${BUILDING_COLLECTION}?action=create blob:${MODEL_MIME}`;
 /** Every scope this client may ask for, as its metadata declares. */
-const CLIENT_SCOPE = UPLOAD_SCOPE;
+const CLIENT_SCOPE = `atproto repo:${AVATAR_COLLECTION}?action=create repo:${BUILDING_COLLECTION}?action=create blob:${MODEL_MIME}`;
 const PLC_DIRECTORY = 'https://plc.directory';
 const DOH = 'https://cloudflare-dns.com/dns-query';
 
@@ -60,7 +70,7 @@ export interface AtprotoAuthFlow {
 }
 
 interface AtprotoFlowExtra extends AtprotoAuthFlow {
-  upload?: boolean;
+  upload?: UploadKind;
   [key: string]: unknown;
 }
 
@@ -72,8 +82,9 @@ export const atprotoProvider: AvatarProvider = {
   isConfigured: () => true,
 
   async connect(ctx, { userId, handle: input, upload }) {
-    const begun = await beginAtprotoAuth(ctx.origin, ctx.redirectUri, input ?? '', upload ? UPLOAD_SCOPE : 'atproto');
-    const extra: AtprotoFlowExtra = { ...begun.flow, ...(upload ? { upload: true } : {}) };
+    const scope = upload === 'building' ? BUILDING_UPLOAD_SCOPE : upload ? UPLOAD_SCOPE : 'atproto';
+    const begun = await beginAtprotoAuth(ctx.origin, ctx.redirectUri, input ?? '', scope);
+    const extra: AtprotoFlowExtra = { ...begun.flow, ...(upload ? { upload } : {}) };
     return {
       url: begun.url,
       flow: { provider: 'atproto', userId, state: begun.state, verifier: begun.verifier, expiresAt: Date.now() + 10 * 60_000, extra },
@@ -88,7 +99,9 @@ export const atprotoProvider: AvatarProvider = {
     const account = { providerAccountId: extra.did, displayName: extra.handle, serviceEndpoint: extra.pds, credentials: null };
     if (extra.upload) {
       // Handed to the browser for one upload; revoked by revokeUpload afterwards.
-      const granted = scopes.some((s) => s === `repo:${AVATAR_COLLECTION}` || s.startsWith(`repo:${AVATAR_COLLECTION}?`) || s === 'transition:generic');
+      const kind: UploadKind = extra.upload === 'building' ? 'building' : 'avatar';
+      const collection = kind === 'building' ? BUILDING_COLLECTION : AVATAR_COLLECTION;
+      const granted = scopes.some((s) => s === `repo:${collection}` || s.startsWith(`repo:${collection}?`) || s === 'transition:generic');
       if (!granted || typeof body.access_token !== 'string') {
         throw new AvatarError('Uploading was not allowed. Please try again and approve the request.');
       }
@@ -97,6 +110,7 @@ export const atprotoProvider: AvatarProvider = {
         ...account,
         uploadGrant: {
           provider: 'atproto',
+          kind,
           service: extra.pds,
           account: extra.did,
           accessToken: body.access_token,
@@ -133,30 +147,15 @@ export const atprotoProvider: AvatarProvider = {
   },
 
   async listAvatars(ctx, connection) {
-    const ownHost = new URL(ctx.origin).host;
     const pds = requirePds(connection);
-    const url = new URL('/xrpc/com.atproto.repo.listRecords', pds);
-    url.search = new URLSearchParams({ repo: connection.provider_account_id, collection: AVATAR_COLLECTION, limit: '100' }).toString();
-    const result = await providerFetch(url.toString(), { ownHost, maxBytes: 1024 * 1024, headers: { Accept: 'application/json' } });
-    if (result.status !== 200) throw new AvatarError('Your AT Protocol server could not be reached.', 502);
-    const records = Array.isArray(jsonObject(result)?.records) ? (jsonObject(result)!.records as Json[]) : [];
-    return records
+    return (await listOwnRecords(ctx.origin, connection, AVATAR_COLLECTION))
       .map((record) => toAvatar(record, pds, connection.provider_account_id))
       .filter((a): a is ProviderAvatar => !!a);
   },
 
   async getAvatar(ctx, connection, avatarId) {
-    const parsed = parseAvatarUri(avatarId);
-    if (!parsed || parsed.did !== connection.provider_account_id) return null;
-    const ownHost = new URL(ctx.origin).host;
-    const pds = requirePds(connection);
-    const url = new URL('/xrpc/com.atproto.repo.getRecord', pds);
-    url.search = new URLSearchParams({ repo: parsed.did, collection: AVATAR_COLLECTION, rkey: parsed.rkey }).toString();
-    const result = await providerFetch(url.toString(), { ownHost, maxBytes: 256 * 1024, headers: { Accept: 'application/json' } });
-    if (result.status === 400 || result.status === 404) return null;
-    if (result.status !== 200) throw new AvatarError('Your AT Protocol server could not be reached.', 502);
-    const record = jsonObject(result);
-    return record ? toAvatar(record, pds, parsed.did) : null;
+    const record = await getOwnRecord(ctx.origin, connection, AVATAR_COLLECTION, avatarId);
+    return record && toAvatar(record, requirePds(connection), connection.provider_account_id);
   },
 
   async resolveAvatar(ctx, connection, avatar) {
@@ -179,7 +178,44 @@ export const atprotoProvider: AvatarProvider = {
   async refreshAuth() {
     return null;
   },
+
+  buildingLabel: 'AT Protocol',
+
+  async listBuildings(ctx, connection) {
+    const pds = requirePds(connection);
+    return (await listOwnRecords(ctx.origin, connection, BUILDING_COLLECTION))
+      .map((record) => toBuilding(record, pds, connection.provider_account_id))
+      .filter((b): b is ProviderBuilding => !!b);
+  },
+
+  async getBuilding(ctx, connection, id) {
+    const record = await getOwnRecord(ctx.origin, connection, BUILDING_COLLECTION, id);
+    return record && toBuilding(record, requirePds(connection), connection.provider_account_id);
+  },
 };
+
+/** The records of `collection` in the connected account's own repository (public reads). */
+async function listOwnRecords(origin: string, connection: ConnectionRow, collection: string): Promise<Json[]> {
+  const pds = requirePds(connection);
+  const url = new URL('/xrpc/com.atproto.repo.listRecords', pds);
+  url.search = new URLSearchParams({ repo: connection.provider_account_id, collection, limit: '100' }).toString();
+  const result = await providerFetch(url.toString(), { ownHost: new URL(origin).host, maxBytes: 1024 * 1024, headers: { Accept: 'application/json' } });
+  if (result.status !== 200) throw new AvatarError('Your AT Protocol server could not be reached.', 502);
+  const records = jsonObject(result)?.records;
+  return Array.isArray(records) ? (records as Json[]) : [];
+}
+
+/** One record of `collection`, only if its at:// URI is in the connected account's repository. */
+async function getOwnRecord(origin: string, connection: ConnectionRow, collection: string, uri: string): Promise<Json | null> {
+  const parsed = parseRecordUri(uri, collection);
+  if (!parsed || parsed.did !== connection.provider_account_id) return null;
+  const url = new URL('/xrpc/com.atproto.repo.getRecord', requirePds(connection));
+  url.search = new URLSearchParams({ repo: parsed.did, collection, rkey: parsed.rkey }).toString();
+  const result = await providerFetch(url.toString(), { ownHost: new URL(origin).host, maxBytes: 256 * 1024, headers: { Accept: 'application/json' } });
+  if (result.status === 400 || result.status === 404) return null;
+  if (result.status !== 200) throw new AvatarError('Your AT Protocol server could not be reached.', 502);
+  return jsonObject(result);
+}
 
 // ── OAuth client ─────────────────────────────────────────────────────────────
 
@@ -500,9 +536,9 @@ function requirePds(connection: ConnectionRow): string {
   return connection.service_endpoint;
 }
 
-function parseAvatarUri(uri: string): { did: string; rkey: string } | null {
+function parseRecordUri(uri: string, collection: string): { did: string; rkey: string } | null {
   const match = /^at:\/\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(uri);
-  if (!match || !DID.test(match[1]) || match[2] !== AVATAR_COLLECTION || !RKEY.test(match[3])) return null;
+  if (!match || !DID.test(match[1]) || match[2] !== collection || !RKEY.test(match[3])) return null;
   return { did: match[1], rkey: match[3] };
 }
 
@@ -512,20 +548,24 @@ function blobUrl(pds: string, did: string, cid: string): string {
   return url.toString();
 }
 
-/** A blob reference's CID and MIME type, in the current or the legacy encoding. */
-function blobRef(value: unknown): { cid: string; mimeType: string } | null {
+/** A blob reference's CID, MIME type and size, in the current or the legacy encoding. */
+function blobRef(value: unknown): { cid: string; mimeType: string; size: number | null } | null {
   if (!value || typeof value !== 'object') return null;
   const blob = value as Json;
   const link = (blob.ref as Json | undefined)?.$link ?? blob.cid;
   if (typeof link !== 'string' || !CID.test(link)) return null;
-  return { cid: link, mimeType: typeof blob.mimeType === 'string' ? blob.mimeType : '' };
+  return {
+    cid: link,
+    mimeType: typeof blob.mimeType === 'string' ? blob.mimeType : '',
+    size: typeof blob.size === 'number' && blob.size >= 0 ? blob.size : null,
+  };
 }
 
 /** Records the runtime can render: VRM and glTF avatars. Parametric ones are left out. */
 function toAvatar(record: Json, pds: string, did: string): ProviderAvatar | null {
   const uri = record.uri;
   const value = record.value as Json | undefined;
-  if (typeof uri !== 'string' || !value || parseAvatarUri(uri)?.did !== did) return null;
+  if (typeof uri !== 'string' || !value || parseRecordUri(uri, AVATAR_COLLECTION)?.did !== did) return null;
   const model = blobRef((value.appearance as Json | undefined)?.model);
   if (!model) return null;
   let format: AvatarFormat;
@@ -540,5 +580,22 @@ function toAvatar(record: Json, pds: string, did: string): ProviderAvatar | null
     thumbnail: thumbnail ? blobUrl(pds, did, thumbnail.cid) : null,
     format,
     metadata: { modelCid: model.cid, vrmVersion: typeof vrmVersion === 'string' ? vrmVersion : null },
+  };
+}
+
+/** A net.worldmesh.building record whose model is a GLB blob. */
+function toBuilding(record: Json, pds: string, did: string): ProviderBuilding | null {
+  const uri = record.uri;
+  const value = record.value as Json | undefined;
+  if (typeof uri !== 'string' || !value || parseRecordUri(uri, BUILDING_COLLECTION)?.did !== did) return null;
+  const model = blobRef(value.model);
+  if (!model || model.mimeType !== MODEL_MIME) return null;
+  const thumbnail = blobRef(value.thumbnail);
+  return {
+    id: uri,
+    name: typeof value.name === 'string' && value.name ? value.name.slice(0, 64) : null,
+    thumbnail: thumbnail ? blobUrl(pds, did, thumbnail.cid) : null,
+    bytes: model.size,
+    sourceUrl: null,
   };
 }

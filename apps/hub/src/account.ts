@@ -11,6 +11,7 @@
  */
 
 import { characterSummary, initAvatarWallet, setSignedIn, walletView } from './avatars';
+import { buildingsSummary, buildingsView, initBuildings, setBuildingsSignedIn } from './myBuildings';
 
 interface AccountUser {
   id: string;
@@ -53,9 +54,11 @@ let resetToken: string | null = null;
 /** Kept across re-renders so a failed attempt doesn't wipe what was typed. */
 let draft = { name: '', email: '', password: '' };
 /** Which page of the signed-in dialog is showing. */
-let signedInView: 'account' | 'wallet' = 'account';
+let signedInView: 'account' | 'wallet' | 'buildings' = 'account';
 /** Came back from connecting an avatar platform: open the wallet once signed in. */
 let openWallet = false;
+/** Came back from a platform's page opened in My buildings: open that once signed in. */
+let openBuildings = false;
 /** "Continue with Bluesky" was picked: ask for the handle in its place. */
 let atprotoOpen = false;
 
@@ -109,6 +112,10 @@ function safeReturnPath(value: string | null): string | null {
 }
 
 export function initAccount(): void {
+  // First: a trip begun in My buildings comes back with the same parameters as the wallet's.
+  openBuildings = initBuildings(() => {
+    if (dialog.open) renderDialog();
+  }) !== null;
   openWallet = initAvatarWallet(() => {
     if (dialog.open) renderDialog();
   }) !== null;
@@ -168,12 +175,14 @@ async function refresh(openIfNoUsername: boolean): Promise<void> {
     user = ((await response.json()) as { user: AccountUser | null }).user;
     setHint(!!user);
     setSignedIn(!!user);
+    setBuildingsSignedIn(!!user);
     renderButton();
     for (const listener of accountListeners) listener();
     if (dialog.open) renderDialog();
-    if (user && openWallet) {
+    if (user && (openWallet || openBuildings)) {
+      signedInView = openBuildings ? 'buildings' : 'wallet';
       openWallet = false;
-      signedInView = 'wallet';
+      openBuildings = false;
       renderDialog();
       dialog.showModal();
     }
@@ -326,6 +335,7 @@ async function signOut(): Promise<void> {
     user = null;
     setHint(false);
     setSignedIn(false);
+    setBuildingsSignedIn(false);
     renderButton();
     for (const listener of accountListeners) listener();
     dialog.close();
@@ -402,6 +412,13 @@ function renderDialog(): void {
         renderDialog();
       }),
     );
+  } else if (signedInView === 'buildings') {
+    body.append(
+      ...buildingsView(() => {
+        signedInView = 'account';
+        renderDialog();
+      }),
+    );
   } else {
     const who = document.createElement('div');
     who.className = 'account-who';
@@ -422,6 +439,11 @@ function renderDialog(): void {
     body.append(
       characterSummary(() => {
         signedInView = 'wallet';
+        message = null;
+        renderDialog();
+      }),
+      buildingsSummary(() => {
+        signedInView = 'buildings';
         message = null;
         renderDialog();
       }),

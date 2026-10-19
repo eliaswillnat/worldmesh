@@ -1,8 +1,10 @@
 /**
  * Uploads a VRM or GLB straight from the browser to the user's own AT Protocol
- * server (PDS) as an at3d avatar. WorldMesh only hands over a short-lived,
- * upload-only grant (see workers/auth/src/avatars/atproto.ts); the file itself
- * never passes through WorldMesh.
+ * server (PDS) as an at3d avatar, or a GLB as a building for the hub city
+ * (a net.worldmesh.building record, docs/specs/buildings.md). WorldMesh only
+ * hands over a short-lived, upload-only grant (see
+ * workers/auth/src/avatars/atproto.ts); the file itself never passes through
+ * WorldMesh.
  *
  * The grant's access token is DPoP-bound, so each request carries a proof
  * signed with the grant's key (https://atproto.com/specs/oauth).
@@ -10,6 +12,8 @@
 
 export interface UploadGrant {
   provider: string;
+  /** What it may upload: a character, or a building. */
+  kind: 'avatar' | 'building';
   /** The user's PDS. */
   service: string;
   /** The user's DID. */
@@ -23,6 +27,7 @@ export interface UploadGrant {
 export const MAX_MODEL_BYTES = 40 * 1024 * 1024;
 const MODEL_MIME = 'model/gltf-binary';
 const COLLECTION = 'app.at3d.avatar';
+const BUILDING_COLLECTION = 'net.worldmesh.building';
 
 export interface ModelInfo {
   format: 'vrm' | 'gltf';
@@ -85,6 +90,27 @@ export async function uploadToAt3d(grant: UploadGrant, file: File, name: string,
   });
   const { uri } = (await readJson(created, 'Your AT Protocol server did not save the avatar.')) as { uri?: unknown };
   if (typeof uri !== 'string') throw new Error('Your AT Protocol server did not save the avatar.');
+  return uri;
+}
+
+/** Uploads a building's GLB and creates its net.worldmesh.building record. Returns the record's at:// URI. */
+export async function uploadBuildingToPds(grant: UploadGrant, file: File, name: string): Promise<string> {
+  const client = await dpopClient(grant);
+  const blobResponse = await client.fetch(xrpc(grant, 'com.atproto.repo.uploadBlob'), {
+    method: 'POST',
+    headers: { 'Content-Type': MODEL_MIME },
+    body: file,
+  });
+  const uploaded = (await readJson(blobResponse, 'Your AT Protocol server did not accept the model.')) as { blob?: unknown };
+  if (!uploaded.blob) throw new Error('Your AT Protocol server did not accept the model.');
+  const record = { $type: BUILDING_COLLECTION, name, model: uploaded.blob, createdAt: new Date().toISOString() };
+  const created = await client.fetch(xrpc(grant, 'com.atproto.repo.createRecord'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ repo: grant.account, collection: BUILDING_COLLECTION, record }),
+  });
+  const { uri } = (await readJson(created, 'Your AT Protocol server did not save the building.')) as { uri?: unknown };
+  if (typeof uri !== 'string') throw new Error('Your AT Protocol server did not save the building.');
   return uri;
 }
 

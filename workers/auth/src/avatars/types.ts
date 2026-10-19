@@ -2,6 +2,8 @@ import type { Env } from '../auth';
 
 export type AvatarProviderId = 'vroid' | 'atproto' | 'sketchfab';
 export type AvatarFormat = 'vrm' | 'glb' | 'gltf';
+/** What an upload is for: a character, or a building for the hub city (docs/specs/buildings.md). */
+export type UploadKind = 'avatar' | 'building';
 
 /**
  * What a world receives: enough to render one avatar, nothing about the
@@ -60,6 +62,31 @@ export interface AvatarRow {
   metadata_json: string | null;
 }
 
+/** One model a provider lists that could stand in the hub city as a building. Always a GLB. */
+export interface ProviderBuilding {
+  id: string;
+  name: string | null;
+  thumbnail: string | null;
+  /** Size of the GLB in bytes, where the platform says. */
+  bytes: number | null;
+  /** The model's public page, for credit. */
+  sourceUrl: string | null;
+}
+
+export interface BuildingRow {
+  id: string;
+  user_id: string;
+  connection_id: string;
+  provider: AvatarProviderId;
+  external_id: string;
+  display_name: string | null;
+  custom_name: string | null;
+  thumbnail_url: string | null;
+  metadata_json: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
 /** What a provider hands back once an account is verified. */
 export interface NewConnection {
   providerAccountId: string;
@@ -77,6 +104,8 @@ export interface NewConnection {
  */
 export interface UploadGrant {
   provider: AvatarProviderId;
+  /** What the browser may upload with it. */
+  kind: UploadKind;
   /** Where the browser sends the model (the user's PDS). */
   service: string;
   /** The account the upload goes to (the DID). */
@@ -129,7 +158,7 @@ export interface AvatarProvider {
   /** Whether the Worker has what this provider needs (client credentials…). */
   isConfigured(env: Env): boolean;
   /** Starts authorization: where to send the browser, and what the callback must see again. */
-  connect(ctx: ProviderContext, input: { userId: string; handle?: string; upload?: boolean }): Promise<{ url: string; flow: OAuthFlow }>;
+  connect(ctx: ProviderContext, input: { userId: string; handle?: string; upload?: UploadKind }): Promise<{ url: string; flow: OAuthFlow }>;
   /** Gives an upload grant back once the browser is done with it. Best effort. */
   revokeUpload?(ctx: ProviderContext, grant: UploadGrant): Promise<void>;
   /** Finishes authorization at the callback. Throws AvatarError when it cannot be verified. */
@@ -143,6 +172,12 @@ export interface AvatarProvider {
   resolveAvatar(ctx: ProviderContext, connection: ConnectionRow, avatar: AvatarRow): Promise<AvatarDescriptor>;
   /** Renews stored credentials if they are about to expire, and returns the usable ones. */
   refreshAuth(ctx: ProviderContext, connection: ConnectionRow): Promise<unknown | null>;
+  /** How "My buildings" names this platform, where it can hold buildings at all. */
+  readonly buildingLabel?: string;
+  /** Models of this account that could stand as buildings (./buildings.ts). */
+  listBuildings?(ctx: ProviderContext, connection: ConnectionRow): Promise<ProviderBuilding[]>;
+  /** One of them, verified to belong to this account, or null. Used when saving. */
+  getBuilding?(ctx: ProviderContext, connection: ConnectionRow, id: string): Promise<ProviderBuilding | null>;
 }
 
 /** An error whose message is safe to show the user. */

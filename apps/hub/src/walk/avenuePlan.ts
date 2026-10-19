@@ -43,7 +43,7 @@ export const AVENUES: AvenueConfig = {
 };
 
 /** How far a door stands proud of a block's wall. */
-const OUT = 0.3;
+export const DOOR_OUT = 0.3;
 
 export interface CityBlock {
   /** 0 is the ring nearest the rotunda. */
@@ -240,9 +240,9 @@ function planRing(hub: number, ring: number, first: number, slotWidth: number, c
         place: (count) =>
           spread(length, count).map((offset) => {
             const along = config.cornerClear + offset;
-            const [x, z] = face.at(along, OUT);
+            const [x, z] = face.at(along, DOOR_OUT);
             const [facingX, facingZ] = face.normal(along);
-            return { x, z, facingX, facingZ, out: OUT, ring, block: first + index, face: face.index, along };
+            return { x, z, facingX, facingZ, out: DOOR_OUT, ring, block: first + index, face: face.index, along };
           }),
       };
     });

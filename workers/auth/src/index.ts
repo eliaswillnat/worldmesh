@@ -1,7 +1,7 @@
 /**
  * WorldMesh accounts: Better Auth (email + password, ATProto, Google, Apple,
- * GitHub, Discord) on D1, plus the account endpoints the hub needs and the Avatar
- * Wallet (src/avatars). Served on the hub's own origin through Worker routes,
+ * GitHub, Discord) on D1, plus the account endpoints the hub needs, the Avatar
+ * Wallet and My buildings (src/avatars). Served on the hub's own origin through Worker routes,
  * so the session cookie is first-party and host-only.
  *
  * Deliberately knows nothing about ActivityPub; workers/federation reads the
@@ -9,6 +9,7 @@
  */
 import { AUTH_BASE_PATH, configuredProviders, getAuth, passwordOptions, type Env } from './auth';
 import { getMe, setUsername } from './account';
+import { BUILDING_BASE_PATH, handleBuildingRequest } from './avatars/buildings';
 import { AVATAR_BASE_PATH, handleAvatarRequest } from './avatars/routes';
 import { HttpError, json, secure } from './http';
 
@@ -16,7 +17,7 @@ export type { Env };
 
 /** Endpoints worth a per-IP limit in front of everything else. */
 const LIMITED =
-  /^\/api\/auth\/(sign-in|sign-up|callback|atproto|sign-out|request-password-reset|reset-password|send-verification-email)\b|^\/api\/account\/username$|^\/api\/account\/avatar\/(connect|callback|connections|select|disconnect|handoff|resolve)\b/;
+  /^\/api\/auth\/(sign-in|sign-up|callback|atproto|sign-out|request-password-reset|reset-password|send-verification-email)\b|^\/api\/account\/username$|^\/api\/account\/avatar\/(connect|callback|connections|select|disconnect|handoff|resolve)\b|^\/api\/account\/building\/(connections|collect)\b/;
 
 export default {
   async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
@@ -32,7 +33,7 @@ export default {
       const limited = !preflight && !keyRead && LIMITED.exec(url.pathname);
       if (limited && env.AUTH_LIMITER) {
         const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
-        const bucket = limited[2] ? `avatar-${limited[2]}` : url.pathname.split('/')[3];
+        const bucket = limited[2] ? `avatar-${limited[2]}` : limited[3] ? `building-${limited[3]}` : url.pathname.split('/')[3];
         const { success } = await env.AUTH_LIMITER.limit({ key: `${ip}:${bucket}` });
         if (!success) throw new HttpError(429, 'Too many requests. Try again in a minute.');
       }
@@ -40,6 +41,10 @@ export default {
       if (url.pathname.startsWith(`${AVATAR_BASE_PATH}/`)) {
         const exec = ctx ?? { waitUntil: (promise: Promise<unknown>) => void promise.catch(() => undefined) };
         return secure(await handleAvatarRequest(request, env, () => getAuth(env), exec));
+      }
+      if (url.pathname.startsWith(`${BUILDING_BASE_PATH}/`)) {
+        const exec = ctx ?? { waitUntil: (promise: Promise<unknown>) => void promise.catch(() => undefined) };
+        return secure(await handleBuildingRequest(request, env, () => getAuth(env), exec));
       }
 
       if (url.pathname.startsWith(`${AUTH_BASE_PATH}/`)) {

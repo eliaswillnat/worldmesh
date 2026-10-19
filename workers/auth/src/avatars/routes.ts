@@ -6,7 +6,8 @@
  *   GET  /wallet                     connected providers, the collection and the selected avatar (D1 only)
  *   GET  /connections/:id/avatars    live listing from the provider
  *   POST /connect/:provider          { handle? } → { url } to the provider's authorization page
- *                                    { upload: true } asks the connected account for upload permission
+ *                                    { upload: true } asks the connected account for upload permission,
+ *                                    { upload: 'building' } for permission to upload a building
  *   GET  /callback/:provider         provider redirect target
  *   POST /disconnect                 { connectionId }
  *   POST /collect                    { connectionId, avatarId } adds to the collection
@@ -21,6 +22,8 @@
  *
  * For AT Protocol authorization servers:
  *   GET  /atproto/client-metadata.json
+ *
+ * "My buildings" (./buildings.ts) uses the same connections, under /api/account/building.
  */
 import type { Auth, Env } from '../auth';
 import { HttpError, isSameOrigin, json, readJson } from '../http';
@@ -40,6 +43,7 @@ import {
   type OAuthFlow,
   type ProviderContext,
   type UploadGrant,
+  type UploadKind,
 } from './types';
 import { vroidProvider } from './vroid';
 
@@ -61,11 +65,11 @@ export function avatarWalletEnabled(env: Env): boolean {
   return !!env.AVATAR_SECRET && env.AVATAR_SECRET.length >= 32;
 }
 
-function configuredProviders(env: Env): AvatarProvider[] {
+export function configuredProviders(env: Env): AvatarProvider[] {
   return avatarWalletEnabled(env) ? Object.values(PROVIDERS).filter((p) => p.isConfigured(env)) : [];
 }
 
-function providerFor(env: Env, id: string | undefined): AvatarProvider {
+export function providerFor(env: Env, id: string | undefined): AvatarProvider {
   const provider = configuredProviders(env).find((p) => p.id === id);
   if (!provider) throw new HttpError(404, 'Unknown avatar provider.');
   return provider;
@@ -122,10 +126,12 @@ export async function handleAvatarRequest(
       const provider = providerFor(env, connect[1]);
       const body = (await readJson(request, 1024)) as { handle?: unknown; upload?: unknown } | null;
       let handle = typeof body?.handle === 'string' ? body.handle.slice(0, 256) : undefined;
-      const upload = body?.upload === true;
+      const upload: UploadKind | undefined = body?.upload === true ? 'avatar' : body?.upload === 'building' ? 'building' : undefined;
       if (upload) {
         // Upload permission is asked of the account already connected, never another one.
-        if (!provider.revokeUpload) throw new HttpError(400, `Uploading to ${provider.label} is not available.`);
+        if (!provider.revokeUpload || (upload === 'building' && !provider.listBuildings)) {
+          throw new HttpError(400, `Uploading to ${provider.label} is not available.`);
+        }
         const connection = (await store.connectionsOf(env.DB, userId)).find((c) => c.provider === provider.id && c.status === 'active');
         if (!connection) throw new HttpError(404, `Connect ${provider.label} first.`);
         handle = connection.provider_account_id;
@@ -191,8 +197,8 @@ export async function handleAvatarRequest(
       const grant = await readUploadGrant(request, env, origin, userId);
       if (!grant) throw new HttpError(410, 'The upload permission has expired. Start the upload again.');
       // The refresh token and revocation details stay here.
-      const { provider, service, account, accessToken, dpopKey, expiresAt } = grant;
-      return json({ provider, service, account, accessToken, dpopKey, expiresAt });
+      const { provider, kind, service, account, accessToken, dpopKey, expiresAt } = grant;
+      return json({ provider, kind: kind ?? 'avatar', service, account, accessToken, dpopKey, expiresAt });
     }
 
     if (path === '/upload/done' && method === 'POST') {
@@ -245,11 +251,12 @@ async function wallet(env: Env, userId: string) {
 }
 
 async function finishConnect(request: Request, env: Env, auth: Auth, exec: WaitUntil, origin: string, providerId: string): Promise<Response> {
-  /** For 'upload', `detail` names the provider; for 'error', the reason. */
-  const done = (outcome: 'connected' | 'upload' | 'error', detail?: string, extraCookie?: string) => {
+  /** For 'upload', `detail` names the provider (and `kind` says a building's); for 'error', the reason. */
+  const done = (outcome: 'connected' | 'upload' | 'error', detail?: string, extraCookie?: string, kind?: UploadKind) => {
     const target = new URL('/', origin);
     target.searchParams.set('avatar', outcome);
     if (detail) target.searchParams.set(outcome === 'upload' ? 'provider' : 'reason', detail);
+    if (kind === 'building') target.searchParams.set('kind', kind);
     const headers = new Headers({ Location: target.toString() });
     headers.append('Set-Cookie', flowCookie(origin, '', 0));
     if (extraCookie) headers.append('Set-Cookie', extraCookie);
@@ -286,7 +293,7 @@ async function finishConnect(request: Request, env: Env, auth: Auth, exec: WaitU
       }
       const sealed = await seal(env.AVATAR_SECRET, 'upload-grant-v1', flow.userId, grant);
       const maxAge = Math.max(0, Math.floor((grant.expiresAt - Date.now()) / 1000));
-      return done('upload', provider.id, uploadCookie(origin, sealed, maxAge));
+      return done('upload', provider.id, uploadCookie(origin, sealed, maxAge), grant.kind);
     }
     await store.saveConnection(env.DB, env.AVATAR_SECRET, flow.userId, provider.id, account);
     return done('connected');
@@ -348,7 +355,7 @@ async function resolve(request: Request, env: Env, exec: WaitUntil, origin: stri
   }
 }
 
-function context(env: Env, exec: WaitUntil, origin: string, provider: AvatarProviderId): ProviderContext {
+export function context(env: Env, exec: WaitUntil, origin: string, provider: AvatarProviderId): ProviderContext {
   return {
     env,
     origin,
