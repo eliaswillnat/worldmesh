@@ -3,7 +3,7 @@
  * instead of the WorldMesh presence relay. See "Your own network layer" in
  * docs/compatibility.md, and pubsub-server.mjs for a server it talks to.
  *
- *   createWorldMesh({ scene, camera, renderer, avatar: { source: 'worldmesh' },
+ *   await loadWorldMesh({ scene, camera, renderer, avatar: { source: 'worldmesh' },
  *     network: new PubSubNetwork('wss://rooms.example/forest') });
  *
  * On the wire, as JSON. The server adds `from`, the sender's id, to everything
