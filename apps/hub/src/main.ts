@@ -477,6 +477,8 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
       private: loadWalkPrivate(),
       color,
       ads: adsEnabled(),
+      // ?buildings=demo: demo buildings on the city's first lots (docs/specs/buildings.md).
+      buildings: new URLSearchParams(window.location.search).get('buildings') === 'demo' ? 'demo' : undefined,
       onPresenceCount: (count) => {
         const prev = walkOnline.dataset.count != null ? Number(walkOnline.dataset.count) : null;
         if (count === null) {

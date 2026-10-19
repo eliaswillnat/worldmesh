@@ -70,6 +70,8 @@ const THRESHOLD = 0.1;
 const REACH = 1;
 /** Where the backstop goes while the doorway can be walked through: far enough for the camera to follow. */
 const PASSABLE_BACKSTOP = 12;
+/** A doorway on a building's portal face stands this far in front of it, clear of the wall the face was drawn on. */
+const SHAPED_PORTAL_OUT = 0.04;
 /** How far the floor runs on behind the doorway, through the wall: the hall's own floor stops at it. */
 const SILL_DEPTH = 1.6;
 /** Half the width a door takes up along a wall, frame included. */
@@ -103,6 +105,8 @@ const portalFragment = /* glsl */ `
   uniform float uWarpT;
   uniform vec2 uBreath;
   uniform float uLive;
+  // Width over height of the opening.
+  uniform float uAspect;
   varying vec2 vUv;
   ${ROUNDED_TOP_GLSL}
 
@@ -111,7 +115,7 @@ const portalFragment = /* glsl */ `
   // ripple's slope there (to shade the picture and split its colours).
   vec3 warp(vec2 p) {
     if (uWarp <= 0.0) return vec3(p, 0.0);
-    vec2 aspect = vec2(${(DOOR_WIDTH / DOOR_HEIGHT).toFixed(4)}, 1.0);
+    vec2 aspect = vec2(uAspect, 1.0);
     vec2 d = p * aspect;
     float r = length(d);
     vec2 dir = r > 0.0001 ? d / r : vec2(0.0);
@@ -147,7 +151,7 @@ const portalFragment = /* glsl */ `
     // Shade toward the edges so it reads as depth, not a sticker.
     float edge = max(abs(p.x) * 2.0, abs(p.y) * 2.0);
     vec3 color = base * (1.0 - 0.18 * smoothstep(0.4, 1.0, edge));
-    vec2 q = vec2(p.x * ${(DOOR_WIDTH / DOOR_HEIGHT).toFixed(4)}, p.y);
+    vec2 q = vec2(p.x * uAspect, p.y);
     float bar = 0.012;
     float arm = 0.1;
     float plus = max(
@@ -181,7 +185,7 @@ const portalFragment = /* glsl */ `
     // Chromatic aberration on the rings: red and blue pulled apart outward from the middle.
     vec2 outward = vUv - 0.5;
     vec2 split = length(outward) > 0.0001 ? normalize(outward) * abs(bent.z) * 0.018 : vec2(0.0);
-    float rim = roundedTopEdge(vUv, ${GALLERY_CORNER.toFixed(6)}, ${(DOOR_WIDTH / DOOR_HEIGHT).toFixed(6)});
+    float rim = roundedTopEdge(vUv, ${GALLERY_CORNER.toFixed(6)}, uAspect);
     if (rim > 1.0) discard;
     // A live view (liveDoors): the doorway clear, so the world drawn behind
     // the lobby's canvas shows through. Fading in or out, see the end.
@@ -265,6 +269,18 @@ const portalFragment = /* glsl */ `
 /** The random door's blue, for its frame, halo and name. */
 const RANDOM_BLUE = 0x4db2ff;
 
+/**
+ * A doorway of its own size, set into something else that frames it: a
+ * building's portal face (docs/specs/buildings.md). See Door.setShape.
+ */
+export interface DoorShape {
+  /** The opening, in metres. */
+  width: number;
+  height: number;
+  /** Width of the unseen wall behind the doorway: the whole cut it stands in, so nobody slips past it. */
+  span: number;
+}
+
 export class Door {
   readonly group = new Group();
   readonly world: DoorWorld | null;
@@ -273,9 +289,11 @@ export class Door {
 
   private portal: Mesh<PlaneGeometry, ShaderMaterial>;
   private frameMaterial: MeshStandardMaterial;
+  private frameMesh: Mesh;
   private backstop: Mesh<PlaneGeometry, MeshBasicMaterial>;
-  /** Solid parts: the frame, and the backstop behind the doorway. */
-  readonly blockers: Mesh[];
+  private sill: Mesh<PlaneGeometry, MeshBasicMaterial>;
+  /** The opening's own size (setShape), or null for the standard framed doorway. */
+  private shape: DoorShape | null = null;
   /** Being walked through right now (setPassable): the camera may follow into the doorway. */
   passable = false;
   private geometries: BufferGeometry[] = [];
@@ -287,6 +305,8 @@ export class Door {
   private fullBanner: Mesh<PlaneGeometry, MeshBasicMaterial> | null = null;
   /** In the city: the storefront's fascia sign, which takes the place of the name, chips and gate number. */
   private sign: { mesh: Mesh<BufferGeometry, MeshBasicMaterial>; draw: () => void } | null = null;
+  /** The sign is taken down for now (hideSign): a building stands where its storefront was. */
+  private signHidden = false;
   private cover: Texture | null = null;
   private placeholder: Texture;
   private halo: Mesh<PlaneGeometry, MeshBasicMaterial> | null = null;
@@ -337,25 +357,20 @@ export class Door {
     // Frame: posts and a lintel. Its top corners follow the opening, and the posts run under the floor.
     const frame = doorFrameGeometry(DOOR_WIDTH, DOOR_HEIGHT, FRAME, DEPTH);
     this.geometries.push(frame);
-    const frameMesh = new Mesh(frame, this.frameMaterial);
-    this.group.add(frameMesh);
+    this.frameMesh = new Mesh(frame, this.frameMaterial);
+    this.group.add(this.frameMesh);
 
     // Unseen wall just past the reach, inside the wall's thickness: if the
     // doorway doesn't take you (frame edge, a departure already under way),
     // you stop here instead of slipping into the wall and out of the hall.
-    const backstop = new PlaneGeometry(DOOR_HALF_SPAN * 2 + 0.4, DOOR_TOP + 1);
-    this.geometries.push(backstop);
-    this.backstop = new Mesh(backstop, new MeshBasicMaterial({ visible: false, side: DoubleSide }));
+    this.backstop = new Mesh(new PlaneGeometry(DOOR_HALF_SPAN * 2 + 0.4, DOOR_TOP + 1), new MeshBasicMaterial({ visible: false, side: DoubleSide }));
     this.backstop.position.set(0, (DOOR_TOP + 1) / 2, -(REACH + 0.08));
     this.group.add(this.backstop);
     // Unseen floor through the wall's thickness, for walking on through the doorway (setPassable).
-    const sill = new PlaneGeometry(DOOR_WIDTH, SILL_DEPTH);
-    this.geometries.push(sill);
-    const sillMesh = new Mesh(sill, this.backstop.material);
-    sillMesh.rotation.x = -Math.PI / 2;
-    sillMesh.position.set(0, 0, -SILL_DEPTH / 2);
-    this.group.add(sillMesh);
-    this.blockers = [frameMesh, this.backstop, sillMesh];
+    this.sill = new Mesh(new PlaneGeometry(DOOR_WIDTH, SILL_DEPTH), this.backstop.material);
+    this.sill.rotation.x = -Math.PI / 2;
+    this.sill.position.set(0, 0, -SILL_DEPTH / 2);
+    this.group.add(this.sill);
 
     // The world on the other side fills the doorway.
     this.placeholder = new Texture();
@@ -370,6 +385,7 @@ export class Door {
           uHasMap: { value: 0 },
           uFit: { value: new Vector2(1, 1) },
           uLive: { value: 0 },
+          uAspect: { value: DOOR_WIDTH / DOOR_HEIGHT },
         },
         side: DoubleSide,
       }),
@@ -420,6 +436,58 @@ export class Door {
     return this.world === null && !this.random;
   }
 
+  /** Solid parts: the frame, the backstop behind the doorway, and the floor through it. */
+  get blockers(): Mesh[] {
+    return this.shape ? [this.backstop, this.sill] : [this.frameMesh, this.backstop, this.sill];
+  }
+
+  /** The opening's width and height, in metres. */
+  get width(): number {
+    return this.shape?.width ?? DOOR_WIDTH;
+  }
+
+  get height(): number {
+    return this.shape?.height ?? DOOR_HEIGHT;
+  }
+
+  /** Where the doorway's surround ends at the top: the frame's top, or the opening's own without one. */
+  private get top(): number {
+    return this.shape ? this.shape.height : DOOR_TOP;
+  }
+
+  /**
+   * Give the doorway a size of its own and drop its frame, for a building
+   * whose portal face frames it (docs/specs/buildings.md); null puts back the
+   * standard framed doorway. Everything else stays: cover, ripple, live view,
+   * walking through, and the name over it.
+   */
+  setShape(shape: DoorShape | null): void {
+    if (this.disposed) return;
+    this.shape = shape;
+    const { width, height } = this;
+    this.frameMesh.visible = !shape;
+    this.portal.geometry.dispose();
+    this.portal.geometry = new PlaneGeometry(width, height);
+    // In a frame it sits just inside; on a building's face, just in front of whatever the face was drawn on.
+    this.portal.position.set(0, height / 2, shape ? SHAPED_PORTAL_OUT : -0.02);
+    this.portal.material.uniforms.uAspect.value = width / height;
+    const span = shape ? shape.span : DOOR_HALF_SPAN * 2 + 0.4;
+    this.backstop.geometry.dispose();
+    this.backstop.geometry = new PlaneGeometry(span, this.top + 1);
+    this.backstop.position.y = (this.top + 1) / 2;
+    this.sill.geometry.dispose();
+    this.sill.geometry = new PlaneGeometry(width, SILL_DEPTH);
+    this.label.position.y = this.top + 1.2;
+    if (this.chips) this.chips.mesh.position.y = this.top + CHIP_LIFT;
+    if (this.fullBanner) {
+      this.fullBanner.scale.x = width / DOOR_WIDTH;
+      this.fullBanner.position.y = height - FULL_BANNER_HEIGHT / 2 - 0.12;
+    }
+    this.fitCover();
+    this.stackLabel();
+    this.group.updateMatrixWorld(true);
+  }
+
   /**
    * The doorway's face. An empty door is closed, so this doubles as the
    * collider that stops people walking into it, and as the tap target.
@@ -453,12 +521,9 @@ export class Door {
       this.sign = null;
     }
     const world = this.world;
-    const show = !geometry || this.random;
-    this.label.visible = show;
-    if (this.chips) this.chips.mesh.visible = show;
-    if (this.gate) this.gate.mesh.visible = show;
-    if (show) {
+    if (!geometry || this.random) {
       geometry?.dispose();
+      this.showSign();
       return;
     }
     const { texture, draw } = createSign(
@@ -482,6 +547,27 @@ export class Door {
     this.group.add(mesh);
     this.sign = { mesh, draw };
     draw();
+    this.showSign();
+  }
+
+  /**
+   * Take the fascia sign down for now and put the name, chips and gate
+   * number back over the doorway, as when there is no sign (a building
+   * stands where the storefront was); false hangs the sign again.
+   */
+  hideSign(hidden: boolean): void {
+    if (this.disposed) return;
+    this.signHidden = hidden;
+    this.showSign();
+  }
+
+  /** The sign, or in its place the name, chips and gate number. */
+  private showSign(): void {
+    const signed = Boolean(this.sign) && !this.signHidden;
+    if (this.sign) this.sign.mesh.visible = signed;
+    this.label.visible = !signed;
+    if (this.chips) this.chips.mesh.visible = !signed;
+    if (this.gate) this.gate.mesh.visible = !signed;
   }
 
   /**
@@ -550,7 +636,7 @@ export class Door {
     }
     const badge = createGateBadge(gate, this.light);
     badge.mesh.position.z = 0.26;
-    badge.mesh.visible = !this.sign;
+    badge.mesh.visible = !this.sign || this.signHidden;
     this.group.add(badge.mesh);
     this.gate = { number: gate, ...badge };
     this.stackLabel();
@@ -577,7 +663,7 @@ export class Door {
   /** How far (x, z) stands in front of the doorway, or null if off to the side. */
   distanceInFront(x: number, z: number): number | null {
     const { localX, localZ } = this.toLocal(x, z);
-    if (Math.abs(localX) > DOOR_WIDTH || localZ < 0) return null;
+    if (Math.abs(localX) > this.width || localZ < 0) return null;
     return localZ;
   }
 
@@ -606,7 +692,7 @@ export class Door {
   /** True once (x, z) has walked into the doorway. */
   contains(x: number, z: number): boolean {
     const { localX, localZ } = this.toLocal(x, z);
-    return Math.abs(localX) < DOOR_WIDTH / 2 && localZ < THRESHOLD && localZ > -REACH;
+    return Math.abs(localX) < this.width / 2 && localZ < THRESHOLD && localZ > -REACH;
   }
 
   private toLocal(x: number, z: number): { localX: number; localZ: number } {
@@ -676,12 +762,12 @@ export class Door {
    * every frame because a late font load redraws (and resizes) either one.
    */
   private stackLabel(): void {
-    const chipTop = this.chips ? CHIP_BOTTOM + this.chips.mesh.scale.y : 0;
+    const chipTop = this.chips ? this.top + CHIP_LIFT + this.chips.mesh.scale.y : 0;
     if (this.gate) {
       // In the hall, gate numbers and names line up along the wall: every
       // name hangs from the same height under its gate, with any chips in
       // the space below it. Only an unusually tall stack pushes them higher.
-      const nameTop = Math.max(NAME_TOP, chipTop + LABEL_GAP + this.label.scale.y);
+      const nameTop = Math.max(this.top + NAME_LIFT, chipTop + LABEL_GAP + this.label.scale.y);
       this.label.position.y = nameTop - this.label.scale.y / 2;
       this.gate.mesh.position.y = nameTop + GATE_GAP + this.gate.mesh.scale.y / 2;
     } else if (this.chips) {
@@ -709,6 +795,8 @@ export class Door {
     this.portal.geometry.dispose();
     this.portal.material.dispose();
     for (const geometry of this.geometries) geometry.dispose();
+    this.backstop.geometry.dispose();
+    this.sill.geometry.dispose();
     this.frameMaterial.dispose();
     this.backstop.material.dispose();
     this.halo?.geometry.dispose();
@@ -734,6 +822,15 @@ export class Door {
     this.group.removeFromParent();
   }
 
+  /** Crop the cover to the doorway's shape, whatever its own. */
+  private fitCover(): void {
+    const image = this.cover?.image as { width: number; height: number } | undefined;
+    if (!image?.width || !image.height) return;
+    const aspect = image.width / image.height;
+    const doorway = this.width / this.height;
+    this.portal.material.uniforms.uFit.value = aspect > doorway ? new Vector2(doorway / aspect, 1) : new Vector2(1, aspect / doorway);
+  }
+
   private async loadCover(src: string): Promise<void> {
     const texture = await loadCoverTexture(src);
     if (!texture) return;
@@ -741,16 +838,11 @@ export class Door {
       texture.dispose();
       return;
     }
-    const image = texture.image as { width: number; height: number };
-    const aspect = image.width / image.height;
-    const doorway = DOOR_WIDTH / DOOR_HEIGHT;
-    // Crop the cover to the doorway's shape, whatever its own.
-    const fit = aspect > doorway ? new Vector2(doorway / aspect, 1) : new Vector2(1, aspect / doorway);
     const uniforms = this.portal.material.uniforms;
     uniforms.uMap.value = texture;
-    uniforms.uFit.value = fit;
     uniforms.uHasMap.value = 1;
     this.cover = texture;
+    this.fitCover();
     const sampled = colorFromCover(texture.image);
     if (sampled) {
       // The tint is shared with the portal shader, so this recolours both.
@@ -842,6 +934,8 @@ export function worldIsFull(count: number, cap: number): boolean {
   return Number.isFinite(count) && Number.isFinite(cap) && cap > 0 && count >= cap;
 }
 
+const FULL_BANNER_HEIGHT = 0.55;
+
 /** Red "World is full" strip across the top of the cover. */
 function createFullBanner(): Mesh<PlaneGeometry, MeshBasicMaterial> {
   const canvas = document.createElement('canvas');
@@ -867,11 +961,10 @@ function createFullBanner(): Mesh<PlaneGeometry, MeshBasicMaterial> {
     depthWrite: false,
     side: DoubleSide,
   });
-  const height = 0.55;
   const width = DOOR_WIDTH * 0.92;
-  const mesh = new Mesh(new PlaneGeometry(width, height), material);
+  const mesh = new Mesh(new PlaneGeometry(width, FULL_BANNER_HEIGHT), material);
   // Just under the lintel, on the cover face.
-  mesh.position.set(0, DOOR_HEIGHT - height / 2 - 0.12, 0.01);
+  mesh.position.set(0, DOOR_HEIGHT - FULL_BANNER_HEIGHT / 2 - 0.12, 0.01);
   mesh.renderOrder = 3;
   if (document.fonts && !document.fonts.check('700 44px Urbanist')) {
     document.fonts.load('700 44px Urbanist').then(() => {
@@ -1014,7 +1107,8 @@ export function createLabel(
 const GATE_PX = 0.34 / 104;
 const GATE_GAP = 0.02;
 /** The top of every name under a gate. */
-const NAME_TOP = DOOR_TOP + 1.88;
+/** In the hall, every name's top sits this far over the top of its doorway's surround. */
+const NAME_LIFT = 1.88;
 
 /**
  * "GATE" over a big two-digit "03" in amber, the number sized so its edges
@@ -1097,7 +1191,8 @@ function createGateBadge(gate: number, light: boolean): { mesh: Mesh<PlaneGeomet
 /** Height of one row of chips on the wall, in metres. */
 const CHIP_HEIGHT = 0.46;
 /** Where the chips start: just over the door frame, under the name. */
-const CHIP_BOTTOM = DOOR_TOP + 0.18;
+/** Chips start this far over the top of the doorway's surround. */
+const CHIP_LIFT = 0.18;
 /** Space between the top row of chips and the name's canvas. */
 const LABEL_GAP = -0.12;
 
@@ -1123,7 +1218,7 @@ function createChips(labels: string[]): { mesh: Mesh<PlaneGeometry, MeshBasicMat
   // Grow upward from the bottom edge, however many rows there are.
   geometry.translate(0, 0.5, 0);
   const mesh = new Mesh(geometry, material);
-  mesh.position.y = CHIP_BOTTOM;
+  mesh.position.y = DOOR_TOP + CHIP_LIFT;
   let light = false;
 
   const draw = (isLight: boolean) => {

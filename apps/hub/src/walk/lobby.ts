@@ -56,7 +56,8 @@ import { doorFrameGeometry, frameOuterCorner, openingCorner } from './doorShape'
 import { describeBillboard } from './layout';
 import { planAvenues, type CityPlan } from './avenuePlan';
 import { buildAvenues, dressHall } from './avenues';
-import { STOREFRONT_WIDTH } from './facade';
+import { Buildings, DEMO_BUILDINGS, type BuildingLot, type BuildingSource } from './buildings';
+import { LOT_FORECOURT, LOT_HEIGHT, LOT_WIDTH, STOREFRONT_WIDTH } from './facade';
 import { playSendSound, playWarpSound } from './sounds';
 import { chatRejection } from '../../../../templates/relay/src/chatFilter';
 import { deviceLanguage, isForeign, translate } from './translate';
@@ -137,6 +138,12 @@ export interface LobbyOptions {
   signals?: SignalSource;
   /** How many times people have entered a world, by URL; shown beside its doors. */
   entries?: (url: string) => number | undefined;
+  /**
+   * 'demo': demo buildings stand on the city's first lots, in place of their
+   * storefronts, to see how buildings look (docs/specs/buildings.md). Off
+   * otherwise: no world has a building of its own yet.
+   */
+  buildings?: 'demo';
 }
 
 export interface Lobby {
@@ -970,6 +977,9 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   /** The city's blocks (just for looks) and their walls, one collider per block. */
   const cityMeshes: Mesh[] = [];
   const cityColliders: Mesh[] = [];
+  /** Each building lot's storefront, solid until its building stands there. */
+  const lotColliders: Mesh[] = [];
+  const buildings = new Buildings(scene, renderer, !alias);
   let nearEmpty: Door | null = null;
   let time = 0;
   let warping = false;
@@ -1097,6 +1107,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       ...[...doors.values(), ...emptyDoors, ...galleryDoors, ...(exitDoor ? [exitDoor] : [])].flatMap((door) => door.blockers),
       ...spawnPads.colliders,
       ...cityColliders,
+      ...buildings.colliders(),
       ...upper,
       ...lifts.colliders,
       ...boardColliders,
@@ -1135,6 +1146,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         if (!level(door)) continue;
         if (!warping && !emerging && door.contains(x, z)) enter(door);
       }
+      buildings.update(dt, x, z);
       walkThrough.update();
       if (world.getViewMode() === 'third' && !renderer.xr.isPresenting) keepCameraOutOfDoorways(feet.set(x, y, z));
       let near: Door | null = null;
@@ -2134,6 +2146,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     flash.classList.add('active');
     privateTimer = window.setTimeout(() => {
       alias = next;
+      buildings.setEnabled(!alias);
       world.clearAvatar();
       ghost?.restore();
       ghost = alias ? makeGhost(world.avatar) : null;
@@ -2252,6 +2265,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   }
 
   function setWorlds(worlds: LobbyWorld[]): void {
+    // Buildings come down while the doors are laid out again; buildCity puts them back.
+    buildings.setLots([]);
     for (const entry of worlds) {
       if (!known.has(entry.url)) known.set(entry.url, entry);
     }
@@ -2764,13 +2779,18 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
    */
   function buildCity(outer: number): void {
     billboards?.setSlots(billboardSlots);
-    for (const mesh of [...cityMeshes, ...cityColliders]) {
+    buildings.setLots([]);
+    for (const mesh of [...cityMeshes, ...cityColliders, ...lotColliders]) {
       mesh.geometry.dispose();
       mesh.removeFromParent();
     }
     cityMeshes.length = 0;
     cityColliders.length = 0;
-    const blocks = buildAvenues(city, cityDoors.length);
+    lotColliders.length = 0;
+    // Building lots: for now only the demo's, standing in on the first doors of the city.
+    const sources = new Map<number, BuildingSource>();
+    if (options.buildings === 'demo') DEMO_BUILDINGS.slice(0, cityDoors.length).forEach((source, i) => sources.set(i, source));
+    const blocks = buildAvenues(city, cityDoors.length, new Set(sources.keys()));
     // Each storefront's sign hangs from its door, so it comes and goes with the world.
     cityDoors.forEach((door, i) => {
       const sign = blocks.signs[i];
@@ -2788,6 +2808,24 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       collider.updateMatrixWorld(true);
       cityColliders.push(collider);
     }
+    // Each lot's storefront, as its own meshes, so it can step aside for the building.
+    const lots: BuildingLot[] = [];
+    for (const [index, plug] of blocks.plugs) {
+      const parts: Array<[BufferGeometry[], Material]> = [[plug.solid, wallMaterial], [plug.trim, facadeMaterial], [plug.glow, cityMaterials.glow]];
+      const meshes = parts.map(([geometries, material]) => {
+        const mesh = new Mesh(mergeGeometries(geometries), material);
+        for (const geometry of geometries) geometry.dispose();
+        scene.add(mesh);
+        cityMeshes.push(mesh);
+        return mesh;
+      });
+      const collider = new Mesh(plug.collider, colliderMaterial);
+      collider.updateMatrixWorld(true);
+      lotColliders.push(collider);
+      const lot = { width: LOT_WIDTH, depth: plug.cut.depth, taper: plug.cut.taper, forecourt: LOT_FORECOURT, height: LOT_HEIGHT };
+      lots.push({ door: cityDoors[index], lot, out: city.slots[index].out, plug: { meshes, collider }, source: sources.get(index)! });
+    }
+    buildings.setLots(lots);
     // The walkable ground reaches past the corners of the outermost streets; the mirror floor under it too.
     const reach = Math.max(PLAZA_RADIUS, outer + PLAZA_RADIUS / 2, city.radius + 30);
     ground.scale.setScalar(reach);
@@ -2844,7 +2882,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       }
       mesh.geometry.dispose();
     }
-    for (const mesh of [...cityMeshes, ...cityColliders]) mesh.geometry.dispose();
+    buildings.dispose();
+    for (const mesh of [...cityMeshes, ...cityColliders, ...lotColliders]) mesh.geometry.dispose();
     if (interiorBannerRing) {
       interiorBannerRing.traverse((obj) => {
         if (obj instanceof Mesh) obj.geometry.dispose();

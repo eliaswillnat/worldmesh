@@ -1,6 +1,7 @@
 # Buildings: a world's own front in the hub city
 
-**Status:** Draft 0.1, October 2026. Nothing here is built yet.
+**Status:** Draft 0.2, October 2026. Step 1 (§9) is built: demo buildings
+stand on the city's first lots with `?buildings=demo`.
 **Owner:** Elias Willnat.
 **Builds on:** [avatar-wallet.md](../avatar-wallet.md) (where models live and
 how they load), [doorway.md](doorway.md) (what a door can show and how
@@ -72,25 +73,33 @@ Coordinates are glTF's: +Y up, metres. The **front** of a glTF model faces
 
 ## 2. The lot
 
-The city's blocks are 28 m squares with one world door on each of their four
-walls (`apps/hub/src/walk/avenuePlan.ts`: 28 m walls, 3 m kept clear at each
-corner, one 14.3 m storefront bay per wall). So each world already owns one
-storefront bay, and that bay becomes its lot:
+The city's blocks are 28 m squares with one world door in the middle of each
+of their four walls (`apps/hub/src/walk/avenuePlan.ts`). So each world
+already owns a quarter of a block, and that quarter becomes its lot. The
+four lots of a block meet as **wedges in its middle**: a lot runs straight
+back at its sides, then narrows to a point behind its door
+(`apps/hub/src/walk/avenues.ts`, `lotCut`).
 
 | | Size | Why |
 | --- | --- | --- |
-| Width, along the wall | 14.3 m | The storefront bay (`STOREFRONT_WIDTH`), centred on the door |
-| Depth, into the block | 6.8 m | Just short of where the lot on the next wall round the corner begins |
+| Width, along the wall | 13.5 m | The storefront's opening between its piers (`LOT_WIDTH`), centred on the door |
+| Depth, into the block | 13.7 m behind the door, 6.95 m at the sides | Up to the diagonals from the block's corners to its middle, less 0.3 m, so lots never touch |
 | Forecourt, out into the street | 2 m | Steps, a sign or a statue; the street is 16 m wide, so 12 m stays clear |
 | Height | 28 m | Twice the blocks' 14 m roof line, so a building can rise above the street, still well under the rotunda's dome |
 
-Where a lot holds a building, the block's wall steps back round it (a notch
-6.8 m deep) and the storefront's piers and fascia for that bay are not drawn.
-The world's **name sign and gate number stay**, hung by the hub above the
-portal face, so every door in the city still reads the same way.
+Where a lot holds a building, the lot is cut out of the block, cornice and
+roof included, and the beam along the wall stops either side of it. Until the
+building is ready, a **plug** fills the cut: wall, cornice, fascia and beam
+exactly as the storefront had them, so nothing looks different. Once the
+building shows, the plug is hidden. The world's **name and gate number stay**,
+over the portal face instead of on a fascia, so every door in the city still
+reads the same way.
 
-These numbers live in one config object next to `AVENUES`, like every other
-tunable of the city.
+Only a door alone in the middle of its wall gets a lot. Today that is every
+door in the city.
+
+The width, forecourt and height live in `facade.ts` (`LOT_*`); the depth
+follows from the block.
 
 ## 3. Making a building
 
@@ -118,6 +127,10 @@ Give the face (or faces) you want people to walk through **a material named
   plane or an arch-topped shape also works.
 - **At least 2 m × 2.5 m** once the building is fitted to its lot, so a
   visitor fits through.
+- **Nothing of the building in front of it.** The door is drawn just in
+  front of the face; anything of the model that pokes out further shows
+  through the door. (The first demo observatory had its drum bulging past
+  the porch, and it showed as a grey wedge in the doorway.)
 - What the material looks like doesn't matter: the hub replaces it.
 
 In Blender: select the face in Edit Mode, add a material slot, create a
@@ -305,10 +318,14 @@ stored in `building_link.portal_json` for the admin view.
   Without a portal face, its +Z points out.
 - **Scale** uniformly, never stretched, to the largest size at which the
   part in front of the portal fits the forecourt, the part behind it fits
-  the lot's depth, and the whole fits the lot's width and height.
-- **Stand** its lowest point on the ground.
+  the lot's depth as the lot narrows (checked on the model's own points, not
+  its box, so a round tower gets in further than a square one), and the
+  whole fits the lot's width and height.
+- **Stand** the portal face's bottom edge on the street, so visitors walk
+  straight in. Anything lower goes under the street. Without a portal face,
+  the model's lowest point stands on the street.
 - **Place** it so the portal face sits on the line where the storefront's
-  door stood (the wall line, 0.3 m out), centred on the lot's width.
+  door stood (0.3 m in front of the wall line), centred on the lot's width.
 
 ### 6.3 Checking the size
 
@@ -375,15 +392,30 @@ Doorway file says `"view": true` (`liveDoors.ts`), and the walk-through for
 `"embed": true`. Coming back from the world lands the visitor in front of
 it, as with any door today.
 
-`Door` needs a width and height instead of the fixed `DOOR_WIDTH` ×
-`DOOR_HEIGHT`, and a frameless mode. The rounded top stays in the shader, so
-an arched portal face reads right.
+`Door.setShape({ width, height, span })` gives a door its own size and drops
+its frame; `setShape(null)` puts back the standard one. The same door object
+stays throughout, so live views, walking through and occupancy carry on
+untouched. A shaped door stands 4 cm in front of the portal face, clear of
+whatever the face was drawn on. Its backstop spans the whole lot (`span`), so
+nobody slips past the door into the building.
 
 ### 7.5 Collisions
 
-The lot's box is solid, except that its front wall stands at the portal
-face's plane, so visitors can walk right up to the door. Steps, columns and
-signs in the forecourt are not solid in this version.
+While the plug shows, it is solid like the storefront was. Once the building
+shows, the lot's walls (the cut) and the door's backstop across the whole lot
+are solid, so visitors can walk right up to the door but not into the
+building. Steps, columns and signs in the forecourt are not solid in this
+version.
+
+### 7.6 Light
+
+The lobby is lit for its white walls, about three times as brightly as a
+model is usually lit for. A building's colours are taken down to 0.6 so they
+look as their maker meant instead of bleached; metal less so, since its
+colour tints what it reflects. The lobby has no environment for metal to
+reflect, and metal with nothing to reflect renders black, so buildings'
+metallic materials get a soft studio environment of their own
+(`RoomEnvironment`). Nothing else in the lobby changes.
 
 ## 8. Safety
 
@@ -400,10 +432,15 @@ signs in the forecourt are not solid in this version.
 
 ## 9. Building it, in order
 
-1. **Buildings in the hub from a fixed list.** `buildings.ts`, the lot, the
-   portal-face finder, `Door` with a size and no frame, streaming. Fed from
-   a hard-coded list of GLB URLs for the demo worlds, so the look can be
-   tuned before any account work. Deploy to preview to walk it.
+1. **Buildings in the hub from a fixed list.** *Built.* `buildings.ts`,
+   `buildingFit.ts`, the lots in `avenues.ts`, `Door.setShape`, streaming.
+   The demo worlds all stand in the hall, which has no lots, so the five demo
+   buildings stand in for the first five city doors instead, and only with
+   `?buildings=demo` on the hub's address. Without it nothing in the city
+   changes. The demo models come from
+   `node apps/hub/scripts/demo-buildings.mjs`, which writes the GLBs to
+   `apps/hub/public/buildings/` and their hashes to
+   `apps/hub/src/walk/demoBuildings.json`.
 2. **My buildings.** The `building` table and endpoints, listing from
    Sketchfab and AT Protocol, uploading (reusing both upload paths), the UI
    next to My characters.
@@ -415,6 +452,12 @@ signs in the forecourt are not solid in this version.
    the Blender steps, the limits and a downloadable example building.
 
 ## 10. Open questions
+
+- **The name on a dark building.** The name over a shaped door is drawn for
+  the white lobby; on dark stone it is hard to read. It may want a backing
+  plate.
+- **Light tuning.** 0.6 for colours and the studio's strength are first
+  guesses from software-rendered screenshots; walk the preview to judge.
 
 - **Does Sketchfab keep material names?** Sketchfab converts every upload;
   its downloadable GLB has to be checked to still call the material
