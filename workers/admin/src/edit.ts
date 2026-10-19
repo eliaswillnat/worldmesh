@@ -4,7 +4,8 @@
  *   GET  /worlds/edit?id=…   the form, for a pending:* or approved:* entry
  *   POST /worlds/edit        save; "approve" also runs the hub's approve link,
  *                            which lists the world and emails its creator;
- *                            "reject" drops a pending submission
+ *                            "reject" drops a pending submission;
+ *                            "delete" removes pending:* and approved:* for the id
  *
  * The one place the dashboard writes, and only to the WORLDS directory.
  */
@@ -77,6 +78,7 @@ export async function editPage(request: Request, env: Env, admin: AdminSession):
   <div class="edit-actions">
     <button type="submit" name="action" value="save">Save</button>
     ${state === 'pending' ? '<button type="submit" name="action" value="approve" class="primary">Save and approve</button><button type="submit" name="action" value="reject" class="danger">Reject</button>' : ''}
+    <a class="button danger" href="/worlds?confirm_delete=${esc(encodeURIComponent(entry.id))}">Delete</a>
   </div>
 </form>`;
 
@@ -101,6 +103,14 @@ export async function saveEdit(request: Request, env: Env, admin: AdminSession):
     if (state !== 'pending') return back('error=Only+waiting+worlds+can+be+rejected');
     await env.WORLDS!.delete(key);
     return redirect('/worlds');
+  }
+
+  if (action === 'delete') {
+    // Two-tap confirm: the list/edit "Delete" link lands on /worlds?confirm_delete=,
+    // and only a POST with confirm=1 actually removes the keys (CSP forbids confirm()).
+    if (text('confirm') !== '1') return redirect(`/worlds?confirm_delete=${encodeURIComponent(entry.id)}`);
+    await Promise.all([env.WORLDS!.delete(`pending:${entry.id}`), env.WORLDS!.delete(`approved:${entry.id}`)]);
+    return redirect('/worlds?deleted=1');
   }
 
   let cover = text('cover') || undefined;

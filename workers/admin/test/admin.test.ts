@@ -376,6 +376,76 @@ describe('what an admin sees', () => {
     expect(await env.WORLDS!.get('pending:w2')).toBeNull();
   });
 
+  it('deletes approved and pending worlds after a confirmed POST, and leaves views alone', async () => {
+    const cookie = await signIn('admintoken0000000000');
+    await env.WORLDS!.put(
+      'approved:forest',
+      JSON.stringify({ id: 'forest', name: 'Forest', url: 'https://forest.worldmesh.net/', approvedAt: '2026-09-30T10:00:00Z' }),
+    );
+    await env.WORLDS!.put(
+      'pending:cabin',
+      JSON.stringify({ id: 'cabin', name: 'Cabin', url: 'https://cabin.example/', approveToken: 'tok', submittedAt: '2026-10-01T11:00:00Z' }),
+    );
+    // Orphan pair: both keys for the same id should go when either is deleted.
+    await env.WORLDS!.put('pending:forest', JSON.stringify({ id: 'forest', name: 'Forest pending', url: 'https://forest.worldmesh.net/' }));
+    await env.VIEWS!.put('count:https://forest.worldmesh.net/', '42');
+
+    const worlds = await page('/worlds', cookie);
+    expect(worlds).toContain('class="button danger" href="/worlds?confirm_delete=forest"');
+    expect(worlds).toContain('class="button danger" href="/worlds?confirm_delete=cabin"');
+    expect(worlds).toContain('>Review</a>');
+    expect(worlds).toContain('>Approve as is</a>');
+    expect(worlds).toContain('>Edit</a>');
+    expect(worlds).toContain('class="row-actions"');
+    expect(worlds).toMatch(/min-height: 40px/);
+
+    const confirm = await page('/worlds?confirm_delete=forest', cookie);
+    expect(confirm).toContain('Yes, delete');
+    expect(confirm).toContain('name="action" value="delete"');
+    expect(confirm).toContain('name="confirm" value="1"');
+    expect(confirm).toContain('Delete <strong>Forest</strong>');
+
+    const post = (body: FormData, origin = ADMIN) =>
+      call(`${ADMIN}/worlds/edit`, {
+        method: 'POST',
+        body,
+        headers: { Cookie: cookie, Origin: origin, 'Sec-Fetch-Site': origin === ADMIN ? 'same-origin' : 'cross-site' },
+      });
+
+    const unconfirmed = new FormData();
+    unconfirmed.set('id', 'forest');
+    unconfirmed.set('action', 'delete');
+    const ask = await post(unconfirmed);
+    expect(ask.status).toBe(303);
+    expect(ask.headers.get('Location')).toBe('/worlds?confirm_delete=forest');
+    expect(await env.WORLDS!.get('approved:forest')).toBeTruthy();
+
+    expect((await post(unconfirmed, 'https://evil.example')).status).toBe(403);
+
+    const confirmed = new FormData();
+    confirmed.set('id', 'forest');
+    confirmed.set('action', 'delete');
+    confirmed.set('confirm', '1');
+    const deleted = await post(confirmed);
+    expect(deleted.status).toBe(303);
+    expect(deleted.headers.get('Location')).toBe('/worlds?deleted=1');
+    expect(await env.WORLDS!.get('approved:forest')).toBeNull();
+    expect(await env.WORLDS!.get('pending:forest')).toBeNull();
+    expect(await env.VIEWS!.get('count:https://forest.worldmesh.net/')).toBe('42');
+    expect(await env.WORLDS!.get('pending:cabin')).toBeTruthy();
+
+    const notice = await page('/worlds?deleted=1', cookie);
+    expect(notice).toContain('World deleted.');
+    expect(notice).not.toContain('>Forest<');
+
+    const cabin = new FormData();
+    cabin.set('id', 'cabin');
+    cabin.set('action', 'delete');
+    cabin.set('confirm', '1');
+    expect((await post(cabin)).headers.get('Location')).toBe('/worlds?deleted=1');
+    expect(await env.WORLDS!.get('pending:cabin')).toBeNull();
+  });
+
   it('shows the directory, waiting submissions with their approve link, views and who is online', async () => {
     await env.WORLDS!.put('approved:forest', JSON.stringify({ id: 'forest', name: 'Forest', url: 'https://forest.worldmesh.net/', creator: 'Elias', approvedAt: '2026-09-30T10:00:00Z' }));
     await env.WORLDS!.put(
