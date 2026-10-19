@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { AVENUES, blockFaces, planAvenues, ringInner } from '../src/walk/avenuePlan';
-import { blockOutline, buildAvenues, dressHall, faceBox, lotCut, notchedOutline, prismRoof, prismWalls } from '../src/walk/avenues';
+import { blockOutline, buildAvenues, dressHall, faceBox, prismRoof, prismWalls } from '../src/walk/avenues';
 import { Matrix4 } from 'three';
-import { LOT_WIDTH, STOREFRONT_WIDTH } from '../src/walk/facade';
+import { STOREFRONT_WIDTH } from '../src/walk/facade';
 
 const HUB = 60.2;
 const SLOT = 13.1;
@@ -249,118 +249,37 @@ describe('the hall dressed as storefronts', () => {
   });
 });
 
-describe('building lots', () => {
+describe('blocks a building can replace', () => {
   const plan = planAvenues(HUB, 12, STOREFRONT_WIDTH);
-  /** Even-odd test of (x, z) against a polygon. */
-  const within = (polygon: Array<[number, number]>, x: number, z: number) => {
-    let inside = false;
-    polygon.forEach(([ax, az], i) => {
-      const [bx, bz] = polygon[(i + 1) % polygon.length];
-      if (az > z !== bz > z && x < ((bx - ax) * (z - az)) / (bz - az) + ax) inside = !inside;
-    });
-    return inside;
-  };
-  const cutFor = (index: number) => {
-    const slot = plan.slots[index];
-    const block = plan.blocks[slot.block];
-    const face = blockFaces(block)[slot.face];
-    return { slot, block, face, cut: lotCut(face.length, slot.along)! };
-  };
 
-  it('makes a lot round a door alone in the middle of its wall: a wedge to the middle of the block', () => {
-    const cut = lotCut(28, 14)!;
-    expect(cut.end - cut.start).toBeCloseTo(LOT_WIDTH);
-    expect((cut.start + cut.end) / 2).toBeCloseTo(14);
-    // Behind the door it reaches nearly to the middle; at its sides, as far as the diagonals let it.
-    expect(cut.depth).toBeCloseTo(13.7);
-    expect(cut.back[0][1]).toBeCloseTo(-(cut.start - 0.3));
-    expect(cut.taper).toBe(1);
-    expect(lotCut(28, 9)).toBeNull();
+  it('gives every world a block of its own', () => {
+    const blocks = plan.slots.map((slot) => slot.block);
+    expect(new Set(blocks).size).toBe(blocks.length);
+    expect(plan.capacity).toBe(plan.blocks.length);
   });
 
-  it("never lets one lot reach the next wall's, all round a block", () => {
-    const block = plan.blocks[0];
-    const faces = blockFaces(block);
-    const cuts = new Map(faces.map((face) => [face.index, [lotCut(face.length, face.length / 2)!]]));
-    const lots = faces.map((face) => {
-      const [cut] = cuts.get(face.index)!;
-      return [face.at(cut.start, 0), ...cut.back.map(([a, o]) => face.at(a, o)), face.at(cut.end, 0)] as Array<[number, number]>;
-    });
-    // Every corner of each lot lies outside every other lot.
-    lots.forEach((lot, i) =>
-      lots.forEach((other, j) => {
-        if (i !== j) for (const [x, z] of lot) expect(within(other, x, z)).toBe(false);
-      }),
-    );
-    // What is left of the block holds together: its corners, joined by walls along the diagonals to its middle.
-    const footprint = notchedOutline(block, cuts);
-    const [cx, cz] = [(block.minX + block.maxX) / 2, (block.minZ + block.maxZ) / 2];
-    expect(within(footprint, cx, cz)).toBe(true);
-    expect(within(footprint, block.minX + 1, block.minZ + 1)).toBe(true);
-    expect(within(footprint, cx - 5, cz - 5)).toBe(true);
-    expect(within(footprint, cx, cz - 5)).toBe(false);
-  });
-
-  it('cuts each lot into its block, flush in the crown too, and leaves the rest of the block as it was', () => {
-    const { slot, block, face, cut } = cutFor(0);
-    const notches = new Map([[slot.face, [cut]]]);
-    const footprint = notchedOutline(block, notches);
-    const crown = notchedOutline(block, notches, 0.5);
-    expect(footprint).toHaveLength(9);
-    // Inside the lot is outside the block, at its mouth and far back; beside it is still block.
-    for (const out of [-0.2, -cut.depth + 0.2]) {
-      const [x, z] = face.at(slot.along, out);
-      expect(within(footprint, x, z)).toBe(false);
-      expect(within(crown, x, z)).toBe(false);
-    }
-    const [bx, bz] = face.at(cut.start - 0.2, -1);
-    expect(within(footprint, bx, bz)).toBe(true);
-    const [cx, cz] = face.at(cut.start - 0.2, 0.3);
-    expect(within(crown, cx, cz)).toBe(true);
-  });
-
-  it('faces the walls round a lot out of the block too', () => {
-    const { slot, block, cut } = cutFor(0);
-    const footprint = notchedOutline(block, new Map([[slot.face, [cut]]]));
-    const walls = prismWalls(footprint, 0, 10);
-    const position = walls.getAttribute('position');
-    for (let i = 0; i < position.count; i += 3) {
-      const a = [position.getX(i), position.getY(i), position.getZ(i)];
-      const b = [position.getX(i + 1), position.getY(i + 1), position.getZ(i + 1)];
-      const c = [position.getX(i + 2), position.getY(i + 2), position.getZ(i + 2)];
-      const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-      const v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
-      const nx = u[1] * v[2] - u[2] * v[1];
-      const nz = u[0] * v[1] - u[1] * v[0];
-      const length = Math.hypot(nx, nz);
-      // Just in front of every wall is open ground.
-      const mx = (a[0] + b[0] + c[0]) / 3 + (nx / length) * 0.1;
-      const mz = (a[2] + b[2] + c[2]) / 3 + (nz / length) * 0.1;
-      expect(within(footprint, mx, mz)).toBe(false);
-    }
-  });
-
-  it('gives each lot a plug that fills its cut, and only lots', () => {
+  it("builds a lot's whole block on its own, sign and all, and leaves it out of the city's shared meshes", () => {
     const lots = new Set([0, 2, 5]);
+    const shared = buildAvenues(plan, plan.slots.length);
     const built = buildAvenues(plan, plan.slots.length, lots);
-    expect([...built.plugs.keys()].sort()).toEqual([0, 2, 5]);
+    expect([...built.lots.keys()].sort()).toEqual([0, 2, 5]);
     expect(built.signs).toHaveLength(plan.slots.length);
+    expect(built.colliders).toHaveLength(shared.colliders.length - lots.size);
+    expect(built.solid).toHaveLength(shared.solid.length - lots.size * 3);
     for (const index of lots) {
-      const { slot, face, cut } = cutFor(index);
-      const plug = built.plugs.get(index)!;
-      expect(plug.cut.depth).toBeCloseTo(cut.depth);
-      plug.collider.computeBoundingBox();
-      const box = plug.collider.boundingBox!;
-      // As tall as the block, its front on the wall line (or its cornice just past it), as wide as the lot.
+      const block = plan.blocks[plan.slots[index].block];
+      const lot = built.lots.get(index)!;
+      expect(lot.width).toBeCloseTo(block.maxX - block.minX);
+      expect(lot.depth).toBeCloseTo(block.maxZ - block.minZ);
+      // Its collider is the block: as tall, and covering its footprint.
+      lot.collider.computeBoundingBox();
+      const box = lot.collider.boundingBox!;
       expect(box.max.y).toBeCloseTo(14);
-      const [fx, fz] = face.at(slot.along, 0.5);
-      const [nx, nz] = face.normal(slot.along);
-      const front = Math.abs(nx) > 0.5 ? (nx > 0 ? box.max.x : box.min.x) : nz > 0 ? box.max.z : box.min.z;
-      expect(front).toBeCloseTo(Math.abs(nx) > 0.5 ? fx : fz);
-      const along = Math.abs(nx) > 0.5 ? box.max.z - box.min.z : box.max.x - box.min.x;
-      expect(along).toBeCloseTo(LOT_WIDTH);
-      expect(plug.solid.length).toBeGreaterThan(0);
+      expect(box.min.x).toBeLessThanOrEqual(block.minX + 1e-6);
+      expect(box.max.z).toBeGreaterThanOrEqual(block.maxZ - 1e-6);
+      expect(lot.solid.length).toBe(3);
+      expect(lot.trim.length).toBeGreaterThan(0);
     }
-    expect(buildAvenues(plan, plan.slots.length).plugs.size).toBe(0);
+    expect(shared.lots.size).toBe(0);
   });
 });

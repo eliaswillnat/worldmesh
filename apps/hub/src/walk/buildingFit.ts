@@ -123,38 +123,15 @@ export function portalYaw(face: PortalFace): number {
   return -Math.atan2(face.normal.x, face.normal.z);
 }
 
-/** The room a building may fill round its door (§2). */
+/** The room a building may fill round its door: its world's whole block (§2). */
 export interface Lot {
   /** Along the wall, centred on the door. */
   width: number;
-  /** Into the block behind the wall line, straight behind the door... */
+  /** Into the block, behind the wall line. */
   depth: number;
-  /** ...and this much less for every metre off to either side: lots meet as wedges in the middle of their block. */
-  taper: number;
   /** Out into the street, in front of the wall line. */
   forecourt: number;
   height: number;
-}
-
-/**
- * How far into a tapering lot a model reaches, measured as the lot narrows:
- * the most, over every point of it, of how far behind `anchor` it lies plus
- * `taper` times how far off to the side. In the space `root` is in.
- */
-export function taperedReach(root: Object3D, anchor: Vector3, taper: number): number {
-  root.updateMatrixWorld(true);
-  let reach = 0;
-  const point = new Vector3();
-  root.traverse((object) => {
-    if (!(object instanceof Mesh)) return;
-    const position = object.geometry.getAttribute('position') as BufferAttribute | undefined;
-    if (!position) return;
-    for (let i = 0; i < position.count; i++) {
-      point.fromBufferAttribute(position, i).applyMatrix4(object.matrixWorld);
-      reach = Math.max(reach, anchor.z - point.z + taper * Math.abs(point.x - anchor.x));
-    }
-  });
-  return reach;
 }
 
 /** A building fitted to its lot: the scale it stands at, and what to move it by. */
@@ -171,18 +148,15 @@ export interface Fit {
  * model's front at the ground without one. The door stands `out` metres in
  * front of the wall line. The largest uniform scale at which everything in
  * front of the anchor fits the forecourt, everything behind it the lot's
- * depth as it narrows, and the whole the lot's width and height. Below the
- * anchor goes under the street. `reach` is the model's taperedReach; without
- * it the corners of its box stand in for it.
+ * depth, and the whole the lot's width and height. Below the anchor goes
+ * under the street.
  */
-export function fitToLot(bounds: Box3, anchor: Vector3, lot: Lot, out: number, reach?: number): Fit {
-  const left = anchor.x - bounds.min.x;
-  const right = bounds.max.x - anchor.x;
+export function fitToLot(bounds: Box3, anchor: Vector3, lot: Lot, out: number): Fit {
   const limits: Array<[number, number]> = [
-    [lot.width / 2, left],
-    [lot.width / 2, right],
+    [lot.width / 2, anchor.x - bounds.min.x],
+    [lot.width / 2, bounds.max.x - anchor.x],
     [lot.forecourt - out, bounds.max.z - anchor.z],
-    [lot.depth + out, reach ?? anchor.z - bounds.min.z + lot.taper * Math.max(left, right)],
+    [lot.depth + out, anchor.z - bounds.min.z],
     [lot.height, bounds.max.y - anchor.y],
   ];
   let scale = Infinity;

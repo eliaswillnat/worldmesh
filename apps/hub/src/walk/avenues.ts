@@ -5,7 +5,6 @@ import {
   BEAM_DEPTH,
   CORNER_HALF,
   FASCIA_DEPTH,
-  LOT_WIDTH,
   PANEL_DEPTH,
   PANEL_INSET,
   PANEL_RIM,
@@ -14,7 +13,6 @@ import {
   levelsUnder,
   planFacade,
   type FacadeLevels,
-  type Span,
 } from './facade';
 
 /**
@@ -46,70 +44,6 @@ const ARC_STEP = Math.PI / 90;
  */
 export function blockOutline(block: CityBlock, grow = 0): Array<[number, number]> {
   return blockCorners({ ...block, minX: block.minX - grow, maxX: block.maxX + grow, minZ: block.minZ - grow, maxZ: block.maxZ + grow });
-}
-
-/**
- * A lot cut into a block (docs/specs/buildings.md §2): the storefront's
- * opening from `start` to `end` along its wall, and its back, as points
- * (along, out) going from the start to the end, `out` negative into the
- * block. A block is shared by the lots on its four walls as four wedges
- * meeting in its middle, so a lot runs straight back at its sides and then
- * narrows to a point behind its door: `depth` deep there, one metre less
- * for every metre off to either side (`taper`).
- */
-export interface LotCut extends Span {
-  back: Array<[number, number]>;
-  depth: number;
-  taper: number;
-}
-
-/** Wall kept between a lot and the one round the corner, at least. */
-const LOT_CLEAR = 0.3;
-
-/**
- * The lot round a door at `along` on a wall `length` metres long, the
- * block's side: only round a door alone in the middle of its wall, whose
- * opening clears the corners.
- */
-export function lotCut(length: number, along: number): LotCut | null {
-  const start = along - LOT_WIDTH / 2;
-  const end = along + LOT_WIDTH / 2;
-  if (Math.abs(along - length / 2) > 0.01) return null;
-  // How deep the wedge reaches at a point along the wall: to the diagonal from the nearer corner.
-  const reach = (at: number) => Math.min(at, length - at) - LOT_CLEAR;
-  if (reach(start) < LOT_CLEAR) return null;
-  return {
-    start,
-    end,
-    back: [
-      [start, -reach(start)],
-      [along, -reach(along)],
-      [end, -reach(end)],
-    ],
-    depth: reach(along),
-    taper: 1,
-  };
-}
-
-/**
- * A block's footprint with its lots cut into its walls: `cuts` holds them by
- * wall (blockFaces). `grow` pushes the walls out as blockOutline does, but
- * not the cuts: they stay flush with the lot's own walls, so trim that
- * stands proud stops at the lot.
- */
-export function notchedOutline(block: CityBlock, cuts: ReadonlyMap<number, LotCut[]>, grow = 0): Array<[number, number]> {
-  const corners = blockOutline(block, grow);
-  const points: Array<[number, number]> = [];
-  blockFaces(block).forEach((face, i) => {
-    points.push(corners[i]);
-    for (const cut of [...(cuts.get(i) ?? [])].sort((a, b) => a.start - b.start)) points.push(...lotOutline(face, cut, grow));
-  });
-  return points;
-}
-
-/** A lot's own outline seen from above, its mouth `front` metres out from the wall. */
-function lotOutline(face: WallFace, cut: LotCut, front: number): Array<[number, number]> {
-  return [face.at(cut.start, front), ...cut.back.map(([along, out]) => face.at(along, out)), face.at(cut.end, front)];
 }
 
 /** Clockwise seen from above (x right, z down the page), so each wall's front faces out. */
@@ -266,33 +200,14 @@ export interface FacadeDoor {
   along: number;
   index: number;
   toDoor: Matrix4;
-  /** Its storefront is a building lot, cut into the block (notchedOutline). */
-  lot?: LotCut | null;
 }
 
-/**
- * The storefront a lot takes the place of, filling its cut: the wall, the
- * cornice and roof over it, its fascia and the stretch of beam across it.
- * Shown until a building stands on the lot, and again if it goes.
- */
-export interface LotPlug {
-  /** The lot itself: how deep it reaches, and how it narrows. */
-  cut: LotCut;
-  solid: BufferGeometry[];
-  trim: BufferGeometry[];
-  glow: BufferGeometry[];
-  /** Its front wall and roof, solid while it is shown. */
-  collider: BufferGeometry;
-}
-
-/** What dressing walls makes: storefront trim, lines of light, piers to bump into, each door's sign, and each lot's plug. */
+/** What dressing walls makes: storefront trim, lines of light, piers to bump into, and each door's sign. */
 export interface Dressing {
   trim: BufferGeometry[];
   glow: BufferGeometry[];
   colliders: BufferGeometry[];
   signs: StorefrontSign[];
-  /** By door index. */
-  plugs: Map<number, LotPlug>;
 }
 
 interface DressOptions {
@@ -329,26 +244,18 @@ function dressFace(face: WallFace, doors: FacadeDoor[], options: DressOptions, o
     solidPier(0, CORNER_HALF, levels.beamTop, CORNER_DEPTH);
     solidPier(end - CORNER_HALF, end, levels.beamTop, CORNER_DEPTH);
   }
-  // Lots open the wall to the sky: the beam stops either side of each one, and its plug carries the stretch across.
-  const lots = layout.storefronts.filter((front) => doors[front.door].lot).map((front) => front.sign);
   if (options.beam) {
-    for (const { start, end: stop } of between(CORNER_HALF, end - CORNER_HALF, lots)) {
-      out.trim.push(faceBox(face, start, stop, levels.beamBottom, levels.beamTop, 0, BEAM_DEPTH));
-      out.glow.push(faceBox(face, start, stop, levels.beamBottom - 0.05, levels.beamBottom, BEAM_DEPTH - 0.07, BEAM_DEPTH - 0.02));
-    }
+    out.trim.push(faceBox(face, CORNER_HALF, end - CORNER_HALF, levels.beamBottom, levels.beamTop, 0, BEAM_DEPTH));
+    out.glow.push(faceBox(face, CORNER_HALF, end - CORNER_HALF, levels.beamBottom - 0.05, levels.beamBottom, BEAM_DEPTH - 0.07, BEAM_DEPTH - 0.02));
   }
 
   for (const front of layout.storefronts) {
     const { start, end: stop } = front.sign;
     const { fasciaBottom: bottom, fasciaTop: top } = levels;
-    const { toDoor, index, lot } = doors[front.door];
-    if (lot) {
-      out.plugs.set(index, lotPlug(face, lot, levels));
-    } else {
-      out.trim.push(faceBox(face, start, stop, bottom, top, 0, FASCIA_DEPTH));
-      // Light along the fascia's lower edge, over the doorway.
-      out.glow.push(faceBox(face, start + 0.2, stop - 0.2, bottom - 0.04, bottom, FASCIA_DEPTH - 0.07, FASCIA_DEPTH - 0.02));
-    }
+    out.trim.push(faceBox(face, start, stop, bottom, top, 0, FASCIA_DEPTH));
+    // Light along the fascia's lower edge, over the doorway.
+    out.glow.push(faceBox(face, start + 0.2, stop - 0.2, bottom - 0.04, bottom, FASCIA_DEPTH - 0.07, FASCIA_DEPTH - 0.02));
+    const { toDoor, index } = doors[front.door];
     const geometry = signFace(face, start + SIGN_INSET, stop - SIGN_INSET, bottom + SIGN_INSET, top - SIGN_INSET, FASCIA_DEPTH + 0.01);
     // Into the door's frame: it carries the sign, so the sign comes and goes with it.
     geometry.applyMatrix4(toDoor);
@@ -368,39 +275,6 @@ function dressFace(face: WallFace, doors: FacadeDoor[], options: DressOptions, o
       faceBox(face, s0 + PANEL_RIM, s1 - PANEL_RIM, y1 - PANEL_RIM, y1, 0, PANEL_DEPTH),
     );
   }
-}
-
-/** The stretches of [from, to] left between `cuts` (which lie inside it, apart). */
-function between(from: number, to: number, cuts: Span[]): Span[] {
-  const spans: Span[] = [];
-  let at = from;
-  for (const cut of [...cuts].sort((a, b) => a.start - b.start)) {
-    if (cut.start > at) spans.push({ start: at, end: cut.start });
-    at = Math.max(at, cut.end);
-  }
-  if (to > at) spans.push({ start: at, end: to });
-  return spans;
-}
-
-/** The storefront that fills a lot's cut along `face` (LotPlug). */
-function lotPlug(face: WallFace, cut: LotCut, levels: FacadeLevels): LotPlug {
-  const { fasciaBottom, fasciaTop, beamBottom, beamTop } = levels;
-  const { start, end } = cut;
-  const body = lotOutline(face, cut, 0);
-  const crown = lotOutline(face, cut, CORNICE_OUT);
-  return {
-    cut,
-    solid: [prismWalls(body, 0, BLOCK_HEIGHT - CORNICE_HEIGHT), prismWalls(crown, BLOCK_HEIGHT - CORNICE_HEIGHT, BLOCK_HEIGHT), prismRoof(crown, BLOCK_HEIGHT)],
-    trim: [
-      faceBox(face, start, end, fasciaBottom, fasciaTop, 0, FASCIA_DEPTH),
-      faceBox(face, start, end, beamBottom, beamTop, 0, BEAM_DEPTH),
-    ],
-    glow: [
-      faceBox(face, start + 0.2, end - 0.2, fasciaBottom - 0.04, fasciaBottom, FASCIA_DEPTH - 0.07, FASCIA_DEPTH - 0.02),
-      faceBox(face, start, end, beamBottom - 0.05, beamBottom, BEAM_DEPTH - 0.07, BEAM_DEPTH - 0.02),
-    ],
-    collider: mergeAll([prismWalls(body, 0, BLOCK_HEIGHT), prismRoof(crown, BLOCK_HEIGHT)]),
-  };
 }
 
 /** World space into the frame of a door standing in this slot. */
@@ -440,16 +314,27 @@ function dressBlock(faces: WallFace[], doors: Map<number, FacadeDoor[]>, out: Dr
 }
 
 /**
+ * A world's own block, built on its own instead of into the city's shared
+ * meshes, so a building of its own can take its place
+ * (docs/specs/buildings.md): walls, trim, light and collider as for any
+ * block, and the room it leaves, along its door's wall and back from it.
+ */
+export interface LotBlock {
+  width: number;
+  depth: number;
+  solid: BufferGeometry[];
+  trim: BufferGeometry[];
+  glow: BufferGeometry[];
+  collider: BufferGeometry;
+}
+
+/**
  * Every block of the plan: walls, cornice and roof (solid), dressed as
  * storefronts (trim: a shade off the walls, so the piers and panels read
  * in any light), the lines of light (glow), a sign for each of the first `doors`
  * slots, and one collider per block (its walls, roof and piers), so a step only
- * tests what is near it.
- *
- * Slots in `lots` are building lots (docs/specs/buildings.md): cut into their
- * block, each with the plug that fills the cut until a building stands there.
- * A slot whose lot would reach the next wall's stays a plain storefront, and
- * gets no plug.
+ * tests what is near it. The blocks of the slots in `lots` come back on their
+ * own instead, by slot (LotBlock).
  */
 export function buildAvenues(
   plan: CityPlan,
@@ -461,42 +346,44 @@ export function buildAvenues(
   glow: BufferGeometry[];
   colliders: BufferGeometry[];
   signs: StorefrontSign[];
-  plugs: Map<number, LotPlug>;
+  lots: Map<number, LotBlock>;
 } {
   const solid: BufferGeometry[] = [];
   const trim: BufferGeometry[] = [];
   const glow: BufferGeometry[] = [];
   const colliders: BufferGeometry[] = [];
   const signs: StorefrontSign[] = [];
-  const plugs = new Map<number, LotPlug>();
-  // The doors on each wall of each block, and the lots cut into each.
+  const lotBlocks = new Map<number, LotBlock>();
+  // The doors on each wall of each block, and which blocks are lots, by their door's slot.
   const byWall = new Map<number, Map<number, FacadeDoor[]>>();
-  const cuts = new Map<number, Map<number, LotCut[]>>();
+  const lotSlot = new Map<number, number>();
   plan.slots.slice(0, doors).forEach((slot, index) => {
     const walls = byWall.get(slot.block) ?? new Map();
     byWall.set(slot.block, walls);
-    const onWall = plan.slots.slice(0, doors).filter((other) => other.block === slot.block && other.face === slot.face).length;
-    const cut = lots.has(index) && onWall === 1 ? lotCut(blockFaces(plan.blocks[slot.block])[slot.face].length, slot.along) : null;
-    walls.set(slot.face, [...(walls.get(slot.face) ?? []), { along: slot.along, index, toDoor: slotFrame(slot), lot: cut }]);
-    if (cut) {
-      const blockCuts = cuts.get(slot.block) ?? new Map<number, LotCut[]>();
-      cuts.set(slot.block, blockCuts);
-      blockCuts.set(slot.face, [...(blockCuts.get(slot.face) ?? []), cut]);
-    }
+    walls.set(slot.face, [...(walls.get(slot.face) ?? []), { along: slot.along, index, toDoor: slotFrame(slot) }]);
+    if (lots.has(index)) lotSlot.set(slot.block, index);
   });
   plan.blocks.forEach((block, index) => {
-    const notches = cuts.get(index) ?? new Map<number, LotCut[]>();
-    const footprint = notchedOutline(block, notches);
-    solid.push(prismWalls(footprint, 0, BLOCK_HEIGHT - CORNICE_HEIGHT));
-    const crown = notchedOutline(block, notches, CORNICE_OUT);
-    solid.push(prismWalls(crown, BLOCK_HEIGHT - CORNICE_HEIGHT, BLOCK_HEIGHT));
-    solid.push(prismRoof(crown, BLOCK_HEIGHT));
+    const lot = lotSlot.get(index);
+    const own = lot === undefined ? { solid, trim, glow } : { solid: [], trim: [], glow: [] };
+    const footprint = blockOutline(block);
+    own.solid.push(prismWalls(footprint, 0, BLOCK_HEIGHT - CORNICE_HEIGHT));
+    const crown = blockOutline(block, CORNICE_OUT);
+    own.solid.push(prismWalls(crown, BLOCK_HEIGHT - CORNICE_HEIGHT, BLOCK_HEIGHT));
+    own.solid.push(prismRoof(crown, BLOCK_HEIGHT));
     // The roof too, so someone flying over can land on it.
-    const own: BufferGeometry[] = [prismWalls(footprint, 0, BLOCK_HEIGHT), prismRoof(crown, BLOCK_HEIGHT)];
-    dressBlock(blockFaces(block), byWall.get(index) ?? new Map(), { trim, glow, colliders: own, signs, plugs });
-    colliders.push(mergeAll(own));
+    const solids: BufferGeometry[] = [prismWalls(footprint, 0, BLOCK_HEIGHT), prismRoof(crown, BLOCK_HEIGHT)];
+    const faces = blockFaces(block);
+    dressBlock(faces, byWall.get(index) ?? new Map(), { trim: own.trim, glow: own.glow, colliders: solids, signs });
+    const collider = mergeAll(solids);
+    if (lot === undefined) {
+      colliders.push(collider);
+    } else {
+      const wall = plan.slots[lot].face;
+      lotBlocks.set(lot, { ...own, collider, width: faces[wall].length, depth: faces[(wall + 1) % faces.length].length });
+    }
   });
-  return { solid, trim, glow, colliders, signs, plugs };
+  return { solid, trim, glow, colliders, signs, lots: lotBlocks };
 }
 
 /**
@@ -515,7 +402,7 @@ export function dressHall(
   ceiling: number,
 ): Dressing {
   const levels = levelsUnder(ceiling);
-  const out: Dressing = { trim: [], glow: [], colliders: [], signs: [], plugs: new Map() };
+  const out: Dressing = { trim: [], glow: [], colliders: [], signs: [] };
   const step = (Math.PI * 2) / gates.length;
   gates.forEach((gate, i) => {
     const start = gate + gateHalf / radius;

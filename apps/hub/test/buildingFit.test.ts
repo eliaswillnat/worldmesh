@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { Box3, BoxGeometry, CylinderGeometry, Group, Matrix4, Mesh, MeshStandardMaterial, PlaneGeometry, Vector3 } from 'three';
-import { findPortalFace, fitToLot, isPortalMaterial, portalTooSmall, portalYaw, taperedReach, type Lot } from '../src/walk/buildingFit';
+import { Box3, BoxGeometry, Group, Matrix4, Mesh, MeshStandardMaterial, PlaneGeometry, Vector3 } from 'three';
+import { findPortalFace, fitToLot, isPortalMaterial, portalTooSmall, portalYaw, type Lot } from '../src/walk/buildingFit';
 
-const LOT: Lot = { width: 13.5, depth: 6.8, taper: 0, forecourt: 2, height: 28 };
+const LOT: Lot = { width: 13.5, depth: 6.8, forecourt: 2, height: 28 };
 const OUT = 0.3;
 
 /** A 4 × 6 × 3 box of a building, its front at z = 1.5, with a 2 × 3 portal face on the front. */
@@ -99,20 +99,6 @@ describe('fitting a building to its lot', () => {
     expect(fitToLot(tower, new Vector3(0, 0, 0), LOT, OUT).scale).toBeCloseTo(LOT.height / 40);
     const hall = new Box3(new Vector3(-20, 0, -1), new Vector3(20, 4, 0));
     expect(fitToLot(hall, new Vector3(0, 0, 0), LOT, OUT).scale).toBeCloseTo(LOT.width / 2 / 20);
-  });
-
-  it('lets a lot narrowing to the middle of its block hold more behind the door than at its sides', () => {
-    const wedge: Lot = { ...LOT, depth: 13.7, taper: 1 };
-    // A box 2 m wide reaching 10 m back: room for it straight behind the door.
-    const deep = new Box3(new Vector3(-1, 0, -10), new Vector3(1, 4, 0));
-    expect(fitToLot(deep, new Vector3(), wedge, OUT).scale).toBeCloseTo((13.7 + OUT) / 11);
-    // Measured by its points, a round tower is let in further than its box would be.
-    const tower = new Group();
-    tower.add(new Mesh(new CylinderGeometry(5, 5, 10, 64).translate(0, 5, -5)));
-    const box = new Box3().setFromObject(tower, true);
-    const reach = taperedReach(tower, new Vector3(), 1);
-    expect(reach).toBeLessThan(15);
-    expect(fitToLot(box, new Vector3(), wedge, OUT, reach).scale).toBeGreaterThan(fitToLot(box, new Vector3(), wedge, OUT).scale);
   });
 
   it('refuses a portal too small to walk through', () => {

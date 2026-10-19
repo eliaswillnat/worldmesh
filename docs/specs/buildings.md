@@ -9,10 +9,11 @@ visitors walk through it).
 
 ## Summary
 
-Every world in the hub city gets a standard storefront today: the same bay,
-piers and fascia sign along a block's wall, with the world's door in the
-middle. A **building** replaces that storefront with a 3D model the world's
-creator made: a temple, a shop, a spaceship hangar, a sign saying "come in".
+Every world in the hub city has a block of its own: the same plain white
+default building, its door and fascia sign in the middle of the wall facing
+the rotunda. A **building** replaces that whole block with a 3D model the
+world's creator made: a temple, a shop, a spaceship hangar, a sign saying
+"come in".
 One face of the model, given a material named `portal`, becomes the world's
 door, with everything a hub door does today: the cover, the ripple as you
 approach, the live view, walking through.
@@ -61,7 +62,7 @@ Not in this version:
 ## 1. Terms
 
 - **Building:** a glTF 2.0 binary (`.glb`) a creator made to stand in for
-  their world's storefront.
+  their world's default block.
 - **Lot:** the box of city a building may fill (§2).
 - **Portal face:** the triangles of the building that use a material named
   `portal` (§3.2). They become the world's door.
@@ -73,33 +74,28 @@ Coordinates are glTF's: +Y up, metres. The **front** of a glTF model faces
 
 ## 2. The lot
 
-The city's blocks are 28 m squares with one world door in the middle of each
-of their four walls (`apps/hub/src/walk/avenuePlan.ts`). So each world
-already owns a quarter of a block, and that quarter becomes its lot. The
-four lots of a block meet as **wedges in its middle**: a lot runs straight
-back at its sides, then narrows to a point behind its door
-(`apps/hub/src/walk/avenues.ts`, `lotCut`).
+**One world, one block.** The city's blocks are 28 m squares, and each
+world has one to itself, its door in the middle of the wall facing the
+rotunda (`apps/hub/src/walk/avenuePlan.ts`). The plain white block is the
+world's **default building**. A building of its own **replaces the whole
+block**: the block is not drawn at all while the building stands there.
 
 | | Size | Why |
 | --- | --- | --- |
-| Width, along the wall | 13.5 m | The storefront's opening between its piers (`LOT_WIDTH`), centred on the door |
-| Depth, into the block | 13.7 m behind the door, 6.95 m at the sides | Up to the diagonals from the block's corners to its middle, less 0.3 m, so lots never touch |
+| Width, along the door's wall | 28 m | The whole block, centred on the door |
+| Depth, back from the wall | 28 m | The whole block |
 | Forecourt, out into the street | 2 m | Steps, a sign or a statue; the street is 16 m wide, so 12 m stays clear |
 | Height | 28 m | Twice the blocks' 14 m roof line, so a building can rise above the street, still well under the rotunda's dome |
 
-Where a lot holds a building, the lot is cut out of the block, cornice and
-roof included, and the beam along the wall stops either side of it. Until the
-building is ready, a **plug** fills the cut: wall, cornice, fascia and beam
-exactly as the storefront had them, so nothing looks different. Once the
-building shows, the plug is hidden. The world's **name and gate number stay**,
-over the portal face instead of on a fascia, so every door in the city still
-reads the same way.
+A block that a building can replace is built on its own, not into the
+city's shared meshes (`buildAvenues`, `lots`), so it can step aside. Until
+the building is ready, and whenever it can't be shown, the default block
+stands there as always, so the street never misses a door. The world's
+**name and gate number stay**, over the portal face instead of on the
+block's fascia, so every door in the city still reads the same way.
 
-Only a door alone in the middle of its wall gets a lot. Today that is every
-door in the city.
-
-The width, forecourt and height live in `facade.ts` (`LOT_*`); the depth
-follows from the block.
+The forecourt and height live in `facade.ts` (`LOT_FORECOURT`,
+`LOT_HEIGHT`); the width and depth are the block's.
 
 ## 3. Making a building
 
@@ -276,7 +272,7 @@ dashboard (`workers/admin`) with the model in a viewer, fitted to its lot,
 the portal face highlighted, and the size and triangle count. *Approve*,
 *Reject* (with a reason the owner sees) and, later, *Hide*.
 
-Until a link is approved, the world keeps its standard storefront.
+Until a link is approved, the world keeps its default block.
 
 ### 5.3 Pinning the approved version
 
@@ -287,7 +283,7 @@ never sees the file, only the hash.
 
 Every visitor's browser hashes the file it downloads (SubtleCrypto, a few
 milliseconds for 10 MB) and **shows it only if the hash matches**. A
-replaced file falls back to the standard storefront and puts the link back
+replaced file falls back to the default block and puts the link back
 in review. For AT Protocol, a changed blob CID says the same thing before
 anything is downloaded.
 
@@ -318,13 +314,12 @@ stored in `building_link.portal_json` for the admin view.
   Without a portal face, its +Z points out.
 - **Scale** uniformly, never stretched, to the largest size at which the
   part in front of the portal fits the forecourt, the part behind it fits
-  the lot's depth as the lot narrows (checked on the model's own points, not
-  its box, so a round tower gets in further than a square one), and the
-  whole fits the lot's width and height.
+  the block's depth, and the whole fits the block's width and the lot's
+  height.
 - **Stand** the portal face's bottom edge on the street, so visitors walk
   straight in. Anything lower goes under the street. Without a portal face,
   the model's lowest point stands on the street.
-- **Place** it so the portal face sits on the line where the storefront's
+- **Place** it so the portal face sits on the line where the block's
   door stood (0.3 m in front of the wall line), centred on the lot's width.
 
 ### 6.3 Checking the size
@@ -348,14 +343,16 @@ Buildings load only near the visitor, nearest first:
 | Loaded at once, at most | 8 |
 | Downloads at once, at most | 2 |
 
-Until a building is ready the lot shows the standard storefront, so the
-street is never missing a door. When it's ready the storefront swaps for the
+Until a building is ready the default block stands there, so the street is
+never missing a door. When it's ready the block swaps for the
 building with a short fade, and only while the visitor isn't standing in
 the doorway.
 
 Parsed buildings are kept in memory while loaded. Downloaded files are kept
 in the browser's Cache Storage under the building's hash, so a second visit
-costs no download; nothing is cached by WorldMesh.
+costs no download; nothing is cached by WorldMesh. (Not built yet: step 1's
+demo files come from the hub itself, and the browser's ordinary cache keeps
+them. Sketchfab's links change every few minutes, so step 3 needs this.)
 
 ### 7.2 Resolving
 
@@ -380,7 +377,7 @@ as the runtime already uses for characters):
 - At most 150,000 triangles and textures at most 2048 px; no Draco or
   meshopt extension.
 
-Any failure keeps the standard storefront, quietly, for that visit.
+Any failure keeps the default block, quietly, for that visit.
 
 ### 7.4 The door in the portal face
 
@@ -396,16 +393,15 @@ it, as with any door today.
 its frame; `setShape(null)` puts back the standard one. The same door object
 stays throughout, so live views, walking through and occupancy carry on
 untouched. A shaped door stands 4 cm in front of the portal face, clear of
-whatever the face was drawn on. Its backstop spans the whole lot (`span`), so
-nobody slips past the door into the building.
+whatever the face was drawn on.
 
 ### 7.5 Collisions
 
-While the plug shows, it is solid like the storefront was. Once the building
-shows, the lot's walls (the cut) and the door's backstop across the whole lot
-are solid, so visitors can walk right up to the door but not into the
-building. Steps, columns and signs in the forecourt are not solid in this
-version.
+While the default block shows, it is solid as always. Once the building
+shows, a box round the building is: as wide and tall as the fitted model,
+from the wall line back. Visitors reach its door as they reached the
+block's, and go no further. Steps, columns and signs in the forecourt are
+not solid in this version.
 
 ### 7.6 Light
 
@@ -463,9 +459,9 @@ metallic materials get a soft studio environment of their own
   its downloadable GLB has to be checked to still call the material
   `portal`. If it doesn't, a node named `portal` (Blender: split the face
   into its own object) is the fallback rule.
-- **Lot size.** One storefront bay per world keeps the city's grid as it
-  is. If buildings should be bigger (a whole block per world), the city
-  grows four times as large for the same number of worlds.
+- **More worlds.** One world to a block holds 20 worlds in the first ring
+  round the plaza and 48 in the two rings always drawn; past that the city
+  grows a ring at a time, up to 240 worlds in six rings.
 - **Compression.** Draco or meshopt would let buildings be much smaller.
   Both need decoder files served from somewhere; worth it once buildings
   hit the 10 MB limit in practice.

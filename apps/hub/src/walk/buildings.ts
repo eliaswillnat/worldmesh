@@ -1,18 +1,32 @@
-import { Box3, Group, Matrix4, Mesh, PMREMGenerator, Texture, Vector3, type Material, type Object3D, type Scene, type WebGLRenderer } from 'three';
+import {
+  Box3,
+  Group,
+  Matrix4,
+  Mesh,
+  MeshBasicMaterial,
+  PMREMGenerator,
+  Texture,
+  Vector3,
+  type Material,
+  type Object3D,
+  type Scene,
+  type WebGLRenderer,
+} from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import type { Door, DoorShape } from './door';
-import { LOT_WIDTH } from './facade';
-import { findPortalFace, fitToLot, portalTooSmall, portalYaw, taperedReach, type Lot } from './buildingFit';
+import { prismRoof, prismWalls } from './avenues';
+import { findPortalFace, fitToLot, portalTooSmall, portalYaw, type Lot } from './buildingFit';
 import demoBuildings from './demoBuildings.json';
 
 /**
  * Buildings in the city (docs/specs/buildings.md): a world's own model
- * standing on its lot in place of the storefront, its portal face the
- * world's door. Models download in this browser, straight from where they
- * are hosted, only near the visitor, and only after passing the limits
- * below. Until one is ready, and whenever one can't be shown, the lot keeps
- * its storefront (the plug avenues.ts builds), so the street never misses
- * a door.
+ * standing in place of its block, its portal face the world's door. Models
+ * download in this browser, straight from where they are hosted, only near
+ * the visitor, and only after passing the limits below. Until one is ready,
+ * and whenever one can't be shown, the world keeps its default block
+ * (avenues.ts builds it on its own for this), so the street never misses a
+ * door.
  */
 
 /** Where a building's model is, and the file it must be (§5.3). */
@@ -46,15 +60,15 @@ const LOOK_SECONDS = 0.25;
 /** Nobody standing this close in front of the doorway: it doesn't change shape under them. */
 const SWAP_CLEAR = 1.5;
 
-/** A lot in the city with a building to stand on it. */
+/** A world's block in the city, with a building to take its place. */
 export interface BuildingLot {
   door: Door;
-  /** The room round the door (§2). */
+  /** The room round the door: the whole block (§2). */
   lot: Lot;
   /** How far in front of the wall line the door stands. */
   out: number;
-  /** The storefront filling the lot until the building shows, and its collider. */
-  plug: { meshes: Object3D[]; collider: Mesh };
+  /** The default block, shown until the building is, and its collider. */
+  block: { meshes: Object3D[]; collider: Mesh };
   source: BuildingSource;
 }
 
@@ -66,6 +80,8 @@ interface LotState extends BuildingLot {
   object: Group | null;
   /** The doorway its portal face makes, or null for the standard door. */
   shape: DoorShape | null;
+  /** What stops walkers at the building: its footprint, from the wall line back. */
+  collider: Mesh | null;
   abort: AbortController | null;
   /** Seconds since it was shown, while it fades in. */
   shownFor: number;
@@ -83,6 +99,7 @@ export class Buildings {
    * metallic materials get it. Made on first need.
    */
   private studio: Texture | null = null;
+  private colliderMaterial = new MeshBasicMaterial({ visible: false });
 
   constructor(
     private scene: Scene,
@@ -95,7 +112,7 @@ export class Buildings {
   /** The city was laid out afresh: these are its lots now. Buildings on the old ones come down. */
   setLots(lots: BuildingLot[]): void {
     for (const lot of this.lots) this.unload(lot);
-    this.lots = lots.map((lot) => ({ ...lot, status: 'idle', object: null, shape: null, abort: null, shownFor: 0, fading: [] }));
+    this.lots = lots.map((lot) => ({ ...lot, status: 'idle', object: null, shape: null, collider: null, abort: null, shownFor: 0, fading: [] }));
     this.sinceLook = LOOK_SECONDS;
   }
 
@@ -106,9 +123,9 @@ export class Buildings {
     this.sinceLook = LOOK_SECONDS;
   }
 
-  /** What stops walkers on the lots: each storefront until its building shows. */
+  /** What stops walkers on the lots: each default block until its building shows, then the building. */
   colliders(): Mesh[] {
-    return this.lots.filter((lot) => lot.status !== 'shown').map((lot) => lot.plug.collider);
+    return this.lots.flatMap((lot) => (lot.status !== 'shown' ? [lot.block.collider] : lot.collider ? [lot.collider] : []));
   }
 
   /** Each frame, with where the visitor stands. */
@@ -149,6 +166,7 @@ export class Buildings {
     this.lots = [];
     this.studio?.dispose();
     this.studio = null;
+    this.colliderMaterial.dispose();
   }
 
   private environment(): Texture {
@@ -196,13 +214,13 @@ export class Buildings {
     const anchor = search.face
       ? search.face.center.clone().setY(search.face.center.y - search.face.height / 2).applyMatrix4(turn)
       : new Vector3((bounds.min.x + bounds.max.x) / 2, bounds.min.y, bounds.max.z);
-    const reach = taperedReach(turned, anchor, lot.lot.taper);
     turned.remove(model);
-    const fit = fitToLot(bounds, anchor, lot.lot, lot.out, reach);
+    const fit = fitToLot(bounds, anchor, lot.lot, lot.out);
     if (search.face) {
       const small = portalTooSmall(search.face, fit.scale);
       if (small) throw new Error(small);
-      lot.shape = { width: search.face.width * fit.scale, height: search.face.height * fit.scale, span: LOT_WIDTH };
+      const width = search.face.width * fit.scale;
+      lot.shape = { width, height: search.face.height * fit.scale, span: width + 0.4 };
     }
     // The door takes the portal face's place.
     for (const mesh of search.meshes) mesh.visible = false;
@@ -227,12 +245,42 @@ export class Buildings {
     holder.add(model);
     holder.updateMatrixWorld(true);
     lot.object = holder;
+    lot.collider = this.footprint(lot, bounds.clone().applyMatrix4(fit.matrix));
+  }
+
+  /**
+   * A solid box round the building, from the wall line back, as the block's
+   * walls were: walkers reach its door as they reached the storefront's,
+   * and go no further. `placed` is the fitted model's box, in its door's
+   * frame. What stands in the forecourt is not solid.
+   */
+  private footprint(lot: LotState, placed: Box3): Mesh | null {
+    const { width, depth, height } = lot.lot;
+    const left = Math.max(placed.min.x, -width / 2);
+    const right = Math.min(placed.max.x, width / 2);
+    const back = Math.max(placed.min.z, -(depth + lot.out));
+    const front = -lot.out;
+    const top = Math.min(placed.max.y, height);
+    if (right - left < 0.1 || front - back < 0.1 || top < 0.1) return null;
+    const outline: Array<[number, number]> = [
+      [left, back],
+      [right, back],
+      [right, front],
+      [left, front],
+    ];
+    const parts = [prismWalls(outline, 0, top), prismRoof(outline, top)];
+    const geometry = mergeGeometries(parts);
+    for (const part of parts) part.dispose();
+    geometry.applyMatrix4(lot.door.group.matrixWorld);
+    const collider = new Mesh(geometry, this.colliderMaterial);
+    collider.updateMatrixWorld(true);
+    return collider;
   }
 
   private show(lot: LotState): void {
     if (!lot.object) return;
     lot.status = 'shown';
-    for (const mesh of lot.plug.meshes) mesh.visible = false;
+    for (const mesh of lot.block.meshes) mesh.visible = false;
     lot.door.setShape(lot.shape);
     lot.door.hideSign(true);
     lot.fading = [];
@@ -269,8 +317,10 @@ export class Buildings {
     if (lot.status === 'shown') {
       lot.door.setShape(null);
       lot.door.hideSign(false);
-      for (const mesh of lot.plug.meshes) mesh.visible = true;
+      for (const mesh of lot.block.meshes) mesh.visible = true;
     }
+    lot.collider?.geometry.dispose();
+    lot.collider = null;
     if (lot.object) {
       lot.object.removeFromParent();
       disposeObject(lot.object, this.studio);

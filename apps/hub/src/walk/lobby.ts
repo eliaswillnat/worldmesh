@@ -57,7 +57,7 @@ import { describeBillboard } from './layout';
 import { planAvenues, type CityPlan } from './avenuePlan';
 import { buildAvenues, dressHall } from './avenues';
 import { Buildings, DEMO_BUILDINGS, type BuildingLot, type BuildingSource } from './buildings';
-import { LOT_FORECOURT, LOT_HEIGHT, LOT_WIDTH, STOREFRONT_WIDTH } from './facade';
+import { LOT_FORECOURT, LOT_HEIGHT, STOREFRONT_WIDTH } from './facade';
 import { playSendSound, playWarpSound } from './sounds';
 import { chatRejection } from '../../../../templates/relay/src/chatFilter';
 import { deviceLanguage, isForeign, translate } from './translate';
@@ -977,7 +977,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   /** The city's blocks (just for looks) and their walls, one collider per block. */
   const cityMeshes: Mesh[] = [];
   const cityColliders: Mesh[] = [];
-  /** Each building lot's storefront, solid until its building stands there. */
+  /** Each world's block that a building can replace, solid until the building stands there. */
   const lotColliders: Mesh[] = [];
   const buildings = new Buildings(scene, renderer, !alias);
   let nearEmpty: Door | null = null;
@@ -2787,7 +2787,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     cityMeshes.length = 0;
     cityColliders.length = 0;
     lotColliders.length = 0;
-    // Building lots: for now only the demo's, standing in on the first doors of the city.
+    // Blocks a building replaces: for now only the demo's, standing in on the first doors of the city.
     const sources = new Map<number, BuildingSource>();
     if (options.buildings === 'demo') DEMO_BUILDINGS.slice(0, cityDoors.length).forEach((source, i) => sources.set(i, source));
     const blocks = buildAvenues(city, cityDoors.length, new Set(sources.keys()));
@@ -2808,10 +2808,10 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       collider.updateMatrixWorld(true);
       cityColliders.push(collider);
     }
-    // Each lot's storefront, as its own meshes, so it can step aside for the building.
+    // Each of those blocks as its own meshes, so it can step aside for the building.
     const lots: BuildingLot[] = [];
-    for (const [index, plug] of blocks.plugs) {
-      const parts: Array<[BufferGeometry[], Material]> = [[plug.solid, wallMaterial], [plug.trim, facadeMaterial], [plug.glow, cityMaterials.glow]];
+    for (const [index, block] of blocks.lots) {
+      const parts: Array<[BufferGeometry[], Material]> = [[block.solid, wallMaterial], [block.trim, facadeMaterial], [block.glow, cityMaterials.glow]];
       const meshes = parts.map(([geometries, material]) => {
         const mesh = new Mesh(mergeGeometries(geometries), material);
         for (const geometry of geometries) geometry.dispose();
@@ -2819,11 +2819,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         cityMeshes.push(mesh);
         return mesh;
       });
-      const collider = new Mesh(plug.collider, colliderMaterial);
+      const collider = new Mesh(block.collider, colliderMaterial);
       collider.updateMatrixWorld(true);
       lotColliders.push(collider);
-      const lot = { width: LOT_WIDTH, depth: plug.cut.depth, taper: plug.cut.taper, forecourt: LOT_FORECOURT, height: LOT_HEIGHT };
-      lots.push({ door: cityDoors[index], lot, out: city.slots[index].out, plug: { meshes, collider }, source: sources.get(index)! });
+      const lot = { width: block.width, depth: block.depth, forecourt: LOT_FORECOURT, height: LOT_HEIGHT };
+      lots.push({ door: cityDoors[index], lot, out: city.slots[index].out, block: { meshes, collider }, source: sources.get(index)! });
     }
     buildings.setLots(lots);
     // The walkable ground reaches past the corners of the outermost streets; the mirror floor under it too.
