@@ -3,7 +3,7 @@ import { getPlatformProxy } from 'wrangler';
 import { fileURLToPath } from 'node:url';
 import { createTestDatabase, type TestDatabase } from '../../../db/test/d1';
 import worker, { type Env } from '../src/index';
-import { isUndeployedWorker, perDay, runChecks, type Check } from '../src/data';
+import { formatCharacter, isUndeployedWorker, perDay, runChecks, type Check } from '../src/data';
 import type { RoomStats } from '../src/env';
 
 const HUB = 'https://worldmesh.net';
@@ -71,6 +71,39 @@ async function addSession(userId: string, token: string, expiresIn = 30 * DAY): 
     .bind(`s_${token}`, new Date(clock + expiresIn).toISOString(), token, iso, iso, userId)
     .run();
   return `s_${token}`;
+}
+
+/** Avatar Wallet connection (migration 0004 columns only). */
+async function addAvatarConnection(
+  id: string,
+  userId: string,
+  provider: string,
+  status: 'active' | 'reconnect' = 'active',
+): Promise<void> {
+  await env.DB.prepare(
+    `insert into avatar_connection
+       (id, user_id, provider, provider_account_id, display_name, service_endpoint, token_enc, status, created_at, updated_at)
+     values (?, ?, ?, ?, ?, null, null, ?, ?, ?)`,
+  )
+    .bind(id, userId, provider, `acct_${id}`, `Name ${id}`, status, clock, clock)
+    .run();
+}
+
+/** Saved / worn avatar (migration 0004 columns only — not custom_name). */
+async function addAvatar(
+  id: string,
+  userId: string,
+  connectionId: string,
+  provider: string,
+  options: { selected?: boolean; displayName?: string | null } = {},
+): Promise<void> {
+  await env.DB.prepare(
+    `insert into avatar
+       (id, user_id, connection_id, provider, external_avatar_id, display_name, thumbnail_url, format, selected, metadata_json, created_at, updated_at)
+     values (?, ?, ?, ?, ?, ?, null, 'vrm', ?, null, ?, ?)`,
+  )
+    .bind(id, userId, connectionId, provider, `ext_${id}`, options.displayName ?? null, options.selected ? 1 : 0, clock, clock)
+    .run();
 }
 
 function call(url: string, init: RequestInit = {}): Promise<Response> {
@@ -267,6 +300,8 @@ describe('what an admin sees', () => {
     expect(html).toContain('one@example.com');
     expect(html).toContain('@one');
     expect(html).toContain('unverified');
+    expect(html).toContain('Character');
+    expect(html).toContain('Default'); // admin has no Avatar Wallet selection
     expect(html).toMatch(/New, 7 days<\/div><div class="stat-value">2</); // admin (today) + u1
 
     const search = await page('/users?q=two', cookie);
@@ -274,6 +309,27 @@ describe('what an admin sees', () => {
     expect(search).not.toContain('one@example.com');
     // LIKE wildcards are literal.
     expect(await page('/users?q=%25', cookie)).toContain('No account matches.');
+  });
+
+  it('shows each user\'s Avatar Wallet character (worn, connected, or Default)', async () => {
+    await addUser('wear', 'wear@example.com', { username: 'wearer' });
+    await addUser('link', 'link@example.com', { username: 'linker' });
+    await addUser('plain', 'plain@example.com', { username: 'plain' });
+
+    await addAvatarConnection('c_wear', 'wear', 'vroid');
+    await addAvatar('av_wear_a', 'wear', 'c_wear', 'vroid', { selected: true, displayName: 'Blue Mage' });
+    await addAvatar('av_wear_b', 'wear', 'c_wear', 'vroid', { selected: false, displayName: 'Other' });
+
+    await addAvatarConnection('c_link_v', 'link', 'vroid', 'reconnect');
+    await addAvatarConnection('c_link_a', 'link', 'atproto', 'active');
+
+    const html = await page('/users', cookie);
+    expect(html).toContain('VRoid · Blue Mage');
+    expect(html).toContain('VRoid (needs reconnect)');
+    expect(html).toContain('AT Protocol');
+    // plain + admin: no wallet → Default (column replaced Avatars count)
+    expect(html).not.toMatch(/>Avatars</);
+    expect(html).toMatch(/Character/);
   });
 
   it('edits a waiting world, approves it through the hub, and rejects another', async () => {
@@ -461,5 +517,26 @@ describe('perDay', () => {
       { day: '2026-09-30', n: 2 },
       { day: '2026-10-01', n: 1 },
     ]);
+  });
+});
+
+describe('formatCharacter', () => {
+  const empty = { characterProvider: null, characterName: null, characterConnections: null, avatars: 0 };
+
+  it('prefers the worn avatar provider, with a short display_name or saved count', () => {
+    expect(formatCharacter({ ...empty, characterProvider: 'vroid', characterName: 'Blue Mage', avatars: 2 })).toBe('VRoid · Blue Mage');
+    expect(formatCharacter({ ...empty, characterProvider: 'atproto', characterName: null, avatars: 2 })).toBe('AT Protocol · 2');
+    expect(formatCharacter({ ...empty, characterProvider: 'sketchfab', characterName: 'A very long character name indeed', avatars: 1 })).toBe('Sketchfab');
+    expect(formatCharacter({ ...empty, characterProvider: 'upload', characterName: null, avatars: 1 })).toBe('upload');
+  });
+
+  it('falls back to connected providers (and reconnect) when nothing is worn', () => {
+    expect(formatCharacter({ ...empty, characterConnections: 'vroid:reconnect,atproto:active' })).toBe(
+      'VRoid (needs reconnect), AT Protocol',
+    );
+  });
+
+  it('shows Default when there is no wallet selection or connection', () => {
+    expect(formatCharacter(empty)).toBe('Default');
   });
 });

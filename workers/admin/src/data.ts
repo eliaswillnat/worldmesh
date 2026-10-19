@@ -103,12 +103,76 @@ export interface UserRow {
   providers: string | null;
   lastSeen: unknown;
   sessions: number;
+  /** Saved avatars in the wallet (any selection state). */
   avatars: number;
+  /** Provider of the worn avatar (`avatar.selected = 1`), if any. */
+  characterProvider: string | null;
+  /** Platform display_name of the worn avatar (0004 column only; not custom_name). */
+  characterName: string | null;
+  /**
+   * Connected Avatar Wallet providers as `provider:status` pairs
+   * (e.g. `vroid:active,atproto:reconnect`), or null when none.
+   */
+  characterConnections: string | null;
   followers: number;
+}
+
+/** Friendly labels for Avatar Wallet providers (raw D1 values → UI). */
+const CHARACTER_PROVIDER_LABELS: Record<string, string> = {
+  vroid: 'VRoid',
+  atproto: 'AT Protocol',
+  sketchfab: 'Sketchfab',
+  upload: 'upload',
+};
+
+/** Short enough to keep the Character cell compact on mobile. */
+const SHORT_CHARACTER_NAME = 18;
+
+export function characterProviderLabel(provider: string): string {
+  return CHARACTER_PROVIDER_LABELS[provider] ?? provider;
+}
+
+/**
+ * Compact Character cell for the Users table: worn provider (+ short name or
+ * saved count), else connected providers, else Default.
+ */
+export function formatCharacter(user: {
+  characterProvider: string | null;
+  characterName: string | null;
+  characterConnections: string | null;
+  avatars: number;
+}): string {
+  const provider = user.characterProvider?.trim();
+  if (provider) {
+    const label = characterProviderLabel(provider);
+    const name = user.characterName?.trim();
+    if (name && name.length <= SHORT_CHARACTER_NAME) return `${label} · ${name}`;
+    const count = Number(user.avatars);
+    if (count > 1) return `${label} · ${count}`;
+    return label;
+  }
+  const connections = (user.characterConnections ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  if (connections.length) {
+    return connections
+      .map((entry) => {
+        const colon = entry.indexOf(':');
+        const raw = colon >= 0 ? entry.slice(0, colon) : entry;
+        const status = colon >= 0 ? entry.slice(colon + 1) : '';
+        const label = characterProviderLabel(raw);
+        return status === 'reconnect' ? `${label} (needs reconnect)` : label;
+      })
+      .join(', ');
+  }
+  return 'Default';
 }
 
 export async function users(env: Env, query: string, limit = 200): Promise<UserRow[]> {
   const like = `%${query.replace(/[%_\\]/g, (char) => `\\${char}`)}%`;
+  // One statement: correlated subqueries only (no N+1). Columns from migration
+  // 0004 only — not custom_name (0007) or anything Sketchfab-only (0006).
   return all<UserRow>(
     env,
     `select u.id, u.name, u.email, u."emailVerified", u.image, u.username, u."createdAt",
@@ -116,6 +180,9 @@ export async function users(env: Env, query: string, limit = 200): Promise<UserR
        (select max(s."updatedAt") from "session" s where s."userId" = u.id) as "lastSeen",
        (select count(*) from "session" s where s."userId" = u.id) as sessions,
        (select count(*) from avatar v where v.user_id = u.id) as avatars,
+       (select v.provider from avatar v where v.user_id = u.id and v.selected = 1 limit 1) as "characterProvider",
+       (select v.display_name from avatar v where v.user_id = u.id and v.selected = 1 limit 1) as "characterName",
+       (select group_concat(c.provider || ':' || c.status) from avatar_connection c where c.user_id = u.id) as "characterConnections",
        (select count(*) from ap_follower f join ap_actor x on x.id = f.actor_id where x.user_id = u.id) as followers
      from "user" u
      where ? = '' or u.email like ? escape '\\' or u.name like ? escape '\\' or u.username like ? escape '\\'
