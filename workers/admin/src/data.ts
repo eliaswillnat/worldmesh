@@ -475,7 +475,22 @@ export interface CheckResult extends Check {
   status: number | null;
   ms: number;
   up: boolean;
+  /**
+   * Same-zone missing Worker: the hub Pages origin answered 404 with HTML
+   * instead of the Worker JSON endpoint. Neutral in the UI (not "Down").
+   */
+  notDeployed?: boolean;
   error?: string;
+}
+
+/** Hub HTML 404 for a check that expects a Worker JSON (200) response. */
+export function isUndeployedWorker(check: Check, status: number, contentType: string | null): boolean {
+  return (
+    status === 404 &&
+    check.expect.includes(200) &&
+    !check.expect.includes(404) &&
+    (contentType ?? '').toLowerCase().includes('text/html')
+  );
 }
 
 export function serviceChecks(env: Env): Check[] {
@@ -503,10 +518,14 @@ export async function runChecks(env: Env, checks: Check[], timeoutMs = 5000): Pr
           signal: AbortSignal.timeout(timeoutMs),
           headers: { 'User-Agent': 'WorldMesh-Admin-Healthcheck/1.0' },
         });
+        const contentType = response.headers.get('content-type');
         await response.body?.cancel();
         const ms = Date.now() - started;
-        const up = check.expect.includes(response.status) || (check.expect.includes(200) && response.status >= 200 && response.status < 400);
-        return { ...check, status: response.status, ms, up };
+        const notDeployed = isUndeployedWorker(check, response.status, contentType);
+        const up =
+          !notDeployed &&
+          (check.expect.includes(response.status) || (check.expect.includes(200) && response.status >= 200 && response.status < 400));
+        return { ...check, status: response.status, ms, up, ...(notDeployed ? { notDeployed: true } : {}) };
       } catch (error) {
         return { ...check, status: null, ms: Date.now() - started, up: false, error: error instanceof Error ? error.name : 'Error' };
       }
