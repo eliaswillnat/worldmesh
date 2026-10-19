@@ -39,8 +39,25 @@ export class Input {
   private justPressed = new Set<InputAction>();
   /** The last number key pressed this frame, if any. */
   private pendingDigit: number | null = null;
-  /** The mouse was clicked this frame with the cursor captured. */
-  private clicked = false;
+  /** The bird's-eye view is on: the cursor is free, and pointing and dragging act on the ground. */
+  private aerial = false;
+  /** Letting go of the cursor for the bird's-eye view; take it back when the view ends. */
+  private freeing = false;
+  private relockAfterAerial = false;
+  /** In the bird's-eye view: the cursor over the view, in CSS pixels from its top-left; null when off it. */
+  private cursor: { x: number; y: number } | null = null;
+  /** A mouse button held in the bird's-eye view: left drags the ground, right turns the view. */
+  private drag: { button: number; x: number; y: number; moved: boolean } | null = null;
+  private panX = 0;
+  private panY = 0;
+  /** A click or tap on the view in the bird's-eye view, not yet read. */
+  private tap: { x: number; y: number } | null = null;
+  /**
+   * Just captured: the browser's first movement report jumps by however far
+   * the cursor was from the corner (most of all after the bird's-eye view,
+   * where it was pointing somewhere), so it is not a look.
+   */
+  private skipMove = false;
   private codeToActions = new Map<string, InputAction[]>();
   private onPointerLockChange?: (locked: boolean) => void;
   private onEscape?: () => boolean | void;
@@ -92,6 +109,9 @@ export class Input {
     this.element.addEventListener('mousemove', this.handleMouseMove);
     this.element.addEventListener('wheel', this.handleWheel, { passive: true });
     this.element.addEventListener('pointerdown', this.handlePointerDown);
+    this.element.addEventListener('contextmenu', this.handleContextMenu);
+    this.element.addEventListener('mouseleave', this.handleMouseLeave);
+    window.addEventListener('pointerup', this.handlePointerUp);
     // The sticks are on screen from the start, so the first touch moves instead of "entering".
     if (this.moveBeforeLock && isTouchDevice()) this.touch?.setVisible(true);
   }
@@ -255,11 +275,57 @@ export class Input {
     return digit;
   }
 
-  /** True once for a mouse click while the cursor is captured. Reading it clears it. */
-  consumeClick(): boolean {
-    const clicked = this.clicked;
-    this.clicked = false;
-    return clicked;
+  /**
+   * The bird's-eye view on or off. On, the cursor is let go (quietly, no
+   * pause screen) so it can point at the ground; off, it is captured again
+   * if it was before.
+   */
+  setAerial(on: boolean): void {
+    if (this.aerial === on) return;
+    this.aerial = on;
+    this.drag = null;
+    this.tap = null;
+    this.panX = 0;
+    this.panY = 0;
+    this.touch?.setAerial(on);
+    if (on) {
+      this.relockAfterAerial = document.pointerLockElement === this.element;
+      if (this.relockAfterAerial) {
+        this.freeing = true;
+        document.exitPointerLock();
+      }
+      return;
+    }
+    this.cursor = null;
+    if (this.relockAfterAerial && !this.xrSession) {
+      this.relockAfterAerial = false;
+      this.recapture();
+    }
+  }
+
+  /** In the bird's-eye view: where the cursor is over the view, in CSS pixels; null when it is off it (or on touch). */
+  getCursor(): { x: number; y: number } | null {
+    return this.aerial ? this.cursor : null;
+  }
+
+  /** In the bird's-eye view: how far the ground was dragged since the last read, in CSS pixels. */
+  readPan(): { dx: number; dy: number } {
+    const pan = { dx: this.panX, dy: this.panY };
+    this.panX = 0;
+    this.panY = 0;
+    return pan;
+  }
+
+  /** In the bird's-eye view: a click or tap on the view since the last read, in CSS pixels; once. */
+  consumeTap(): { x: number; y: number } | null {
+    const tap = this.tap;
+    this.tap = null;
+    if (tap) return tap;
+    const touchTap = this.touch?.consumeTap();
+    if (!touchTap) return null;
+    // The touch layer reports window coordinates; the view need not fill the window.
+    const rect = this.element.getBoundingClientRect();
+    return { x: touchTap.x - rect.left, y: touchTap.y - rect.top };
   }
 
   /** Keep moving this way (same axes as getMoveAxis) until told otherwise; 0, 0 stops. */
@@ -295,8 +361,14 @@ export class Input {
     let dy = this.mouseDeltaY;
     if (this.touch) {
       const touchLook = this.touch.readLook();
-      dx += touchLook.dx;
-      dy += touchLook.dy;
+      if (this.aerial) {
+        // A finger dragged across the bird's-eye view moves the ground with it.
+        this.panX += touchLook.dx;
+        this.panY += touchLook.dy;
+      } else {
+        dx += touchLook.dx;
+        dy += touchLook.dy;
+      }
     }
     const look = { dx, dy, wheel: this.wheelDelta };
     this.mouseDeltaX = 0;
@@ -309,7 +381,6 @@ export class Input {
   endFrame(): void {
     this.justPressed.clear();
     this.pendingDigit = null;
-    this.clicked = false;
   }
 
   dispose(): void {
@@ -324,6 +395,9 @@ export class Input {
     this.element.removeEventListener('mousemove', this.handleMouseMove);
     this.element.removeEventListener('wheel', this.handleWheel);
     this.element.removeEventListener('pointerdown', this.handlePointerDown);
+    this.element.removeEventListener('contextmenu', this.handleContextMenu);
+    this.element.removeEventListener('mouseleave', this.handleMouseLeave);
+    window.removeEventListener('pointerup', this.handlePointerUp);
     this.pressed.clear();
     this.justPressed.clear();
   }
@@ -374,11 +448,19 @@ export class Input {
   /**
    * A click captures the cursor for looking. Touch is left alone: the joysticks
    * already have the finger, and they do not need a tap before they work.
-   * Once captured, a click is kept for the frame (consumeClick).
+   * In the bird's-eye view the mouse points instead: see handleMouseMove.
    */
   private handlePointerDown = (event: PointerEvent): void => {
-    if (this.locked && !this.disposed && event.button === 0 && event.pointerType === 'mouse' && document.pointerLockElement === this.element) {
-      this.clicked = true;
+    if (this.disposed) return;
+    if (this.aerial) {
+      if (event.pointerType === 'mouse' && (event.button === 0 || event.button === 2)) {
+        this.drag = { button: event.button, x: event.clientX, y: event.clientY, moved: false };
+      }
+      return;
+    }
+    // Walking, but the cursor got away (the bird's-eye view could not take it back): a click captures it again.
+    if (this.locked && event.pointerType === 'mouse' && event.button === 0 && document.pointerLockElement !== this.element && !isTouchDevice()) {
+      this.recapture();
       return;
     }
     if (!this.moveBeforeLock || this.locked || this.disposed || event.button !== 0) return;
@@ -393,7 +475,27 @@ export class Input {
    * moveBeforeLock, the visible cursor turns it too, so looking works from the start.
    */
   private handleMouseMove = (event: MouseEvent): void => {
+    if (this.aerial) {
+      // The cursor points at the ground; a held left button drags it, a held right button turns the view.
+      const rect = this.element.getBoundingClientRect();
+      this.cursor = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+      const drag = this.drag;
+      if (!drag) return;
+      if (!drag.moved && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) > CLICK_SLOP) drag.moved = true;
+      if (!drag.moved) return;
+      if (drag.button === 0) {
+        this.panX += event.movementX;
+        this.panY += event.movementY;
+      } else {
+        this.mouseDeltaX += event.movementX;
+      }
+      return;
+    }
     if (!this.locked && !this.hoverLook(event)) return;
+    if (this.skipMove && document.pointerLockElement === this.element) {
+      this.skipMove = false;
+      return;
+    }
     this.mouseDeltaX += event.movementX;
     this.mouseDeltaY += event.movementY;
   };
@@ -405,12 +507,17 @@ export class Input {
   }
 
   private handleWheel = (event: WheelEvent): void => {
-    if (!this.locked) return;
+    if (!this.locked && !this.aerial) return;
     this.wheelDelta += event.deltaY;
   };
 
   private handlePointerLockChange = (): void => {
     const isLocked = document.pointerLockElement === this.element;
+    if (!isLocked && this.freeing) {
+      // Let go for the bird's-eye view: still walking, just pointing.
+      this.freeing = false;
+      return;
+    }
     if (!isLocked && this.releasing) {
       // Quiet: the overlay keeps its walking state.
       this.releasing = false;
@@ -418,12 +525,43 @@ export class Input {
       return;
     }
     if (isLocked) {
+      this.skipMove = true;
       this.setLocked(true);
     } else if (!isTouchDevice()) {
       // On non-touch desktop, losing pointer lock releases controls
       this.setLocked(false);
     }
   };
+
+  /** A left click that did not drag is a click on the ground. */
+  private handlePointerUp = (event: PointerEvent): void => {
+    const drag = this.drag;
+    if (!drag || event.pointerType !== 'mouse' || event.button !== drag.button) return;
+    this.drag = null;
+    if (!this.aerial || drag.moved || drag.button !== 0) return;
+    const rect = this.element.getBoundingClientRect();
+    this.tap = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+  };
+
+  /** Right-dragging turns the bird's-eye view: no browser menu. */
+  private handleContextMenu = (event: MouseEvent): void => {
+    if (this.aerial) event.preventDefault();
+  };
+
+  private handleMouseLeave = (): void => {
+    this.cursor = null;
+  };
+
+  /** Capture the cursor again without going through the click-to-enter flow. */
+  private recapture(): void {
+    if (typeof this.element.requestPointerLock !== 'function') return;
+    try {
+      const promise = this.element.requestPointerLock() as unknown as Promise<void> | undefined;
+      promise?.catch?.(() => undefined);
+    } catch {
+      // Refused (no user gesture, or an iframe without permission): the next click captures it.
+    }
+  }
 
   private handlePointerLockError = (): void => {
     // If pointer lock failed on desktop / iframe, still let the user enter
@@ -434,6 +572,8 @@ export class Input {
 }
 
 const XR_TURN_SPEED = 2.4;
+/** A mouse press that moves less than this many pixels is a click, not a drag. */
+const CLICK_SLOP = 5;
 const XR_DEADZONE = 0.18;
 
 function readThumbstick(pad: Gamepad): { x: number; y: number } {

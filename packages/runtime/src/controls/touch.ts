@@ -10,6 +10,9 @@ export function isTouchDevice(): boolean {
 }
 
 const TOUCH_STYLE_ID = 'worldmesh-touch-style';
+/** A touch that moves less than this many pixels, and lets go within TAP_TIME ms, is a tap. */
+const TAP_SLOP = 10;
+const TAP_TIME = 350;
 
 const TOUCH_CSS = `
 .wm-touch-root {
@@ -175,6 +178,11 @@ export class TouchControls {
 
   private disposed = false;
   private visible = false;
+  /** The bird's-eye view is on: a quick tap anywhere is a tap on the ground. */
+  private aerial = false;
+  /** Where and when each finger came down, to tell a tap from a drag. */
+  private downs = new Map<number, { x: number; y: number; time: number }>();
+  private tap: { x: number; y: number } | null = null;
 
   constructor(options: TouchControlsOptions) {
     this.onExit = options.onExit;
@@ -297,9 +305,10 @@ export class TouchControls {
     if (e.pointerType !== 'touch' && e.pointerType !== 'pen') return;
 
     const target = e.target as HTMLElement | null;
-    if (target?.closest('.wm-touch-btn, .wm-touch-menu-btn, .wm-prompt, .wm-badge, .wm-lock')) {
+    if (target?.closest('.wm-touch-btn, .wm-touch-menu-btn, .wm-prompt, .wm-badge, .wm-lock, .wm-aerial-btn')) {
       return;
     }
+    this.downs.set(e.pointerId, { x: e.clientX, y: e.clientY, time: e.timeStamp });
 
     const halfWidth = window.innerWidth * 0.5;
 
@@ -313,6 +322,8 @@ export class TouchControls {
       const restY = rest.top + rest.height / 2;
       const onStick = Math.hypot(e.clientX - restX, e.clientY - restY) < rest.width * 0.75;
       this.moveStart = onStick ? { x: restX, y: restY } : { x: e.clientX, y: e.clientY };
+      // Grabbing the stick is steering, never a tap on the ground under it.
+      if (onStick) this.downs.delete(e.pointerId);
       this.joystickBase.classList.remove('wm-idle');
       this.joystickBase.style.left = `${this.moveStart.x}px`;
       this.joystickBase.style.top = `${this.moveStart.y}px`;
@@ -358,6 +369,18 @@ export class TouchControls {
   };
 
   private handlePointerUp = (e: PointerEvent): void => {
+    const down = this.downs.get(e.pointerId);
+    this.downs.delete(e.pointerId);
+    if (
+      this.aerial &&
+      down &&
+      e.type === 'pointerup' &&
+      Math.hypot(e.clientX - down.x, e.clientY - down.y) < TAP_SLOP &&
+      // The events' own times: a slow frame between them is not a long press.
+      e.timeStamp - down.time < TAP_TIME
+    ) {
+      this.tap = { x: e.clientX, y: e.clientY };
+    }
     if (e.pointerId === this.movePointerId) {
       this.movePointerId = null;
       this.moveAxis = { x: 0, z: 0 };
@@ -369,6 +392,19 @@ export class TouchControls {
       this.lookPointerId = null;
     }
   };
+
+  /** The bird's-eye view on or off: taps on the view count while it is on. */
+  setAerial(on: boolean): void {
+    this.aerial = on;
+    this.tap = null;
+  }
+
+  /** A quick tap on the view in the bird's-eye view, in window coordinates; once. */
+  consumeTap(): { x: number; y: number } | null {
+    const tap = this.tap;
+    this.tap = null;
+    return tap;
+  }
 
   getMoveAxis(): { x: number; z: number } {
     return this.moveAxis;
@@ -410,6 +446,8 @@ export class TouchControls {
     this.lookDelta = { dx: 0, dy: 0 };
     this.actionsDown.clear();
     this.justPressed.clear();
+    this.downs.clear();
+    this.tap = null;
     this.setSprinting(false);
     this.restJoystick();
   }

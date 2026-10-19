@@ -16,7 +16,8 @@ Every WorldMesh world ships these bindings by default. They live in
 | `Space` | Jump (and ascend while flying) |
 | `Shift` | Sprint |
 | `E` | Interact / enter a portal |
-| `V` | Toggle first ↔ third person (in the lobby: first → third → bird's-eye view) |
+| `V` | Toggle first ↔ third person |
+| `M` | Bird's-eye view, on and off (in worlds that offer it, such as the lobby) |
 | `1` … `9`, `0` | Change the default figure's face: smile, grin, laugh, wink, love, surprised, sad, angry, sleepy, neutral |
 | `Esc` | Release the cursor |
 | Scroll wheel | Third-person camera distance (and bird's-eye height) |
@@ -34,22 +35,26 @@ Optional, and only active when the world declares the matching ability:
 
 ## Bird's-eye view
 
-The lobby has a third camera mode: a high, three-quarter look down at it, for
-getting somewhere far away quickly. Other worlds don't, unless they ask for it
-with `view: { aerial: true }`. While it is on, the player stands still and the
-controls move the view instead:
+The lobby has a bird's-eye view: a high, three-quarter look down at it (close
+to isometric, but in perspective), for getting somewhere far away quickly.
+It has its own key, `M`, and its own button (bottom right on desktop, beside
+the menu button on touch), and works at any time: walking, running or flying.
+Other worlds don't have it, unless they ask for it with `view: { aerial: true }`.
+
+While it is on, the player stands still, the cursor is free, and pointing
+picks where to land:
 
 | Input | Action |
 | --- | --- |
-| `W` `A` `S` `D` / arrows | Pan over the ground |
-| `Shift` | Pan faster |
-| Mouse | Turn the view around, and tilt it between steep and shallow |
+| Move the mouse | A marker shows where you would land |
+| Click (or `E`) | Land there, and walk on in the mode you came from |
+| Drag | Move the view over the ground |
+| Right-drag | Turn the view around (its tilt stays three-quarter) |
+| `W` `A` `S` `D` / arrows | Move the view (`Shift` for faster) |
 | Scroll wheel | Higher or lower, never more than 50 m above the ground in the lobby (`view.aerialMaxHeight`, 40 m unless a world sets it) |
-| Click, or `E` | Land where the marker is, and walk on in the mode you came from |
-| `V` | Back to first person without moving |
+| `M`, `Esc` or the button | Back to walking where you were |
 
-The marker sits on the first surface under the middle of the screen; pointing
-at a wall puts it at the wall's foot. Colliders a world marks with
+Pointing at a wall puts the marker at the wall's foot. Colliders a world marks with
 `mesh.userData.noLanding = true` (a glass roof only fliers reach, say) are
 seen through, to whatever is under them. The bird's-eye view is never carried
 to the next world, and VR always leaves it.
@@ -83,11 +88,12 @@ landscape:
 | Drag on the right half | Look |
 | ▲ button | Jump |
 | E button | Interact |
-| V button | Toggle first / third person (in the lobby, the bird's-eye view too) |
+| V button | Toggle first / third person |
+| Bird's-eye button (top right, beside ⏸) | Bird's-eye view, on and off (in worlds that offer it) |
 | ⏸ button (top right) | Pause |
 
-In the lobby's bird's-eye view the joystick pans, dragging on the right turns the view,
-and E (or the prompt) lands the player at the marker.
+In the bird's-eye view, dragging (or the joystick) moves the view, and a tap
+lands the player where you tapped.
 
 ## VR
 
