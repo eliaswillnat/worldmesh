@@ -314,40 +314,76 @@ function dressBlock(faces: WallFace[], doors: Map<number, FacadeDoor[]>, out: Dr
 }
 
 /**
+ * A world's own block, built on its own instead of into the city's shared
+ * meshes, so a building of its own can take its place
+ * (docs/specs/buildings.md): walls, trim, light and collider as for any
+ * block, and the room it leaves, along its door's wall and back from it.
+ */
+export interface LotBlock {
+  width: number;
+  depth: number;
+  solid: BufferGeometry[];
+  trim: BufferGeometry[];
+  glow: BufferGeometry[];
+  collider: BufferGeometry;
+}
+
+/**
  * Every block of the plan: walls, cornice and roof (solid), dressed as
  * storefronts (trim: a shade off the walls, so the piers and panels read
  * in any light), the lines of light (glow), a sign for each of the first `doors`
  * slots, and one collider per block (its walls, roof and piers), so a step only
- * tests what is near it.
+ * tests what is near it. The blocks of the slots in `lots` come back on their
+ * own instead, by slot (LotBlock).
  */
 export function buildAvenues(
   plan: CityPlan,
   doors: number,
-): { solid: BufferGeometry[]; trim: BufferGeometry[]; glow: BufferGeometry[]; colliders: BufferGeometry[]; signs: StorefrontSign[] } {
+  lots: ReadonlySet<number> = new Set(),
+): {
+  solid: BufferGeometry[];
+  trim: BufferGeometry[];
+  glow: BufferGeometry[];
+  colliders: BufferGeometry[];
+  signs: StorefrontSign[];
+  lots: Map<number, LotBlock>;
+} {
   const solid: BufferGeometry[] = [];
   const trim: BufferGeometry[] = [];
   const glow: BufferGeometry[] = [];
   const colliders: BufferGeometry[] = [];
   const signs: StorefrontSign[] = [];
-  // The doors on each wall of each block.
+  const lotBlocks = new Map<number, LotBlock>();
+  // The doors on each wall of each block, and which blocks are lots, by their door's slot.
   const byWall = new Map<number, Map<number, FacadeDoor[]>>();
+  const lotSlot = new Map<number, number>();
   plan.slots.slice(0, doors).forEach((slot, index) => {
     const walls = byWall.get(slot.block) ?? new Map();
     byWall.set(slot.block, walls);
     walls.set(slot.face, [...(walls.get(slot.face) ?? []), { along: slot.along, index, toDoor: slotFrame(slot) }]);
+    if (lots.has(index)) lotSlot.set(slot.block, index);
   });
   plan.blocks.forEach((block, index) => {
+    const lot = lotSlot.get(index);
+    const own = lot === undefined ? { solid, trim, glow } : { solid: [], trim: [], glow: [] };
     const footprint = blockOutline(block);
-    solid.push(prismWalls(footprint, 0, BLOCK_HEIGHT - CORNICE_HEIGHT));
+    own.solid.push(prismWalls(footprint, 0, BLOCK_HEIGHT - CORNICE_HEIGHT));
     const crown = blockOutline(block, CORNICE_OUT);
-    solid.push(prismWalls(crown, BLOCK_HEIGHT - CORNICE_HEIGHT, BLOCK_HEIGHT));
-    solid.push(prismRoof(crown, BLOCK_HEIGHT));
+    own.solid.push(prismWalls(crown, BLOCK_HEIGHT - CORNICE_HEIGHT, BLOCK_HEIGHT));
+    own.solid.push(prismRoof(crown, BLOCK_HEIGHT));
     // The roof too, so someone flying over can land on it.
-    const own: BufferGeometry[] = [prismWalls(footprint, 0, BLOCK_HEIGHT), prismRoof(crown, BLOCK_HEIGHT)];
-    dressBlock(blockFaces(block), byWall.get(index) ?? new Map(), { trim, glow, colliders: own, signs });
-    colliders.push(mergeAll(own));
+    const solids: BufferGeometry[] = [prismWalls(footprint, 0, BLOCK_HEIGHT), prismRoof(crown, BLOCK_HEIGHT)];
+    const faces = blockFaces(block);
+    dressBlock(faces, byWall.get(index) ?? new Map(), { trim: own.trim, glow: own.glow, colliders: solids, signs });
+    const collider = mergeAll(solids);
+    if (lot === undefined) {
+      colliders.push(collider);
+    } else {
+      const wall = plan.slots[lot].face;
+      lotBlocks.set(lot, { ...own, collider, width: faces[wall].length, depth: faces[(wall + 1) % faces.length].length });
+    }
   });
-  return { solid, trim, glow, colliders, signs };
+  return { solid, trim, glow, colliders, signs, lots: lotBlocks };
 }
 
 /**

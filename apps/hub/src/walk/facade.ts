@@ -26,6 +26,12 @@ const DOOR_MARGIN = 0.6;
 export const STOREFRONT_HALF = DOOR_HALF_SPAN + DOOR_MARGIN + PIER_WIDTH / 2;
 /** A storefront bay, pier centre to pier centre: what each door takes along the wall. */
 export const STOREFRONT_WIDTH = STOREFRONT_HALF * 2;
+/**
+ * A building lot (docs/specs/buildings.md §2) is its world's whole block,
+ * with a forecourt this deep out in front, and this tall at most.
+ */
+export const LOT_FORECOURT = 2;
+export const LOT_HEIGHT = 28;
 /** Blank bays come out about half a storefront wide, so the rhythm stays the same along every wall. */
 const BLANK_TARGET = STOREFRONT_HALF;
 /** Wall narrower than this between two bays is not a bay: the pier widens to fill it. */

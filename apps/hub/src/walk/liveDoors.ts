@@ -1,5 +1,5 @@
 import { Matrix4, Quaternion, Vector3, type PerspectiveCamera } from 'three';
-import { DOOR_HEIGHT, DOOR_WIDTH, type Door } from './door';
+import type { Door } from './door';
 
 /**
  * Live doors: a world whose Doorway file says `"view": true` is drawn in its
@@ -36,12 +36,15 @@ const RECT_MARGIN = 4;
 const RECT_SLACK = 0.08;
 
 /** The doorway's corners in its door's own frame, for finding it on screen. */
-const DOORWAY_CORNERS: ReadonlyArray<[number, number]> = [
-  [-DOOR_WIDTH / 2, 0],
-  [DOOR_WIDTH / 2, 0],
-  [-DOOR_WIDTH / 2, DOOR_HEIGHT],
-  [DOOR_WIDTH / 2, DOOR_HEIGHT],
-];
+function doorwayCorners(door: Door): Array<[number, number]> {
+  const half = door.width / 2;
+  return [
+    [-half, 0],
+    [half, 0],
+    [-half, door.height],
+    [half, door.height],
+  ];
+}
 
 export interface LiveWorld {
   door: Door;
@@ -247,7 +250,7 @@ export class LiveDoors {
     let bottom = Infinity;
     let right = -Infinity;
     let top = -Infinity;
-    for (const [x, y] of DOORWAY_CORNERS) {
+    for (const [x, y] of doorwayCorners(door)) {
       const corner = this.corner.set(x, y, 0).applyMatrix4(door.group.matrixWorld).applyMatrix4(camera.matrixWorldInverse);
       if (corner.z > -camera.near) return [0, 0, width, height];
       corner.applyMatrix4(camera.projectionMatrix);

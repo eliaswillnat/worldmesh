@@ -1,6 +1,6 @@
 import type { AvatarDescriptor, PlayerState, ViewMode } from '@worldmesh/runtime';
 import { Matrix3, Matrix4, Quaternion, Vector3, type PerspectiveCamera } from 'three';
-import { DOOR_HEIGHT, DOOR_WIDTH, type Door } from './door';
+import type { Door } from './door';
 import type { LiveDoors, LiveWorld } from './liveDoors';
 
 /**
@@ -129,7 +129,7 @@ export class WalkThrough {
       } else {
         const eye = door.group.worldToLocal(camera.getWorldPosition(this.local));
         const inDoorway =
-          Math.abs(eye.x) < DOOR_WIDTH / 2 + DOORWAY_MARGIN && eye.y > -DOORWAY_MARGIN && eye.y < DOOR_HEIGHT + DOORWAY_MARGIN;
+          Math.abs(eye.x) < door.width / 2 + DOORWAY_MARGIN && eye.y > -DOORWAY_MARGIN && eye.y < door.height + DOORWAY_MARGIN;
         if ((inDoorway && eye.z < CROSS) || along < -FAR_ENOUGH) {
           this.handOver(door, camera, eye.z < 0);
           return;
@@ -161,7 +161,7 @@ export class WalkThrough {
     if (door) {
       door.group.updateMatrixWorld();
       const local = door.group.worldToLocal(this.local.copy(feet));
-      if (Math.abs(local.x) < DOOR_WIDTH / 2 + DOORWAY_MARGIN && local.z < GLIDE_FROM) {
+      if (Math.abs(local.x) < door.width / 2 + DOORWAY_MARGIN && local.z < GLIDE_FROM) {
         t = Math.min(1, (GLIDE_FROM - local.z) / (GLIDE_FROM - GLIDE_TO));
       }
     }
