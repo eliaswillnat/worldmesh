@@ -349,6 +349,11 @@ export class Presence implements NetworkAdapter {
     options.scene.add(this.group);
   }
 
+  /** How loud this visitor is talking, 0 to 1, from the same scale as the sound bars over others; 0 when not talking. */
+  get micLevel(): number {
+    return this.mic?.level ?? 0;
+  }
+
   /** Only watching the room (`watch`), not in it. */
   get watching(): boolean {
     return this.watchOnly;

@@ -1324,9 +1324,12 @@
       }
       .walk-talk.visible { opacity: 1; }
       .walk-talk[data-mic="live"] { padding: 0 11px; }
-      .walk-talk span { width: 4px; height: 14px; border-radius: 2px; background: #fff; animation: walk-talk-bar 0.9s ease-in-out infinite; }
-      .walk-talk span:nth-child(2) { height: 20px; animation-delay: -0.3s; }
-      .walk-talk span:nth-child(3) { animation-delay: -0.6s; }
+      .walk-talk span { width: 4px; height: 14px; border-radius: 2px; background: #fff; }
+      .walk-talk span:nth-child(2) { height: 20px; }
+      /* The bars move only while the microphone hears you, not for as long as the key is held. */
+      .walk-talk.speaking span { animation: walk-talk-bar 0.9s ease-in-out infinite; }
+      .walk-talk.speaking span:nth-child(2) { animation-delay: -0.3s; }
+      .walk-talk.speaking span:nth-child(3) { animation-delay: -0.6s; }
       @keyframes walk-talk-bar { 50% { transform: scaleY(0.45); } }
       @media (prefers-reduced-motion: reduce) { .walk-talk span { animation: none; } }
       /* Typing must not count as pausing, so the click-to-enter panel stays hidden. */
