@@ -223,16 +223,6 @@ function savedSection(current: BuildingList): HTMLElement {
         building,
         building.reachable ? null : 'Connect this platform again',
         [
-          {
-            label: 'Use',
-            title: 'Put it on one of your worlds',
-            onClick: () => {
-              linking = linking === building.id ? null : building.id;
-              linkWorld = '';
-              message = null;
-              rerender();
-            },
-          },
           { label: 'Rename', onClick: () => void rename(building) },
           { label: 'Remove', onClick: () => void remove(building) },
         ],
@@ -241,7 +231,24 @@ function savedSection(current: BuildingList): HTMLElement {
   }
   section.append(grid);
   const choosing = current.buildings.find((b) => b.id === linking);
-  if (choosing) section.append(linkForm(choosing));
+  if (choosing) {
+    section.append(linkForm(choosing, current.buildings));
+  } else {
+    const start = document.createElement('button');
+    start.type = 'button';
+    start.className = 'account-provider';
+    start.textContent = 'Put a building on your world';
+    start.disabled = busy;
+    start.addEventListener('click', () => {
+      // The newest one not on a world yet, else the newest.
+      const pick = [...current.buildings].reverse().find((b) => !b.worlds.length) ?? current.buildings[current.buildings.length - 1];
+      linking = pick.id;
+      linkWorld = '';
+      message = null;
+      rerender();
+    });
+    section.append(start);
+  }
   const linked = current.buildings.flatMap((building) => building.worlds.map((world) => ({ building, world })));
   if (linked.length) section.append(worldsList(linked));
   return section;
@@ -302,11 +309,21 @@ function worldsList(linked: { building: SavedBuilding; world: BuildingWorld }[])
  * which shows the world is yours wherever it is hosted, then WorldMesh
  * reads that file and the building goes to review.
  */
-function linkForm(building: SavedBuilding): HTMLElement {
+function linkForm(building: SavedBuilding, saved: SavedBuilding[]): HTMLElement {
   const form = document.createElement('form');
   form.className = 'wallet-upload';
   const title = document.createElement('h3');
-  title.textContent = `Put ${building.name || 'this building'} on a world`;
+  title.textContent = 'Put a building on your world';
+  // Which one, when there are a few.
+  const which = document.createElement('select');
+  which.className = 'building-pick';
+  which.setAttribute('aria-label', 'Building');
+  for (const option of saved) which.append(new Option(option.name || 'Unnamed', option.id, false, option.id === building.id));
+  which.disabled = busy;
+  which.addEventListener('change', () => {
+    linking = which.value;
+    rerender();
+  });
   const line = `"building": "${building.id}"`;
   const lineRow = document.createElement('div');
   lineRow.className = 'building-line';
@@ -358,6 +375,7 @@ function linkForm(building: SavedBuilding): HTMLElement {
   });
   form.append(
     title,
+    ...(saved.length > 1 ? [which] : [note(`Building: ${building.name || 'Unnamed'}`)]),
     note("1. Add this line to your world's worldmesh.json (at /worldmesh.json or /.well-known/worldmesh.json):"),
     lineRow,
     note("2. Enter your world's address. WorldMesh reads that file to check, and a person reviews the building before it stands in the city."),

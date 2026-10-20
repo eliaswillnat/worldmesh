@@ -243,8 +243,8 @@ will have ("Its portal face makes a 5.7 × 10.1 m door on a block").
 
 A building shows on a world's lot only when **both** say so:
 
-1. **The building's owner** picks it in My buildings, chooses *Use* and
-   pastes the world's URL.
+1. **The building's owner** chooses *Put a building on your world* in My
+   buildings, picks the building and pastes the world's URL.
 2. **The world's site** names it, in its own manifest (`worldmesh.json`,
    [compatibility.md](../compatibility.md#the-manifest)):
 
@@ -319,6 +319,14 @@ a reason the owner sees in My buildings.
 
 Until a link is approved, the world keeps its default block. A hidden link
 stays hidden: linking the same building again is refused.
+
+Where the auth Worker can send email (`RESEND_API_KEY`, `AUTH_FROM_EMAIL`;
+`workers/auth/src/avatars/buildingMail.ts`), the reviewers hear when a
+building waits for review (newly linked, or back because its file changed)
+and when a standing one is first reported. The owner hears that it was sent
+for review, approved, not approved, taken down, or is being reviewed again.
+An owner who is also a reviewer gets the reviewer's email only, and nobody
+is emailed about a decision they made themselves.
 
 ### 5.3 Pinning the approved version
 
@@ -512,7 +520,7 @@ metallic materials get a soft studio environment of their own
    check and its daily re-check, the Buildings page in the admin dashboard
    and the review page on the hub (viewer, checks, hash), `/worlds` and
    `/resolve`, the city resolving and caching approved buildings, and
-   *Use* in My buildings.
+   *Put a building on your world* in My buildings.
 4. **Reports and hiding.** *Built.* `building_report`, `/report`, the pause
    screen's *Report this building*, reports on the dashboard and the review
    page, *Dismiss reports*, and the emails to reviewers and owners.
