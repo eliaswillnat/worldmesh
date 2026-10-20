@@ -10,7 +10,9 @@
  *
  * A file is checked in the browser before it is uploaded, the way the city
  * checks it before showing it (./walk/buildingModel.ts), so its maker learns
- * straight away whether it will stand, and what door it will have.
+ * straight away whether it will stand, and what door it will have. A model
+ * without a usable portal face can have its door drawn on it here
+ * (./doorPicker.ts) before it goes up.
  */
 
 import { uploadBuildingToPds, type UploadGrant } from './at3dUpload';
@@ -82,6 +84,8 @@ let uploading = false;
 /** The chosen file, checked: null while checking or before one is chosen. */
 let check: BuildingCheck | null = null;
 let checking = false;
+/** The chosen file has a door drawn on it in the hub. */
+let doorDrawn = false;
 /** The saved building being put on a world, and the address typed so far. */
 let linking: string | null = null;
 let linkWorld = '';
@@ -171,7 +175,7 @@ export function buildingsView(onBack: () => void): HTMLElement[] {
   const nodes: HTMLElement[] = [heading('My buildings')];
   nodes.push(
     noteWithLink(
-      "A building of your own can stand in the hub city in place of your world's block. Give the face visitors walk through a material named portal, and export it as a GLB of up to 10 MB. ",
+      "A building of your own can stand in the hub city in place of your world's block: a GLB of up to 10 MB. Give the face visitors walk through a material named portal, or draw the door on the model here once you choose the file. ",
       'How to make one',
       '/build-a-building',
     ),
@@ -489,13 +493,22 @@ function uploadControls(connection: Connection): HTMLElement {
   pick.addEventListener('click', () => file.click());
   const chosen = note(
     uploadFile
-      ? `${uploadFile.name} (${fileSize(uploadFile.size)})`
+      ? `${uploadFile.name} (${fileSize(uploadFile.size)})${doorDrawn ? ', with the door you drew' : ''}`
       : connection.provider === 'sketchfab'
         ? 'GLB, up to 10 MB. Uploaded as a draft that only you can see.'
         : 'GLB, up to 10 MB.',
   );
   form.append(file, pick, chosen);
   if (uploadFile) form.append(checkNote());
+  if (uploadFile && !checking && check?.drawable) {
+    const draw = document.createElement('button');
+    draw.type = 'button';
+    draw.className = 'account-provider';
+    draw.textContent = doorDrawn ? 'Draw the door again' : check.door ? 'Draw a different door' : 'Draw the door';
+    draw.disabled = busy;
+    draw.addEventListener('click', () => void drawDoor());
+    form.append(draw);
+  }
 
   const name = document.createElement('input');
   name.type = 'text';
@@ -536,7 +549,7 @@ function checkNote(): HTMLElement {
       ? `This model can't be a building: ${check.problem}`
       : check.door
         ? `Its portal face makes a ${check.door.width.toFixed(1)} × ${check.door.height.toFixed(1)} m door on a block. ${check.triangles.toLocaleString()} triangles.`
-        : `No face has a material named portal, so a standard door will stand at its front. ${check.triangles.toLocaleString()} triangles.`,
+        : `No face has a material named portal, so a standard door will stand at its front. Draw one to choose where it goes. ${check.triangles.toLocaleString()} triangles.`,
   );
   status.className = 'account-message';
   status.dataset.error = String(!!check.problem);
@@ -694,8 +707,9 @@ async function startUpload(connection: Connection): Promise<void> {
   });
 }
 
-async function chooseFile(file: File | null): Promise<void> {
+async function chooseFile(file: File | null, drawn = false): Promise<void> {
   uploadFile = file;
+  doorDrawn = drawn;
   check = null;
   if (!file) return rerender();
   if (!uploadName) uploadName = file.name.replace(/\.glb$/i, '').slice(0, 64);
@@ -704,14 +718,26 @@ async function chooseFile(file: File | null): Promise<void> {
   try {
     // The checks bring three.js's loader along: only fetched once a file is chosen.
     const { inspectBuilding } = await import('./walk/buildingModel');
-    const result = file.size > MAX_BYTES ? { problem: 'It is over 10 MB.', door: null, triangles: 0 } : await inspectBuilding(await file.arrayBuffer());
+    const result = file.size > MAX_BYTES ? { problem: 'It is over 10 MB.', door: null, triangles: 0, drawable: false } : await inspectBuilding(await file.arrayBuffer());
     if (uploadFile === file) check = result;
   } catch {
-    if (uploadFile === file) check = { problem: 'It could not be read.', door: null, triangles: 0 };
+    if (uploadFile === file) check = { problem: 'It could not be read.', door: null, triangles: 0, drawable: false };
   } finally {
     checking = false;
     rerender();
   }
+}
+
+/** Draw the door on the chosen model; the file with it in is then checked again, and is what gets uploaded. */
+async function drawDoor(): Promise<void> {
+  const file = uploadFile;
+  if (!file) return;
+  await run(async () => {
+    const { openDoorPicker } = await import('./doorPicker');
+    const drawn = await openDoorPicker(await file.arrayBuffer());
+    if (!drawn || uploadFile !== file) return;
+    void chooseFile(new File([drawn], file.name, { type: 'model/gltf-binary' }), true);
+  });
 }
 
 async function upload(connection: Connection): Promise<void> {
@@ -735,6 +761,7 @@ async function upload(connection: Connection): Promise<void> {
     uploadFile = null;
     uploadName = '';
     check = null;
+    doorDrawn = false;
     listings.delete(connection.id);
     if (grant.provider === 'sketchfab') {
       // Sketchfab converts the model first; it shows up in the list once ready.
@@ -755,6 +782,7 @@ async function cancelUpload(): Promise<void> {
     uploadFile = null;
     uploadName = '';
     check = null;
+    doorDrawn = false;
   });
 }
 

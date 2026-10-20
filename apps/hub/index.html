@@ -1419,6 +1419,26 @@
         height: 36px;
         padding: 0;
       }
+      /* Drawing a building's door (src/doorPicker.ts) */
+      .door-picker {
+        width: min(960px, calc(100vw - 16px));
+        height: min(760px, calc(100dvh - 16px));
+        max-height: none;
+        padding: 20px 16px 16px;
+      }
+      .door-picker[open] { display: flex; flex-direction: column; }
+      .door-picker p { margin: 0 40px 10px 0; font-size: 14px; }
+      .door-picker-stage { position: relative; flex: 1; min-height: 0; border-radius: 14px; overflow: hidden; background: var(--input-bg); }
+      .door-picker-stage canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+      .door-picker-stage[data-mode="draw"] canvas { cursor: crosshair; }
+      .door-picker .door-picker-status { min-height: 21px; margin: 10px 0; font-size: 13px; color: var(--muted); }
+      .door-picker .door-picker-status[data-error="true"] { color: #ff9a8a; }
+      .door-picker-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+      .door-picker-mode { display: flex; padding: 3px; border: 1px solid var(--border); border-radius: 25px; }
+      .door-picker-mode button { padding: 10px 18px; border: 0; background: none; }
+      .door-picker-mode button[aria-pressed="true"],
+      .door-picker-mode button[aria-pressed="true"]:hover { background: var(--text); color: var(--bg); }
+      .door-picker-bar .world-claim-primary { margin-left: auto; }
       /* ── Tower city ────────────────────────────────────────────── */
       /* Flat and solid: no blur, no gradients. The prompt reuses .walk-add-prompt. */
       .city-prompt { max-width: calc(100vw - 32px); overflow: hidden; text-overflow: ellipsis; }

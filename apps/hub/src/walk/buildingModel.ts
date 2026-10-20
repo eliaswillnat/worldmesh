@@ -109,11 +109,13 @@ export interface BuildingCheck {
   /** The doorway its portal face makes on a block, in metres; null for a standard door at its front. */
   door: { width: number; height: number } | null;
   triangles: number;
+  /** It was read and is within the limits, so a door can be drawn on it in the hub. */
+  drawable: boolean;
 }
 
 /** Every check the city makes before it shows a building, on a file not yet uploaded. */
 export async function inspectBuilding(buffer: ArrayBuffer): Promise<BuildingCheck> {
-  const refused = (problem: string): BuildingCheck => ({ problem, door: null, triangles: 0 });
+  const refused = (problem: string): BuildingCheck => ({ problem, door: null, triangles: 0, drawable: false });
   if (buffer.byteLength > BUILDING_LIMITS.bytes) return refused('It is over 10 MB.');
   let model: Group;
   try {
@@ -124,7 +126,7 @@ export async function inspectBuilding(buffer: ArrayBuffer): Promise<BuildingChec
   try {
     checkWeight(model);
     const plan = planBuilding(model, BLOCK_LOT, DOOR_OUT);
-    return { problem: plan.problem, door: plan.door, triangles: countTriangles(model) };
+    return { problem: plan.problem, door: plan.door, triangles: countTriangles(model), drawable: true };
   } catch (error) {
     return refused(error instanceof Error ? `${error.message}.` : 'It could not be read.');
   } finally {
