@@ -24,6 +24,8 @@ interface WorldEntry {
   preview?: string | string[];
   featured?: boolean;
   source?: 'admin' | 'submitted' | 'demo' | 'discovered';
+  /** A demo world's building in the city, one of the hub's demo models. */
+  building?: string;
 }
 
 import communityWorldsJson from './community.json';
@@ -115,6 +117,7 @@ const DEMO_WORLDS: WorldEntry[] = [
     categories: ['explore'],
     tags: ['multiplayer', 'vr'],
     source: 'demo',
+    building: '/buildings/lodge.glb',
   },
   {
     name: 'Mars - Demo',
@@ -127,6 +130,7 @@ const DEMO_WORLDS: WorldEntry[] = [
     categories: ['space'],
     tags: ['multiplayer', 'vr'],
     source: 'demo',
+    building: '/buildings/hangar.glb',
   },
   {
     name: 'Neon City - Demo',
@@ -139,6 +143,7 @@ const DEMO_WORLDS: WorldEntry[] = [
     categories: ['explore'],
     tags: ['multiplayer', 'vr'],
     source: 'demo',
+    building: '/buildings/neon-tower.glb',
   },
   {
     name: 'Medieval Village - Demo',
@@ -151,6 +156,7 @@ const DEMO_WORLDS: WorldEntry[] = [
     categories: ['explore'],
     tags: ['multiplayer', 'vr'],
     source: 'demo',
+    building: '/buildings/gatehouse.glb',
   },
   {
     name: 'Space Station - Demo',
@@ -163,13 +169,14 @@ const DEMO_WORLDS: WorldEntry[] = [
     categories: ['space'],
     tags: ['multiplayer', 'vr'],
     source: 'demo',
+    building: '/buildings/observatory.glb',
   },
 ];
 
 let communityWorlds: WorldEntry[] = communityWorldsStatic as WorldEntry[];
 const ALL_WORLDS: WorldEntry[] = [...communityWorlds, ...DEMO_WORLDS];
 
-/** Lobby doors: community worlds plus the five demos (demos stay in the gallery too). */
+/** Lobby doors: community worlds plus the five demos, each in its own building out in the city (demos stay in the gallery too). */
 function lobbyWorlds(): WorldEntry[] {
   return ALL_WORLDS;
 }

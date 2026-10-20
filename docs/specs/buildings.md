@@ -104,7 +104,12 @@ The forecourt and height live in `facade.ts` (`LOT_FORECOURT`,
 **Who stands where** (`walk/doorOrder.ts`). Multiplayer worlds have their
 door inside the hall while it has room; every other world has a block in the
 city. A world with an approved building always stands in the city, even a
-multiplayer one, since buildings only replace blocks. The city's blocks
+multiplayer one, since buildings only replace blocks. So do the five demo
+worlds: each has its own demo building (`building` on its entry in
+`apps/hub/src/main.ts`, one of `DEMO_BUILDINGS`, pinned to its hash):
+Forest the lodge, Mars the hangar, Neon City the neon tower, Medieval
+Village the gatehouse, Space Station the observatory. Only demo worlds'
+`building` is read, and only a path in `DEMO_BUILDINGS`. The city's blocks
 fill from the hall outwards by how often each world was entered: the most
 entered nearest the hall, the least entered furthest out (ties: the newest,
 then the URL). The order follows the entry counts as they arrive, the same
@@ -513,10 +518,9 @@ metallic materials get a soft studio environment of their own
 
 1. **Buildings in the hub from a fixed list.** *Built.* `buildings.ts`,
    `buildingFit.ts`, the lots in `avenues.ts`, `Door.setShape`, streaming.
-   The demo worlds all stand in the hall, which has no lots, so the five demo
-   buildings stand in for the first five city doors instead, and only with
-   `?buildings=demo` on the hub's address. Without it nothing in the city
-   changes. The demo models come from
+   Each demo world stands in the city in its own demo building (§2). With
+   `?buildings=demo` on the hub's address, the five demo buildings also
+   stand in for the first five city doors, whichever worlds those are. The demo models come from
    `node apps/hub/scripts/demo-buildings.mjs`, which writes the GLBs to
    `apps/hub/public/buildings/` and their hashes to
    `apps/hub/src/walk/demoBuildings.json`.

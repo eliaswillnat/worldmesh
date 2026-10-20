@@ -2837,12 +2837,16 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     cityColliders.length = 0;
     lotColliders.length = 0;
     cityOuter = outer;
-    // Blocks a building replaces: approved worlds' own, or the demo's on the first doors of the city.
+    // Blocks a building replaces: approved worlds' own and the demo worlds', or the demo buildings on the first doors of the city.
     const sources = new Map<number, BuildingSource>();
     if (options.buildings === 'demo') DEMO_BUILDINGS.slice(0, cityDoors.length).forEach((source, i) => sources.set(i, source));
     else cityDoors.forEach((door, i) => {
       const url = door.world && canonicalUrl(door.world.url);
       if (url && approvedBuildings.has(url)) sources.set(i, { world: url, sha256: approvedBuildings.get(url) ?? undefined });
+      else {
+        const own = door.world && demoBuilding(known.get(door.world.url) as LobbyWorld | undefined);
+        if (own) sources.set(i, own);
+      }
     });
     const blocks = buildAvenues(city, cityDoors.length, new Set(sources.keys()));
     // Each storefront's sign hangs from its door, so it comes and goes with the world.
@@ -3031,6 +3035,12 @@ interface DoorClaim {
   name: string;
   url: string;
   cover?: string;
+}
+
+/** A demo world's own building: one of the hub's demo models, pinned to its hash. Only demo worlds have one. */
+function demoBuilding(world: LobbyWorld | undefined): BuildingSource | null {
+  if (world?.source !== 'demo' || !world.building) return null;
+  return DEMO_BUILDINGS.find((source) => source.modelUrl === world.building) ?? null;
 }
 
 /** What the departures board shows of a world. */

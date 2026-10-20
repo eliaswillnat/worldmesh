@@ -78,6 +78,11 @@ export interface WorldRecordInput {
   preview?: string | string[];
   featured?: boolean;
   source?: ListingSource;
+  /**
+   * A demo world's building: one of the hub's own demo models (its path in
+   * DEMO_BUILDINGS, e.g. /buildings/lodge.glb). Ignored on any other world.
+   */
+  building?: string;
   /** Account id of the creator who claimed it. */
   ownerId?: string;
   status?: 'listed' | 'removed';
