@@ -12,7 +12,7 @@
  *   POST /collect                    { connectionId, modelId } saves one (checked with the platform)
  *   POST /rename                     { buildingId, name } names it here; null goes back to the platform's name
  *   POST /remove                     { buildingId }
- *   POST /link                       { buildingId, world } puts it on a world, for review
+ *   POST /link                       { buildingId, world } puts it on a world, in the city at once
  *   POST /unlink                     { buildingId, world }
  *   POST /report                     { world, reason, note } flags a building standing in the city (§8)
  *
@@ -173,8 +173,9 @@ export async function handleBuildingRequest(request: Request, env: Env, getAuth:
 }
 
 /**
- * Puts a saved building on a world, waiting for review (§5.1). The reviewer
- * is the check: nothing on the world's own site has to change.
+ * Puts a saved building on a world, standing in the city at once (§5.1).
+ * Nothing on the world's own site has to change, and nobody reviews it
+ * first: visitors report a bad one, and reviewers hide it (§8).
  */
 async function link(env: Env, userId: string, buildingId: unknown, rawWorld: unknown): Promise<void> {
   const mine = await store.buildingsOf(env.DB, userId);
@@ -190,17 +191,16 @@ async function link(env: Env, userId: string, buildingId: unknown, rawWorld: unk
   if (same && existing.status === 'hidden') {
     throw new HttpError(409, `This building was taken down from that world${existing.reason ? `: ${existing.reason}` : '.'}`);
   }
-  // Someone else's building waits for review there or stands there: the
-  // reviewer decides between them, not whoever linked last.
-  if (existing && !mine.some((b) => b.id === existing.building_id) && existing.status !== 'rejected') {
-    throw new HttpError(409, 'That world already has a building, or one waiting for review.');
+  // Someone else's building stands there: it keeps the world until it is taken off, or down.
+  if (existing && !mine.some((b) => b.id === existing.building_id) && (existing.status === 'approved' || existing.status === 'pending')) {
+    throw new HttpError(409, 'That world already has a building.');
   }
   if (!same && (await store.linkCount(env.DB, userId)) >= MAX_LINKS) {
     throw new HttpError(409, `Your buildings stand on ${MAX_LINKS} worlds already. Take one off first.`);
   }
 
-  // Already on its way or standing: nothing to review again.
-  if (same && (existing.status === 'pending' || existing.status === 'approved')) await store.touchLink(env.DB, world);
+  // Already standing there: nothing changes.
+  if (same && existing.status === 'approved') await store.touchLink(env.DB, world);
   else await store.saveLink(env.DB, world, building.id);
 }
 
@@ -324,8 +324,8 @@ async function review(request: Request, env: Env, exec: WaitUntil, origin: strin
         id: report.id,
         reason: report.reason,
         note: report.note,
-        // Whether it was about the file standing now, or one approved before it.
-        sameFile: !!report.sha256 && report.sha256 === row.sha256,
+        // Whether it was about the file standing now, or one approved before it; null when it stood unpinned.
+        sameFile: report.sha256 === null ? null : report.sha256 === row.sha256,
         createdAt: report.created_at,
         reporter: report.reporter_username ? `@${report.reporter_username}` : report.reporter_email && !isPlaceholderEmail(report.reporter_email) ? report.reporter_email : 'an account',
       })),

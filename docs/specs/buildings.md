@@ -32,7 +32,7 @@ creator                      hub (worldmesh.net)                          visito
    └─ GLB with a `portal` ──► My buildings (pointer in D1) ─┐
       material, uploaded      link to a listed world        │
       to Sketchfab or PDS                                   │
-                              review: approve + pin hash ───┤
+                              reports, hide; approve pins ──┤
                                                             ▼
                               /api/account/building/worlds  ──► which worlds, which hash
                               /api/account/building/resolve ──► modelUrl ──► GET from Sketchfab S3 / PDS
@@ -227,7 +227,7 @@ Endpoints, under `/api/account/building` in `workers/auth`
 | `POST /collect` `{ connectionId, modelId }` | Saves one, checked with the platform: only the account's own models |
 | `POST /rename` `{ buildingId, name }` | Names it here; `null` goes back to the platform's name |
 | `POST /remove` `{ buildingId }` | Its links go with it |
-| `POST /link` `{ buildingId, world }` | Puts it on a world, for review (§5.1) |
+| `POST /link` `{ buildingId, world }` | Puts it on a world, standing at once (§5.1) |
 | `POST /unlink` `{ buildingId, world }` | |
 
 `GET /list` gives each saved building its `worlds`: `{ url, status, reason }`.
@@ -251,17 +251,17 @@ will have ("Its portal face makes a 5.7 × 10.1 m door on a block").
 
 The building's owner chooses *Put a building on your world* in My
 buildings, picks the building and one of the worlds WorldMesh lists, and
-presses *Link*. `POST /link { buildingId, world }` records a pending link.
-Nothing on the world's own site has to change: creators are never asked to
-edit their code for this. Whether the world is the linker's own is left to
-the reviewer for now; worlds added through *Add world* belong to whoever
-added them anyway. (Draft 0.4 asked the world's `worldmesh.json` to name the
+presses *Link*. `POST /link { buildingId, world }` records the link, and
+the building stands in the city at once. Nothing on the world's own site has
+to change: creators are never asked to edit their code for this. Whether the
+world is the linker's own isn't checked for now; worlds added through *Add
+world* belong to whoever added them anyway. (Draft 0.4 asked the world's `worldmesh.json` to name the
 building instead, read server-side; that is gone.)
 
 A world keeps the building linked to it first: someone else's link to a
-world whose building waits for review or stands there is refused, until a
-reviewer rejects it. The owner can link another of their own buildings in
-its place, back to review. *Take off* in My buildings takes a building down.
+world whose building stands there is refused, until a reviewer rejects or
+hides it. The owner can link another of their own buildings in its place.
+*Take off* in My buildings takes a building down.
 A user's buildings stand on at most 20 worlds together.
 
 ```sql
@@ -282,21 +282,30 @@ create table building_link (           -- db/migrations/0009_building_links.sql
 ```
 
 One world has at most one building. One building may be linked to several
-worlds (a studio using the same front for all its worlds); each link is
-reviewed on its own.
+worlds (a studio using the same front for all its worlds).
 
-### 5.2 Review
+### 5.2 No review first; moderation after
 
-Worlds are already reviewed before they're listed; buildings are too, since
-they stand in a space everyone shares. The admin dashboard (`workers/admin`,
-*Buildings*) lists the links, waiting ones first. Reviewing happens on the
+A link stands in the city as soon as it is made (`status = 'approved'`):
+nobody reviews a building before it shows. Every visitor's browser still
+checks it the way the city always does (§7.3: size, triangles, textures, no
+decoders, a usable portal face), and a building that fails keeps the
+default block. What a building looks like is moderated afterwards:
+visitors report it (§8), and reviewers hide it, which takes it down at once
+and tells its owner why. (Draft 0.5 held every link in review until a
+person approved it; links already approved by a reviewer keep their pin,
+§5.3.)
+
+The admin dashboard (`workers/admin`, *Buildings*) lists the links,
+reported ones first. Looking at one happens on the
 hub, at `/review-building` (`apps/hub/src/review/buildingReview.ts`), since it
 needs a script and the dashboard's pages run none: the reviewer's browser
 downloads the model straight from its platform, checks it as the city does
 (§7.3), shows it standing on its block with the portal face in magenta, a
 1.8 m figure by the door and the block's room outlined, and lists its size,
-triangles, scale and door. *Approve*, *Reject* and *Hide*, the last two with
-a reason the owner sees in My buildings.
+triangles, scale and door. *Hide* and *Reject* take it down with a reason
+the owner sees in My buildings; *Approve* pins the file the reviewer saw
+(§5.3).
 
 `workers/auth` answers the page's endpoints for verified emails in its
 `ADMIN_EMAILS` var only (the same accounts as the dashboard's):
@@ -307,22 +316,22 @@ a reason the owner sees in My buildings.
 | `GET /review?world=` | The link, its building and owner, and where its file is now |
 | `POST /review` `{ world, buildingId, action, sha256, version, portal, reason }` | `approve`, `reject` or `hide`; refused if the world links another building by then |
 
-Until a link is approved, the world keeps its default block. A hidden link
-stays hidden: linking the same building again is refused.
+A hidden link stays hidden: linking the same building again is refused.
 
-### 5.3 Pinning the approved version
+### 5.3 Pinning, when a reviewer approves
 
-A provider lets its user replace a file after it was approved. So approval
-pins the **exact file**: the reviewer's browser, which downloaded the model
-to show it, computes its SHA-256 and the approval stores that hash. The
-server never sees the file, only the hash.
+A building linked by its owner shows whatever file its platform has now.
+A reviewer who looks at one and presses *Approve* pins the **exact file**:
+their browser computes its SHA-256 and the approval stores that hash, with
+what the platform said the file was (`version`: the blob's CID on AT
+Protocol, the GLB's size on Sketchfab). The server never sees the file,
+only the hash. Every visitor's browser hashes a pinned building's download
+(SubtleCrypto, a few milliseconds for 10 MB) and shows it only if the hash
+matches.
 
-Every visitor's browser hashes the file it downloads (SubtleCrypto, a few
-milliseconds for 10 MB) and **shows it only if the hash matches**, else the
-default block stays. The approval also stores what the platform said the
-file was (`version`): the blob's CID on AT Protocol, the GLB's size on
-Sketchfab. When resolving finds a different one, the building is taken back
-into review before anything is downloaded, and its owner sees why.
+When its owner replaces a pinned file, resolving notices the platform's
+version changed before anything is downloaded, and the link is unpinned:
+the new file stands, like any other building.
 
 ## 6. Fitting a building in
 
@@ -394,8 +403,8 @@ cached by WorldMesh.
 ### 7.2 Resolving
 
 `GET /api/account/building/worlds` (CORS, cookie-less) lists the worlds
-with an approved building and the hash each must have:
-`{ worlds: [{ url, sha256 }] }`. The hub reads it once as the city goes up
+with a building and the hash each must have, or null when no reviewer
+pinned one: `{ worlds: [{ url, sha256 }] }`. The hub reads it once as the city goes up
 (`walk/buildingDirectory.ts`) and lays out a lot only for those worlds'
 blocks, so it only resolves lots that have a building. (The spec first
 put a `building` flag in `GET /api/worlds`; that is a Pages Function on KV,
@@ -460,8 +469,9 @@ metallic materials get a soft studio environment of their own
 
 ## 8. Safety
 
-- **Review** before anything shows (§5.2), and the **hash pin** (§5.3)
-  means what was approved is what's shown.
+- **No review first** (§5.2): every browser checks the file before it
+  stands, and a reviewer's **hash pin** (§5.3) means what was approved is
+  what's shown.
 - **Report:** walk mode has no info card per door, so the pause screen
   offers *Report this building* whenever a world's building stands within
   30 m of the visitor (`walk/reportBuilding.ts`): a reason (offensive,
@@ -536,7 +546,7 @@ metallic materials get a soft studio environment of their own
   `_lexicon.worldmesh.net` DNS record naming a DID, and the schema as a
   `com.atproto.lexicon.schema` record in that DID's repository.
 - **Who owns a world.** Linking doesn't check that the world is the
-  linker's: the reviewer judges. Once worlds added through *Add world* are
+  linker's: reports catch the wrong ones. Once worlds added through *Add world* are
   tied to accounts, linking can offer only one's own worlds.
 - **Notifying reviewers.** A new link only shows on the dashboard's overview.
   An email to the reviewers may be worth it once links come in regularly.

@@ -31,12 +31,15 @@ export function canonicalWorldUrl(raw: unknown): string | null {
   return `${url.protocol}//${url.host.toLowerCase()}${url.pathname.replace(/\/+$/, '')}${url.search}`;
 }
 
-/** Where to download a world's approved building now, and the hash it must have. */
+/** Where to download a world's building now, and what the file is. */
 export interface ResolvedBuilding {
   modelUrl: string;
   /** ISO 8601, or null if `modelUrl` does not expire. */
   expiresAt: string | null;
-  sha256: string;
+  /** The hash a reviewer pinned it to, or null: any file the platform has. */
+  sha256: string | null;
+  /** What the platform says the file is (a blob CID, a GLB size), for caching. */
+  version: string | null;
 }
 
 /**
@@ -50,11 +53,14 @@ export async function resolveWorlds(env: Env, exec: WaitUntil, origin: string, w
       try {
         const file = await approvedFile(env, exec, origin, row);
         if (!file) return null;
+        // Pinned by a reviewer, then replaced by its owner: the new file stands, unpinned.
+        let sha256 = row.sha256;
         if (row.version && file.version && file.version !== row.version) {
-          await store.sendBackToReview(env.DB, row.world_url, row.sha256, 'Its file changed after it was approved, so it is being reviewed again.');
-          return null;
+          await store.unpin(env.DB, row.world_url, row.version);
+          sha256 = null;
         }
-        return [row.world_url, { modelUrl: file.modelUrl, expiresAt: file.expiresAt ? new Date(file.expiresAt).toISOString() : null, sha256: row.sha256 }];
+        const expiresAt = file.expiresAt ? new Date(file.expiresAt).toISOString() : null;
+        return [row.world_url, { modelUrl: file.modelUrl, expiresAt, sha256, version: file.version }];
       } catch (error) {
         if (error instanceof AvatarError) {
           if (error.reconnect) await store.markReconnect(env.DB, row.connection_id);

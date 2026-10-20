@@ -1394,7 +1394,7 @@ function decide(cookie: string, body: Record<string, unknown>, origin = ORIGIN) 
 async function approvedWorlds() {
   const res = await call('/api/account/building/worlds');
   expect(res.headers.get('Access-Control-Allow-Origin')).toBe('*');
-  return ((await res.json()) as { worlds: { url: string; sha256: string }[] }).worlds;
+  return ((await res.json()) as { worlds: { url: string; sha256: string | null }[] }).worlds;
 }
 
 async function resolveWorld(world = WORLD) {
@@ -1405,7 +1405,7 @@ async function resolveWorld(world = WORLD) {
   });
   expect(res.status).toBe(200);
   expect(res.headers.get('Access-Control-Allow-Origin')).toBe('*');
-  return ((await res.json()) as { buildings: Record<string, { modelUrl: string; expiresAt: string | null; sha256: string }> }).buildings;
+  return ((await res.json()) as { buildings: Record<string, { modelUrl: string; expiresAt: string | null; sha256: string | null; version: string | null }> }).buildings;
 }
 
 describe('Buildings on worlds', { timeout: 20_000 }, () => {
@@ -1413,7 +1413,7 @@ describe('Buildings on worlds', { timeout: 20_000 }, () => {
     await env.DB.prepare('delete from building_link').run();
   });
 
-  it('links a building for review, its owner only, without asking anything of the world', async () => {
+  it('links a building into the city at once, its owner only, without asking anything of the world', async () => {
     const owner = await ownerWithBuilding('links-owner@example.com');
     const link = (world: unknown, cookie = owner.cookie, buildingId = owner.buildingId) =>
       post('/api/account/building/link', cookie, { buildingId, world });
@@ -1427,9 +1427,9 @@ describe('Buildings on worlds', { timeout: 20_000 }, () => {
 
     // The address is kept as the hub compares them: lower-case host, no trailing slash or hash.
     const ok = (await (await link('https://Forest.Worlds.Example.org/#spawn')).json()) as BuildingList;
-    expect(ok.buildings[0].worlds).toEqual([{ url: WORLD, status: 'pending', reason: null }]);
-    // Waiting for review: not in the city yet. Nothing was fetched from the world.
-    expect(await approvedWorlds()).toEqual([]);
+    expect(ok.buildings[0].worlds).toEqual([{ url: WORLD, status: 'approved', reason: null }]);
+    // No review first: it stands, unpinned. Nothing was fetched from the world.
+    expect(await approvedWorlds()).toEqual([{ url: WORLD, sha256: null }]);
     expect(calls.some((request) => new URL(request.url).hostname === 'forest.worlds.example.org')).toBe(false);
 
     // Someone else can't take it off; its owner can.
@@ -1437,6 +1437,7 @@ describe('Buildings on worlds', { timeout: 20_000 }, () => {
     expect((await buildingList(owner.cookie)).buildings[0].worlds).toHaveLength(1);
     const off = (await (await post('/api/account/building/unlink', owner.cookie, { buildingId: owner.buildingId, world: WORLD })).json()) as BuildingList;
     expect(off.buildings[0].worlds).toEqual([]);
+    expect(await approvedWorlds()).toEqual([]);
   });
 
   it('lets reviewers only see the queue, check the file and decide', async () => {
@@ -1451,16 +1452,16 @@ describe('Buildings on worlds', { timeout: 20_000 }, () => {
     const queue = (await (await call('/api/account/building/review/queue', { headers: { Cookie: reviewerUser.cookie } })).json()) as {
       links: { world: string; status: string; buildingId: string; buildingName: string }[];
     };
-    expect(queue.links).toEqual([expect.objectContaining({ world: WORLD, status: 'pending', buildingId: owner.buildingId, buildingName: 'Gatehouse' })]);
+    expect(queue.links).toEqual([expect.objectContaining({ world: WORLD, status: 'approved', buildingId: owner.buildingId, buildingName: 'Gatehouse' })]);
 
     sketchfabDownload();
     const details = (await (await call(`/api/account/building/review?world=${encodeURIComponent(WORLD)}`, { headers: { Cookie: reviewerUser.cookie } })).json()) as {
-      link: { status: string };
+      link: { status: string; sha256: string | null };
       building: { id: string; name: string; providerLabel: string };
       owner: { email: string };
       file: { modelUrl: string; version: string; expiresAt: string };
     };
-    expect(details.link.status).toBe('pending');
+    expect(details.link).toMatchObject({ status: 'approved', sha256: null });
     expect(details.building).toMatchObject({ id: owner.buildingId, name: 'Gatehouse', providerLabel: 'Sketchfab' });
     expect(details.owner.email).toBe('review-owner@example.com');
     expect(details.file).toMatchObject({ modelUrl: SKETCHFAB_GLB, version: 'size:4000000' });
@@ -1479,14 +1480,17 @@ describe('Buildings on worlds', { timeout: 20_000 }, () => {
     });
     expect(await approve.json()).toEqual({ ok: true, status: 'approved' });
     expect((await buildingList(owner.cookie)).buildings[0].worlds).toEqual([{ url: WORLD, status: 'approved', reason: null }]);
+    expect(await approvedWorlds()).toEqual([{ url: WORLD, sha256: SHA }]);
 
     // Rejecting needs a reason, which the owner sees.
     expect((await decide(reviewerUser.cookie, { buildingId: owner.buildingId, action: 'reject' })).status).toBe(400);
     await decide(reviewerUser.cookie, { buildingId: owner.buildingId, action: 'reject', reason: 'The door is  behind a wall.' });
     expect((await buildingList(owner.cookie)).buildings[0].worlds).toEqual([{ url: WORLD, status: 'rejected', reason: 'The door is behind a wall.' }]);
-    // Linking it again sends it back for review.
+    expect(await approvedWorlds()).toEqual([]);
+    // Linking it again puts it back, unpinned.
     await post('/api/account/building/link', owner.cookie, { buildingId: owner.buildingId, world: WORLD });
-    expect((await buildingList(owner.cookie)).buildings[0].worlds[0]).toMatchObject({ status: 'pending', reason: null });
+    expect((await buildingList(owner.cookie)).buildings[0].worlds[0]).toMatchObject({ status: 'approved', reason: null });
+    expect(await approvedWorlds()).toEqual([{ url: WORLD, sha256: null }]);
 
     // Hidden stays hidden: linking again is refused.
     await decide(reviewerUser.cookie, { buildingId: owner.buildingId, action: 'hide', reason: 'Reported.' });
@@ -1495,19 +1499,22 @@ describe('Buildings on worlds', { timeout: 20_000 }, () => {
     expect(((await again.json()) as { error: string }).error).toMatch(/taken down from that world: Reported\./);
   });
 
-  it('tells the city which worlds have a building, where to download it, and takes back a replaced file', async () => {
+  it('tells the city which worlds have a building, where to download it, and unpins a replaced file', async () => {
     const owner = await linked('city-owner@example.com');
+    expect(await approvedWorlds()).toEqual([{ url: WORLD, sha256: null }]);
+    sketchfabDownload();
+    // Unpinned: any file the platform has.
+    expect((await resolveWorld())[WORLD]).toMatchObject({ modelUrl: SKETCHFAB_GLB, sha256: null, version: 'size:4000000' });
+
     const reviewerUser = await reviewer();
     await decide(reviewerUser.cookie, { buildingId: owner.buildingId, action: 'approve', sha256: SHA, version: 'size:4000000' });
-
     expect(await approvedWorlds()).toEqual([{ url: WORLD, sha256: SHA }]);
     const preflight = await call('/api/account/building/resolve', { method: 'OPTIONS', headers: { Origin: 'https://other-hub.example' } });
     expect(preflight.status).toBe(204);
     expect(preflight.headers.get('Access-Control-Allow-Origin')).toBe('*');
 
-    sketchfabDownload();
     const resolved = await resolveWorld(`${WORLD}/`);
-    expect(resolved[WORLD]).toMatchObject({ modelUrl: SKETCHFAB_GLB, sha256: SHA });
+    expect(resolved[WORLD]).toMatchObject({ modelUrl: SKETCHFAB_GLB, sha256: SHA, version: 'size:4000000' });
     expect(Date.parse(resolved[WORLD].expiresAt!)).toBeGreaterThan(Date.now());
     // Worlds without an approved building are simply missing from the answer.
     expect(await resolveWorld('https://nowhere.example.org')).toEqual({});
@@ -1518,14 +1525,14 @@ describe('Buildings on worlds', { timeout: 20_000 }, () => {
     });
     expect(tooMany.status).toBe(400);
 
-    // The owner replaced the file on Sketchfab: not shown, and back in review.
+    // The owner replaced the file on Sketchfab: the new one stands, unpinned.
     sketchfabDownload(4_100_000);
-    expect(await resolveWorld()).toEqual({});
-    expect(await approvedWorlds()).toEqual([]);
-    expect((await buildingList(owner.cookie)).buildings[0].worlds[0]).toMatchObject({ status: 'pending', reason: expect.stringMatching(/file changed/) });
+    expect((await resolveWorld())[WORLD]).toMatchObject({ modelUrl: SKETCHFAB_GLB, sha256: null, version: 'size:4100000' });
+    expect(await approvedWorlds()).toEqual([{ url: WORLD, sha256: null }]);
+    expect((await buildingList(owner.cookie)).buildings[0].worlds[0]).toMatchObject({ status: 'approved', reason: null });
   });
 
-  it('resolves AT Protocol buildings to their blob, and notices a replaced one by its CID', async () => {
+  it('resolves AT Protocol buildings to their blob, and unpins a replaced one by its CID', async () => {
     const { cookie } = await signedInUser('city-atproto@example.com');
     const { flow } = await startAtproto(cookie);
     await finishAtproto(cookie, flow, await flowState(flow), GOOD_TOKEN);
@@ -1542,11 +1549,12 @@ describe('Buildings on worlds', { timeout: 20_000 }, () => {
       modelUrl: `${PDS}/xrpc/com.atproto.sync.getBlob?did=${encodeURIComponent(DID)}&cid=bafkreibuildingmodel`,
       expiresAt: null,
       sha256: SHA,
+      version: 'bafkreibuildingmodel',
     });
 
     record = { ...record, value: { ...record.value, model: { ...record.value.model, ref: { $link: 'bafkreianothermodel' } } } };
-    expect(await resolveWorld()).toEqual({});
-    expect((await buildingList(cookie)).buildings[0].worlds[0].status).toBe('pending');
+    expect((await resolveWorld())[WORLD]).toMatchObject({ sha256: null, version: 'bafkreianothermodel' });
+    expect((await buildingList(cookie)).buildings[0].worlds[0].status).toBe('approved');
   });
 
   it('lets signed-in visitors report a standing building once, and reviewers dismiss reports or act on them', async () => {
@@ -1642,9 +1650,8 @@ describe('Buildings on worlds', { timeout: 20_000 }, () => {
   it('keeps a world for the building linked to it until a reviewer rejects it, and lets links go with their building', async () => {
     const first = await linked('first-owner@example.com');
     const reviewerUser = await reviewer();
-    await decide(reviewerUser.cookie, { buildingId: first.buildingId, action: 'approve', sha256: SHA });
 
-    // Someone else can't take over a world whose building stands there, or waits for review.
+    // Someone else can't take over a world whose building stands there.
     const second = await ownerWithBuilding('second-owner@example.com');
     const taken = await post('/api/account/building/link', second.cookie, { buildingId: second.buildingId, world: WORLD });
     expect(taken.status).toBe(409);
@@ -1655,7 +1662,7 @@ describe('Buildings on worlds', { timeout: 20_000 }, () => {
     await decide(reviewerUser.cookie, { buildingId: first.buildingId, action: 'reject', reason: 'Not the creator.' });
     await post('/api/account/building/link', second.cookie, { buildingId: second.buildingId, world: WORLD });
     expect((await buildingList(first.cookie)).buildings[0].worlds).toEqual([]);
-    expect((await buildingList(second.cookie)).buildings[0].worlds).toEqual([{ url: WORLD, status: 'pending', reason: null }]);
+    expect((await buildingList(second.cookie)).buildings[0].worlds).toEqual([{ url: WORLD, status: 'approved', reason: null }]);
 
     await post('/api/account/building/remove', second.cookie, { buildingId: second.buildingId });
     expect((await env.DB.prepare('select count(*) as n from building_link').first<{ n: number }>())?.n).toBe(0);
