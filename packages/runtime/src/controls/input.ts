@@ -316,6 +316,11 @@ export class Input {
     return pan;
   }
 
+  /** In the bird's-eye view: how far two fingers twisted since the last read, in radians, clockwise on screen. */
+  readTwist(): number {
+    return this.touch?.readTwist() ?? 0;
+  }
+
   /** In the bird's-eye view: a click or tap on the view since the last read, in CSS pixels; once. */
   consumeTap(): { x: number; y: number } | null {
     const tap = this.tap;

@@ -602,8 +602,8 @@ export class Overlay {
       const aerialHint = document.createElement('div');
       aerialHint.className = 'wm-aerial-hint';
       aerialHint.textContent = isTouch
-        ? 'Tap to land · drag to move · pinch to zoom'
-        : 'Click to land there · drag to pan · right-drag to turn · scroll to zoom · M to go back';
+        ? 'Tap to land · drag to move · pinch to zoom · twist to turn'
+        : 'Click to land there · drag to pan · Q / E to turn · scroll to zoom · M to go back';
       this.root.appendChild(aerialHint);
     }
 

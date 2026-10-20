@@ -47,9 +47,9 @@ picks where to land:
 | Input | Action |
 | --- | --- |
 | Move the mouse | A marker shows where you would land |
-| Click (or `E`) | Land there, and walk on in the mode you came from |
+| Click | Land there, and walk on in the mode you came from |
 | Drag | Move the view over the ground |
-| Right-drag | Turn the view around (its tilt stays three-quarter) |
+| `Q` / `E`, or right-drag | Turn the view around (its tilt stays three-quarter) |
 | `W` `A` `S` `D` / arrows | Move the view (`Shift` for faster) |
 | Scroll wheel | Lower or higher. The lobby's opens 80 m up, as high as it goes (`view.aerialMaxHeight`, 40 m unless a world sets it) |
 | `M`, `Esc` or the button | Back to walking where you were |
@@ -95,8 +95,8 @@ landscape:
 
 In the bird's-eye view the joystick and the buttons are put away (worlds hide
 their own, such as the lobby's talk and chat buttons, on `view:change`). One
-finger drags the view, two fingers pinch to zoom, and a tap lands the player
-where you tapped.
+finger drags the view, two fingers pinch to zoom and twist to turn it, and a
+tap lands the player where you tapped.
 
 ## VR
 

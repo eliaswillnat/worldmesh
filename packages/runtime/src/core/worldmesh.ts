@@ -34,6 +34,8 @@ const MAX_STEP = 1 / 60;
 /** Never simulate more than this per frame, so a backgrounded tab does not catch up violently. */
 const MAX_FRAME = 0.1;
 const DEFAULT_HUB = 'https://worldmesh.net/';
+/** How fast Q and E turn the bird's-eye view, in radians per second. */
+const AERIAL_TURN_SPEED = 1.6;
 /** Seconds to ease the field of view back to the world's own after taking over the hub's camera. */
 const FOV_RETURN = 1.5;
 /**
@@ -676,12 +678,14 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
         cameraRig.pan(axis.x, axis.z, dt, input.isDown('sprint'));
         const pan = input.readPan();
         cameraRig.drag(pan.dx, pan.dy, renderer.domElement.clientHeight);
+        // Turning: Q and E, as in city builders (right-drag works too), or two fingers twisted.
+        // A clockwise twist turns the ground clockwise under the fingers, so the view turns the other way.
+        const turn = (input.isDown('dash') ? 1 : 0) - (input.isDown('interact') ? 1 : 0);
+        cameraRig.yaw += turn * AERIAL_TURN_SPEED * dt + input.readTwist();
         const cursor = input.getCursor();
         if (cursor) cameraRig.aimAt(...toNdc(cursor));
         else cameraRig.aimAt(null);
         aerialTap = input.consumeTap();
-        // E lands where the cursor points, or (no cursor) at the middle of the view.
-        if (input.consume('interact')) aerialTap = cursor ?? { x: renderer.domElement.clientWidth / 2, y: renderer.domElement.clientHeight / 2 };
       }
       const digit = input.consumeDigit();
       const expression = digit === null ? null : expressionForDigit(digit);
