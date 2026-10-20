@@ -77,6 +77,8 @@ function loadWorklet(context: AudioContext): Promise<boolean> {
  * so the browser is not recording while nobody is talking.
  */
 export class Microphone {
+  /** How loud the latest block going out was, 0 to 1, for a talking indicator; 0 while nothing goes out. */
+  level = 0;
   private held = false;
   private heldAt = 0;
   /**
@@ -207,10 +209,14 @@ export class Microphone {
     if (this.held && performance.now() - this.heldAt > MAX_TALK_MS) this.hold(false);
     const end = at + samples.length / context.sampleRate;
     if (at >= this.onAirUntil) {
+      this.level = 0;
       this.flush();
       return;
     }
     if (end <= this.onAirFrom) return;
+    let sum = 0;
+    for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
+    this.level = Math.min(1, Math.sqrt(sum / Math.max(1, samples.length)) * 5);
     downsampler.push(samples, (sample) => {
       this.frame[1 + this.filled++] = encodeMuLaw(sample);
       if (this.filled === VOICE_FRAME) {
@@ -231,6 +237,7 @@ export class Microphone {
     // Also when the microphone goes away mid-press (unplugged): the next press opens it again.
     this.held = false;
     this.onAirUntil = -Infinity;
+    this.level = 0;
     this.flush();
     this.stream?.getTracks().forEach((track) => track.stop());
     this.stream = null;

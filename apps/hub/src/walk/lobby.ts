@@ -565,6 +565,10 @@ const TALK_NOTES: Record<MicState, string> = {
   denied: 'microphone blocked',
   unavailable: 'voice is not available',
 };
+/** Microphone level (presence.micLevel) above which you count as speaking, not just holding the key. */
+const SPEAKING_LEVEL = 0.08;
+/** The bars keep moving this long after the last loud moment. */
+const SPEAKING_HOLD_MS = 250;
 
 /**
  * Walk mode: the directory as a place. You arrive inside the citadel, a tall
@@ -1398,6 +1402,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   let talkHeld = false;
   let micState: MicState = 'off';
   let talkNoteUntil = 0;
+  /** Until when the bars keep moving: a short pause between words does not stop them. */
+  let speakingUntil = 0;
   const talkPoint = new Vector3();
 
   function talk(held: boolean): void {
@@ -1488,6 +1494,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       talkBadge.classList.remove('visible');
       return;
     }
+    if (micState === 'live' && (presence?.micLevel ?? 0) > SPEAKING_LEVEL) speakingUntil = now + SPEAKING_HOLD_MS;
+    talkBadge.classList.toggle('speaking', now < speakingUntil);
     const [x, y, z] = world.getState().position;
     talkPoint.set(x, y + 2.45, z).project(camera);
     if (talkPoint.z > 1) {
