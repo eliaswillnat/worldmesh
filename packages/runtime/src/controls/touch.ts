@@ -139,6 +139,9 @@ const TOUCH_CSS = `
   -webkit-tap-highlight-color: transparent;
   padding: 0;
 }
+/* The bird's-eye view: no stick and no buttons, the screen is for the ground. The menu stays. */
+.wm-touch-aerial .wm-touch-joystick-base,
+.wm-touch-aerial .wm-touch-buttons { display: none; }
 .wm-touch-menu-btn:active {
   background: rgba(255, 255, 255, 0.22);
 }
@@ -183,6 +186,13 @@ export class TouchControls {
   /** Where and when each finger came down, to tell a tap from a drag. */
   private downs = new Map<number, { x: number; y: number; time: number }>();
   private tap: { x: number; y: number } | null = null;
+  /** In the bird's-eye view: every finger on the view, where it last was. One drags, two pinch. */
+  private fingers = new Map<number, { x: number; y: number }>();
+  private pan = { dx: 0, dy: 0 };
+  /** How much nearer the view should come, as a ratio of distances (pinching out is < 1). */
+  private pinch = 1;
+  /** A second finger came down: whatever happens, this gesture is not a tap. */
+  private pinched = false;
 
   constructor(options: TouchControlsOptions) {
     this.onExit = options.onExit;
@@ -310,6 +320,13 @@ export class TouchControls {
     }
     this.downs.set(e.pointerId, { x: e.clientX, y: e.clientY, time: e.timeStamp });
 
+    // The bird's-eye view has no stick: anywhere, one finger drags the ground and two pinch.
+    if (this.aerial) {
+      this.fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (this.fingers.size > 1) this.pinched = true;
+      return;
+    }
+
     const halfWidth = window.innerWidth * 0.5;
 
     // Left half: movement joystick
@@ -342,6 +359,20 @@ export class TouchControls {
   private handlePointerMove = (e: PointerEvent): void => {
     if (!this.visible || this.disposed) return;
 
+    const finger = this.fingers.get(e.pointerId);
+    if (finger) {
+      if (this.fingers.size === 1) {
+        this.pan.dx += e.clientX - finger.x;
+        this.pan.dy += e.clientY - finger.y;
+      }
+      const before = this.fingers.size > 1 ? this.spread() : 0;
+      finger.x = e.clientX;
+      finger.y = e.clientY;
+      const after = before > 0 ? this.spread() : 0;
+      if (after > 0) this.pinch *= before / after;
+      return;
+    }
+
     if (e.pointerId === this.movePointerId) {
       const dx = e.clientX - this.moveStart.x;
       const dy = e.clientY - this.moveStart.y;
@@ -371,9 +402,13 @@ export class TouchControls {
   private handlePointerUp = (e: PointerEvent): void => {
     const down = this.downs.get(e.pointerId);
     this.downs.delete(e.pointerId);
+    this.fingers.delete(e.pointerId);
+    const pinched = this.pinched;
+    if (this.fingers.size === 0) this.pinched = false;
     if (
       this.aerial &&
       down &&
+      !pinched &&
       e.type === 'pointerup' &&
       Math.hypot(e.clientX - down.x, e.clientY - down.y) < TAP_SLOP &&
       // The events' own times: a slow frame between them is not a long press.
@@ -393,10 +428,42 @@ export class TouchControls {
     }
   };
 
-  /** The bird's-eye view on or off: taps on the view count while it is on. */
+  /**
+   * The bird's-eye view on or off. While it is on, the stick and the buttons
+   * are put away (the screen is for the ground), and fingers drag, pinch and tap.
+   */
   setAerial(on: boolean): void {
+    if (on) {
+      // Let go of the stick and any held button: walking stops here.
+      this.reset();
+    }
     this.aerial = on;
     this.tap = null;
+    this.fingers.clear();
+    this.pinched = false;
+    this.pan = { dx: 0, dy: 0 };
+    this.pinch = 1;
+    this.root.classList.toggle('wm-touch-aerial', on);
+  }
+
+  /** In the bird's-eye view: how far one finger dragged the ground since the last read, in CSS pixels. */
+  readPan(): { dx: number; dy: number } {
+    const pan = this.pan;
+    this.pan = { dx: 0, dy: 0 };
+    return pan;
+  }
+
+  /** In the bird's-eye view: the pinch since the last read, as a ratio of distances (1 is none, < 1 nearer). */
+  readPinch(): number {
+    const pinch = this.pinch;
+    this.pinch = 1;
+    return pinch;
+  }
+
+  /** How far apart the first two fingers are. */
+  private spread(): number {
+    const [a, b] = [...this.fingers.values()];
+    return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
   }
 
   /** A quick tap on the view in the bird's-eye view, in window coordinates; once. */
@@ -447,6 +514,8 @@ export class TouchControls {
     this.actionsDown.clear();
     this.justPressed.clear();
     this.downs.clear();
+    this.fingers.clear();
+    this.pinched = false;
     this.tap = null;
     this.setSprinting(false);
     this.restJoystick();

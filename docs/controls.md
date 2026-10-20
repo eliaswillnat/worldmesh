@@ -51,10 +51,11 @@ picks where to land:
 | Drag | Move the view over the ground |
 | Right-drag | Turn the view around (its tilt stays three-quarter) |
 | `W` `A` `S` `D` / arrows | Move the view (`Shift` for faster) |
-| Scroll wheel | Higher or lower, never more than 50 m above the ground in the lobby (`view.aerialMaxHeight`, 40 m unless a world sets it) |
+| Scroll wheel | Lower or higher. The lobby's opens 80 m up, as high as it goes (`view.aerialMaxHeight`, 40 m unless a world sets it) |
 | `M`, `Esc` or the button | Back to walking where you were |
 
-Pointing at a wall puts the marker at the wall's foot. Colliders a world marks with
+The view glides at the height it opened at: panning over a roof does not lift
+it. Pointing at a wall puts the marker at the wall's foot. Colliders a world marks with
 `mesh.userData.noLanding = true` (a glass roof only fliers reach, say) are
 seen through, to whatever is under them. The bird's-eye view is never carried
 to the next world, and VR always leaves it.
@@ -92,8 +93,10 @@ landscape:
 | Bird's-eye button (top right, beside ⏸) | Bird's-eye view, on and off (in worlds that offer it) |
 | ⏸ button (top right) | Pause |
 
-In the bird's-eye view, dragging (or the joystick) moves the view, and a tap
-lands the player where you tapped.
+In the bird's-eye view the joystick and the buttons are put away (worlds hide
+their own, such as the lobby's talk and chat buttons, on `view:change`). One
+finger drags the view, two fingers pinch to zoom, and a tap lands the player
+where you tapped.
 
 ## VR
 

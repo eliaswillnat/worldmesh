@@ -1093,8 +1093,16 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     renderer,
     spawn: padSpawn(),
     // Held upright, look further down so the floor fills the tall screen instead of the sky.
-    // The lobby is big enough to want the bird's-eye view (V); no higher than 50 m over the floor.
-    view: { mode: 'third', yaw: padYaw(), distance: 5.5, pitch: window.innerWidth < window.innerHeight ? -0.32 : -0.15, aerial: true, aerialMaxHeight: 50 },
+    // The lobby is big enough to want the bird's-eye view (M); it opens 80 m over the floor, as high as it goes.
+    view: {
+      mode: 'third',
+      yaw: padYaw(),
+      distance: 5.5,
+      pitch: window.innerWidth < window.innerHeight ? -0.32 : -0.15,
+      aerial: true,
+      aerialMaxHeight: 80,
+      aerialDistance: 200,
+    },
     vr: true,
     // Minecraft-style flight: double-tap Space.
     abilities: { flying: true },
@@ -1203,6 +1211,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       liveDoors.update(doors.values(), camera, feet, !renderer.xr.isPresenting);
     },
   });
+  // The page's own buttons (talk, chat) stand aside in the bird's-eye view, like the runtime's.
+  world.on('view:change', ({ mode }) => document.documentElement.classList.toggle('birds-eye', mode === 'aerial'));
   if (alias) ghost = makeGhost(world.avatar);
   void loadCharacter();
 
@@ -2923,7 +2933,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     window.removeEventListener('keydown', handleLiftKey);
     document.removeEventListener('mousemove', holdLook, true);
     document.removeEventListener('wheel', holdLook, true);
-    document.documentElement.classList.remove('chatting');
+    document.documentElement.classList.remove('chatting', 'birds-eye');
     chatBubble.remove();
     chatBtn?.remove();
     window.removeEventListener('keydown', handleTalkKey);
