@@ -13,8 +13,11 @@
       } catch {}
       try {
         // Before the gallery can paint. The module does the same check once it loads.
+        // Back from a platform's page (?avatar=…) or to sign in (?login=1): the
+        // account dialog opens, and it lives in the gallery.
         const back = sessionStorage.getItem('worldmesh.walkReturn');
-        if (location.hash !== '#list' || back) document.documentElement.classList.add('walking');
+        const dialog = /[?&](avatar|login)=/.test(location.search);
+        if ((location.hash !== '#list' || back) && !dialog) document.documentElement.classList.add('walking');
       } catch {}
       // The lobby is slow to appear (a slow connection or device): offer the
       // gallery in the middle of the screen. Here, not in the module, so it
