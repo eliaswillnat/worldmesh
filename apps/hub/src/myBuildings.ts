@@ -162,8 +162,10 @@ export function buildingsView(onBack: () => void): HTMLElement[] {
   if (!list && !loadingList) void loadList();
   const nodes: HTMLElement[] = [heading('My buildings')];
   nodes.push(
-    note(
-      "A building of your own can stand in the hub city in place of your world's block. Give the face visitors walk through a material named portal, and export it as a GLB of up to 10 MB.",
+    noteWithLink(
+      "A building of your own can stand in the hub city in place of your world's block. Give the face visitors walk through a material named portal, and export it as a GLB of up to 10 MB. ",
+      'How to make one',
+      '/build-a-building',
     ),
     note('Buildings stay on the platforms they come from. WorldMesh only remembers which ones you saved, and which worlds they stand on.'),
   );
@@ -777,6 +779,18 @@ function heading(text: string): HTMLElement {
   h.className = 'account-title';
   h.textContent = text;
   return h;
+}
+
+/** A note ending in a link, opened in a new tab so the dialog keeps its place. */
+function noteWithLink(text: string, label: string, href: string): HTMLElement {
+  const p = note(text);
+  const a = document.createElement('a');
+  a.href = href;
+  a.target = '_blank';
+  a.rel = 'noopener';
+  a.textContent = label;
+  p.append(a);
+  return p;
 }
 
 function note(text: string): HTMLElement {
