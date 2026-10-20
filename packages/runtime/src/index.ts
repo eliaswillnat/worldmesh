@@ -56,6 +56,7 @@ export type {
   AvatarOptions,
   InputAction,
   Keymap,
+  LobbyPortalOptions,
   MovementTuning,
   MultiplayerOptions,
   NetworkAdapter,

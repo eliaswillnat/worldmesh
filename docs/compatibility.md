@@ -68,6 +68,7 @@ exports (`Presence`, `createNameTag`, …) is the installed version.
 | `groundLevel` | `0` | Flat floor height used only when `colliders` is empty. |
 | `abilities` | all `false` | See below. |
 | `portals` | `[]` | See below. |
+| `lobbyPortal` | for visitors from the lobby | The way back to the WorldMesh lobby, a quad showing it live. `{…}` places or dresses it and shows it to everyone; `false` leaves it out. See [The way back to the lobby](#the-way-back-to-the-lobby). |
 | `player` | 1.8m tall, 0.35m radius | `avatar` replaces the default white figure, `avatar: false` removes it. |
 | `avatar` | off | `{ source: 'worldmesh' }` shows the visitor's Avatar Wallet character (VRM/glTF, loaded from the platform that hosts it); `{ source: 'descriptor', descriptor }` loads one you resolved yourself. Falls back to the default body. See [avatar-wallet.md](avatar-wallet.md). |
 | `view` | `{ mode: 'first', distance: 5 }` | Starting camera mode, boom length, mouse sensitivity, initial `yaw`/`pitch`; `aerial: true` offers the bird's-eye view, as the lobby does ([controls.md](controls.md#birds-eye-view)). |
@@ -125,6 +126,47 @@ world.on('portal:activate', (event) => {
   playFadeOut().then(() => world.travelTo(event.url));
 });
 ```
+
+## The way back to the lobby
+
+A visitor who came from the WorldMesh lobby finds a way back behind where
+they arrived: a plain quad, two triangles, showing the lobby live. It is the
+lobby itself, drawn from the visitor's own camera, so it moves with them like
+a window, with the people in it, as the lobby's doors show worlds
+([Doorway §3.1](specs/doorway.md#31-live-view)). Walking through it from the
+front goes back to the lobby, which brings them out of your world's door.
+
+For the lobby to show through, make the renderer with `alpha: true` (and keep
+a `scene.background`, so nothing else of the canvas turns see-through).
+Without it the quad keeps its cover and still leads back.
+
+It is only a quad on purpose, so it can look like anything:
+
+```js
+lobbyPortal: {
+  position: [0, 0, 12],   // the middle of its bottom edge; default 2.5 m behind spawn, on the ground
+  yaw: Math.PI,           // the way its front faces, like view.yaw; default: towards spawn
+  width: 2,               // metres
+  height: 3,
+  color: 0x6cf0ff,        // its cover, until the lobby shows
+}
+```
+
+Build a frame, an arch or a ruin around it in your own scene. Or model the
+quad itself and hand it over: any flat two-triangle mesh already in the scene,
+at any angle. The lobby shows on its front (the side its triangles wind
+counter-clockwise on, the side a renderer draws), and its own material is the
+cover until then.
+
+```js
+lobbyPortal: { mesh: gltf.scene.getObjectByName('LobbyPortal') }
+```
+
+Setting `lobbyPortal` (even to `{}`) shows it to every visitor, not only
+those from the lobby; `false` leaves it out. Walking through fires
+`portal:activate`, so you can take over the transition as with any portal.
+The lobby is loaded only near the quad (24 m), drawn only within 15 m, in
+front of it and on screen, and never in VR.
 
 ## Multiplayer
 
