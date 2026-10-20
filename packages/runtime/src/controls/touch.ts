@@ -191,6 +191,8 @@ export class TouchControls {
   private pan = { dx: 0, dy: 0 };
   /** How much nearer the view should come, as a ratio of distances (pinching out is < 1). */
   private pinch = 1;
+  /** How far two fingers have twisted since the last read, in radians, clockwise on screen. */
+  private twist = 0;
   /** A second finger came down: whatever happens, this gesture is not a tap. */
   private pinched = false;
 
@@ -366,10 +368,16 @@ export class TouchControls {
         this.pan.dy += e.clientY - finger.y;
       }
       const before = this.fingers.size > 1 ? this.spread() : 0;
+      const turnedFrom = this.fingers.size > 1 ? this.angle() : 0;
       finger.x = e.clientX;
       finger.y = e.clientY;
       const after = before > 0 ? this.spread() : 0;
-      if (after > 0) this.pinch *= before / after;
+      if (after > 0) {
+        this.pinch *= before / after;
+        // The shortest way round, so crossing ±180° is not a full turn.
+        const turned = this.angle() - turnedFrom;
+        this.twist += Math.atan2(Math.sin(turned), Math.cos(turned));
+      }
       return;
     }
 
@@ -443,6 +451,7 @@ export class TouchControls {
     this.pinched = false;
     this.pan = { dx: 0, dy: 0 };
     this.pinch = 1;
+    this.twist = 0;
     this.root.classList.toggle('wm-touch-aerial', on);
   }
 
@@ -458,6 +467,19 @@ export class TouchControls {
     const pinch = this.pinch;
     this.pinch = 1;
     return pinch;
+  }
+
+  /** In the bird's-eye view: how far two fingers twisted since the last read, in radians, clockwise on screen. */
+  readTwist(): number {
+    const twist = this.twist;
+    this.twist = 0;
+    return twist;
+  }
+
+  /** Which way the line from the first finger to the second points on screen. */
+  private angle(): number {
+    const [a, b] = [...this.fingers.values()];
+    return a && b ? Math.atan2(b.y - a.y, b.x - a.x) : 0;
   }
 
   /** How far apart the first two fingers are. */
