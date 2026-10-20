@@ -320,14 +320,6 @@ a reason the owner sees in My buildings.
 Until a link is approved, the world keeps its default block. A hidden link
 stays hidden: linking the same building again is refused.
 
-Where the auth Worker can send email (`RESEND_API_KEY`, `AUTH_FROM_EMAIL`;
-`workers/auth/src/avatars/buildingMail.ts`), the reviewers hear when a
-building waits for review (newly linked, or back because its file changed)
-and when a standing one is first reported. The owner hears that it was sent
-for review, approved, not approved, taken down, or is being reviewed again.
-An owner who is also a reviewer gets the reviewer's email only, and nobody
-is emailed about a decision they made themselves.
-
 ### 5.3 Pinning the approved version
 
 A provider lets its user replace a file after it was approved. So approval

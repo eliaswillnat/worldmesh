@@ -28,7 +28,7 @@
 import type { Auth, Env } from '../auth';
 import { isPlaceholderEmail } from '../atprotoSignIn';
 import { HttpError, isSameOrigin, json, readJson } from '../http';
-import { reviewerEmails, reviewersReported, reviewersWaiting, tellOwner } from './buildingMail';
+import { mailConfigured, sendMail } from '../mail';
 import { canonicalWorldUrl, manifestBuilding, recheckStale, resolveWorlds } from './buildingLinks';
 import { UnsafeUrlError, parseMetadata } from './net';
 import { avatarWalletEnabled, configuredProviders, context, PROVIDERS, providerFor, type WaitUntil } from './routes';
@@ -134,7 +134,7 @@ export async function handleBuildingRequest(request: Request, env: Env, getAuth:
 
     if (path === '/link' && method === 'POST') {
       const body = (await readJson(request, 4096)) as { buildingId?: unknown; world?: unknown } | null;
-      await link(env, exec, origin, userId, body?.buildingId, body?.world);
+      await link(env, origin, userId, body?.buildingId, body?.world);
       return json(await buildings(env, userId));
     }
 
@@ -148,9 +148,7 @@ export async function handleBuildingRequest(request: Request, env: Env, getAuth:
       if (!standing || standing.status !== 'approved') throw new HttpError(404, 'That building is not standing in the city.');
       const { created, open } = await store.saveReport(env.DB, standing, userId, reason, note);
       // The first open report on it tells the reviewers; more pile up on the dashboard.
-      if (created && open === 1) {
-        exec.waitUntil(reviewersReported(env, origin, world, standing.building_id, REPORT_LABELS[reason]).catch((error) => console.error('report email failed', error)));
-      }
+      if (created && open === 1) exec.waitUntil(tellReviewers(env, origin, standing.building_id, world, reason).catch((error) => console.error('report email failed', error)));
       return json({ ok: true, alreadyReported: !created });
     }
 
@@ -179,7 +177,7 @@ export async function handleBuildingRequest(request: Request, env: Env, getAuth:
  * own manifest has to name the building first: that proves whoever links it
  * controls the world, wherever it is hosted.
  */
-async function link(env: Env, exec: WaitUntil, origin: string, userId: string, buildingId: unknown, rawWorld: unknown): Promise<void> {
+async function link(env: Env, origin: string, userId: string, buildingId: unknown, rawWorld: unknown): Promise<void> {
   const building = typeof buildingId === 'string' ? (await store.buildingsOf(env.DB, userId)).find((b) => b.id === buildingId) : undefined;
   if (!building) throw new HttpError(404, 'That building is not in My buildings.');
   const world = canonicalWorldUrl(rawWorld);
@@ -208,17 +206,8 @@ async function link(env: Env, exec: WaitUntil, origin: string, userId: string, b
   if (manifest.building !== building.id) throw new HttpError(409, `The world's worldmesh.json does not name this building yet. Add ${line} to it, then try again.`);
 
   // Already on its way or standing: nothing to review again.
-  if (same && (existing.status === 'pending' || existing.status === 'approved')) {
-    await store.touchLink(env.DB, world);
-    return;
-  }
-  await store.saveLink(env.DB, world, building.id);
-  // Now waiting for review: the reviewers hear of it, and the owner that it was sent.
-  exec.waitUntil(
-    Promise.all([reviewersWaiting(env, origin, world, building.id, 'linked'), tellOwner(env, origin, world, building.id, 'submitted', null)]).catch((error) =>
-      console.error('link email failed', error),
-    ),
-  );
+  if (same && (existing.status === 'pending' || existing.status === 'approved')) await store.touchLink(env.DB, world);
+  else await store.saveLink(env.DB, world, building.id);
 }
 
 /** The city's endpoints: no cookies, any origin. */
@@ -253,6 +242,14 @@ async function publicRequest(request: Request, env: Env, exec: WaitUntil, origin
     throw error;
   }
   return reply({ buildings: worlds.length ? await resolveWorlds(env, exec, origin, worlds) : {} });
+}
+
+/** The accounts that review buildings: ADMIN_EMAILS, lower-cased. */
+function reviewerEmails(env: Env): string[] {
+  return (env.ADMIN_EMAILS ?? '')
+    .split(',')
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean);
 }
 
 /** Whether this account reviews buildings: a verified email in ADMIN_EMAILS. */
@@ -383,10 +380,35 @@ async function review(request: Request, env: Env, exec: WaitUntil, origin: strin
     store.resolveReports(env.DB, world, body.buildingId, decision.status === 'approved' ? 'dismissed' : 'actioned', reviewer),
   ]);
   if (!meta.changes) throw new HttpError(409, 'That world links a different building now. Load it again.');
-  exec.waitUntil(
-    tellOwner(env, origin, world, body.buildingId, decision.status, decision.reason, reviewer).catch((error) => console.error('owner email failed', error)),
-  );
+  if (decision.status !== 'approved') {
+    exec.waitUntil(tellOwner(env, origin, world, decision.status, decision.reason!).catch((error) => console.error('owner email failed', error)));
+  }
   return json({ ok: true, status: decision.status });
+}
+
+/** Emails the reviewers about a building's first open report, where email is set up. */
+async function tellReviewers(env: Env, origin: string, buildingId: string, world: string, reason: store.ReportReason): Promise<void> {
+  if (!mailConfigured(env)) return;
+  const row = await store.reviewLink(env.DB, world);
+  const name = row?.id === buildingId ? (row.custom_name ?? row.display_name ?? 'A building') : 'A building';
+  const intro = `${name}, standing on ${world} in the hub city, was reported as ${REPORT_LABELS[reason]}.`;
+  const url = `${origin}/review-building?world=${encodeURIComponent(world)}`;
+  for (const to of reviewerEmails(env)) await sendMail(env, to, 'A building in the city was reported', intro, 'Review it', url, null);
+}
+
+/** Tells a building's owner it was not approved, or was taken down, and why, where email is set up. */
+async function tellOwner(env: Env, origin: string, world: string, status: 'rejected' | 'hidden', reason: string): Promise<void> {
+  if (!mailConfigured(env)) return;
+  const row = await store.reviewLink(env.DB, world);
+  const verified = row?.owner_email_verified === 1 || row?.owner_email_verified === true;
+  if (!row?.owner_email || !verified || isPlaceholderEmail(row.owner_email)) return;
+  const name = row.custom_name ?? row.display_name ?? 'Your building';
+  const intro =
+    status === 'rejected'
+      ? `${name} was not approved for ${world}: ${reason} You can fix it and link it again from My buildings.`
+      : `${name} was taken down from ${world} in the hub city: ${reason}`;
+  const subject = status === 'rejected' ? 'Your building was not approved' : 'Your building was taken down';
+  await sendMail(env, row.owner_email, subject, intro, 'Open WorldMesh', `${origin}/`, null);
 }
 
 function buildingProvider(env: Env, connection: ConnectionRow): AvatarProvider {

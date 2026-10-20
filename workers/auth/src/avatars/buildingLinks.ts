@@ -7,7 +7,6 @@
  * never the model, which goes straight from the platform to the browser.
  */
 import type { Env } from '../auth';
-import { reviewersWaiting, tellOwner } from './buildingMail';
 import { jsonObject, providerFetch, UnsafeUrlError } from './net';
 import { context, PROVIDERS, type WaitUntil } from './routes';
 import * as store from './store';
@@ -103,14 +102,7 @@ export async function resolveWorlds(env: Env, exec: WaitUntil, origin: string, w
         const file = await approvedFile(env, exec, origin, row);
         if (!file) return null;
         if (row.version && file.version && file.version !== row.version) {
-          const { meta } = await store.sendBackToReview(env.DB, row.world_url, row.sha256, 'Its file changed after it was approved, so it is being reviewed again.');
-          if (meta.changes) {
-            exec.waitUntil(
-              Promise.all([reviewersWaiting(env, origin, row.world_url, row.id, 'changed'), tellOwner(env, origin, row.world_url, row.id, 'changed', null)]).catch((error) =>
-                console.error('changed-file email failed', error),
-              ),
-            );
-          }
+          await store.sendBackToReview(env.DB, row.world_url, row.sha256, 'Its file changed after it was approved, so it is being reviewed again.');
           return null;
         }
         return [row.world_url, { modelUrl: file.modelUrl, expiresAt: file.expiresAt ? new Date(file.expiresAt).toISOString() : null, sha256: row.sha256 }];

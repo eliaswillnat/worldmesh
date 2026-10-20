@@ -1678,64 +1678,6 @@ describe('Buildings on worlds', { timeout: 20_000 }, () => {
     await env.DB.prepare('delete from building_report').run();
   });
 
-  it('emails reviewers and the owner as a building is linked, approved, and its file changes', async () => {
-    const mailEnv = { ...env, RESEND_API_KEY: 're_test', AUTH_FROM_EMAIL: 'WorldMesh <accounts@worldmesh.net>' } as Env;
-    const sent: { to: string; subject: string; text: string }[] = [];
-    route('POST', 'https://api.resend.com/emails', async (request) => {
-      sent.push((await request.json()) as { to: string; subject: string; text: string });
-      return reply({ id: 'email-2' });
-    });
-    const mailed = async (path: string, init: RequestInit) => {
-      const pending: Promise<unknown>[] = [];
-      const ctx = { waitUntil: (promise: Promise<unknown>) => void pending.push(promise), passThroughOnException() {} } as unknown as ExecutionContext;
-      const response = await worker.fetch(new Request(`${ORIGIN}${path}`, init), mailEnv, ctx);
-      await Promise.all(pending);
-      return response;
-    };
-    const postMailed = (path: string, cookie: string, body: unknown) =>
-      mailed(path, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN, Cookie: cookie }, body: JSON.stringify(body) });
-
-    const owner = await ownerWithBuilding('linking-owner@example.com');
-    const reviewerUser = await reviewer();
-    manifest(owner.buildingId);
-    expect((await postMailed('/api/account/building/link', owner.cookie, { buildingId: owner.buildingId, world: WORLD })).status).toBe(200);
-    expect(sent.map((mail) => [mail.to, mail.subject])).toEqual([
-      ['reviewer@example.com', 'A building is waiting for review'],
-      ['someone@example.com', 'A building is waiting for review'],
-      ['linking-owner@example.com', 'Your building was sent for review'],
-    ]);
-    expect(sent[0].text).toContain(`wants Gatehouse to stand on ${WORLD} in the hub city.`);
-    expect(sent[0].text).toContain(`${ORIGIN}/review-building?world=${encodeURIComponent(WORLD)}`);
-    // Linking again while it waits sends nothing more.
-    manifest(owner.buildingId);
-    await postMailed('/api/account/building/link', owner.cookie, { buildingId: owner.buildingId, world: WORLD });
-    expect(sent).toHaveLength(3);
-
-    await postMailed('/api/account/building/review', reviewerUser.cookie, { world: WORLD, buildingId: owner.buildingId, action: 'approve', sha256: SHA, version: 'size:4000000' });
-    expect(sent.slice(3).map((mail) => [mail.to, mail.subject])).toEqual([['linking-owner@example.com', 'Your building stands in the city']]);
-
-    // The owner replaced the file: the reviewers hear it waits again, and so does the owner.
-    sketchfabDownload(4_100_000);
-    await mailed('/api/account/building/resolve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ worlds: [WORLD] }) });
-    expect(sent.slice(4).map((mail) => [mail.to, mail.subject])).toEqual([
-      ['reviewer@example.com', 'A building is waiting for review'],
-      ['someone@example.com', 'A building is waiting for review'],
-      ['linking-owner@example.com', 'Your building is being reviewed again'],
-    ]);
-    expect(sent[4].text).toContain('changed after it was approved');
-
-    // A reviewer linking their own building hears of it once, as a reviewer; deciding it themselves, not at all.
-    sent.length = 0;
-    const ownConnection = await connectSketchfab(reviewerUser.cookie);
-    route('GET', `${SKETCHFAB_API}/v3/models/${BUILDING_MODEL}`, () => reply(sketchfabModel(BUILDING_MODEL, SKETCHFAB_USER, 'Gatehouse')));
-    const own = ((await (await post('/api/account/building/collect', reviewerUser.cookie, { connectionId: ownConnection, modelId: BUILDING_MODEL })).json()) as BuildingList).buildings[0].id;
-    manifest(own);
-    await postMailed('/api/account/building/link', reviewerUser.cookie, { buildingId: own, world: WORLD });
-    expect(sent.map((mail) => mail.subject)).toEqual(['A building is waiting for review', 'A building is waiting for review']);
-    await postMailed('/api/account/building/review', reviewerUser.cookie, { world: WORLD, buildingId: own, action: 'approve', sha256: SHA });
-    expect(sent).toHaveLength(2);
-  });
-
   it('gives a world to the building its manifest names now, and lets links go with their building', async () => {
     const first = await linked('first-owner@example.com');
     const reviewerUser = await reviewer();
