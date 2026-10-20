@@ -974,7 +974,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   // Collision snapshots its colliders: a block giving way to its building has to be looked at again.
   const buildings = new Buildings(scene, renderer, !alias, directory, () => world.refreshColliders());
   /** World (canonical URL) → the hash of its approved building, once the directory answered. */
-  let approvedBuildings = new Map<string, string>();
+  let approvedBuildings = new Map<string, string | null>();
   /** How far out the city starts, once it is built, to build it again when buildings arrive. */
   let cityOuter: number | null = null;
   /** The list the doors were last laid out from, and where that put them. */
@@ -2834,8 +2834,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     if (options.buildings === 'demo') DEMO_BUILDINGS.slice(0, cityDoors.length).forEach((source, i) => sources.set(i, source));
     else cityDoors.forEach((door, i) => {
       const url = door.world && canonicalUrl(door.world.url);
-      const sha256 = url && approvedBuildings.get(url);
-      if (url && sha256) sources.set(i, { world: url, sha256 });
+      if (url && approvedBuildings.has(url)) sources.set(i, { world: url, sha256: approvedBuildings.get(url) ?? undefined });
     });
     const blocks = buildAvenues(city, cityDoors.length, new Set(sources.keys()));
     // Each storefront's sign hangs from its door, so it comes and goes with the world.
