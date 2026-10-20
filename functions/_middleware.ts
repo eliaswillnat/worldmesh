@@ -20,6 +20,8 @@ const EXACT = new Set([
   '/about.html',
   '/build-a-city',
   '/build-a-city.html',
+  '/build-a-building',
+  '/build-a-building.html',
   '/creators',
   '/creators.html',
   '/music-credits',
@@ -28,6 +30,9 @@ const EXACT = new Set([
   '/privacy.html',
   '/protocol',
   '/protocol.html',
+  // Reviewing worlds' buildings (docs/specs/buildings.md §5.2): usable by reviewers only.
+  '/review-building',
+  '/review-building.html',
   '/terms',
   '/terms.html',
   '/connect.md',

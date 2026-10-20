@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Make a building — WorldMesh</title>
+    <meta name="description" content="Give your world its own building in the WorldMesh city: one GLB, one material named portal, and the steps in Blender." />
+    <link rel="canonical" href="https://worldmesh.net/build-a-building" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      :root { color-scheme: light dark; }
+      * { box-sizing: border-box; margin: 0; }
+      body {
+        background: #000; color: #ccc;
+        font-family: "Urbanist", system-ui, sans-serif;
+        padding: 4vh 20px 80px;
+        display: flex; justify-content: center;
+        -webkit-font-smoothing: antialiased;
+      }
+      main { max-width: 640px; width: 100%; }
+      h1 { font-size: 24px; font-weight: 600; margin: 0 0 8px; color: #fff; }
+      .back { font-size: 13px; color: #888; text-decoration: none; display: inline-block; margin-bottom: 24px; }
+      .back:hover { color: #fff; }
+      .tagline { font-size: 15px; color: #888; margin-bottom: 32px; }
+      h2 { font-size: 15px; font-weight: 600; margin: 32px 0 8px; color: #eee; }
+      p, ul, ol { font-size: 14px; line-height: 1.7; margin: 0 0 12px; }
+      ul, ol { padding-left: 20px; }
+      li { margin-bottom: 4px; }
+      a { color: #999; }
+      pre {
+        font-size: 13px; line-height: 1.6; overflow-x: auto;
+        background: #0d0d0d; border: 1px solid #222; border-radius: 10px;
+        padding: 12px 14px; margin: 0 0 12px; color: #ddd;
+      }
+      code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; }
+      .download {
+        display: inline-block; margin: 4px 0 12px; padding: 10px 16px; border-radius: 999px;
+        background: #fff; color: #000; font-size: 14px; font-weight: 600; text-decoration: none;
+      }
+      .note { font-size: 12px; color: #777; }
+      @media (prefers-color-scheme: light) {
+        body { background: #fff; color: #222; }
+        h1 { color: #111; }
+        h2 { color: #222; }
+        a { color: #444; }
+        .back:hover { color: #000; }
+        pre { background: #f6f6f6; border-color: #ddd; color: #111; }
+        .download { background: #111; color: #fff; }
+      }
+      /* Hide scrollbar on mobile across all browsers (Firefox, Chrome, Safari, Edge) */
+      @media (max-width: 600px), (pointer: coarse) {
+        html, body { scrollbar-width: none; -ms-overflow-style: none; }
+        html::-webkit-scrollbar, body::-webkit-scrollbar { display: none; width: 0; height: 0; background: transparent; }
+      }
+      nav { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 32px; padding-top: 18px; border-top: 1px solid #444; font-size: 13px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <a class="back" href="/">← Back to WorldMesh</a>
+      <h1>Make a building</h1>
+      <p class="tagline">Your world's own front in the WorldMesh city.</p>
+
+      <p>Out in the city round the hall, every world has a block of its own: a plain white building with the world's door in it. Make a building of your own and it replaces the whole block, whether that is a temple, a shop, a hangar or a sign saying "come in". One face of it becomes the door visitors walk through, with everything a door does: the ripple as people come close, the live view, walking through.</p>
+      <p>Like characters, buildings stay where you host them, on your Sketchfab account or your AT Protocol (Bluesky) account. Each visitor's browser downloads yours from there. WorldMesh only keeps a link.</p>
+
+      <h2>The one rule</h2>
+      <p>Give the face visitors walk through a material named <code>portal</code>. <code>Portal</code> and <code>portal.001</code> count too. The hub turns that face into your world's door, so what the material looks like doesn't matter.</p>
+      <p>No face called <code>portal</code>? The building still stands, with a standard door at its front.</p>
+
+      <h2>What the file can be</h2>
+      <ul>
+        <li>One <strong>glTF binary (.glb)</strong> file with its textures inside, up to <strong>10 MB</strong>.</li>
+        <li>Up to <strong>150,000 triangles</strong>, with textures up to <strong>2048 px</strong>.</li>
+        <li>No Draco or meshopt compression.</li>
+        <li>A still model: no animation, lights, sound or scripts.</li>
+        <li>Any size. It is fitted to its block for you.</li>
+      </ul>
+
+      <h2>How it is fitted</h2>
+      <ul>
+        <li>A block is <strong>28 × 28 m</strong> and up to <strong>28 m</strong> tall, twice the height of the plain blocks. It can also reach <strong>2 m</strong> out into the street, for steps or a statue.</li>
+        <li>The building is turned so the portal faces the street, scaled evenly (never stretched) to fit, and stood with the bottom of the portal on the ground.</li>
+        <li>Once fitted, the portal must be at least <strong>2 m wide and 2.5 m tall</strong>, so people fit through. A tall, narrow building leaves a small door; a squat one leaves a big door.</li>
+        <li>Keep the portal face flat, roughly a rectangle, and upright (facing within 30° of level).</li>
+        <li>Nothing of the building should stand in front of the portal face, or it shows through the door.</li>
+      </ul>
+
+      <h2>In Blender</h2>
+      <ol>
+        <li>Model your building, or bring one in with <em>File → Import</em>.</li>
+        <li>Pick the door: press <em>Tab</em> for Edit Mode, <em>3</em> for face select, and click the face (or faces).</li>
+        <li>In <em>Material Properties</em>, add a material slot with <em>+</em>, click <em>New</em>, name the material <code>portal</code> and press <em>Assign</em>.</li>
+        <li>Press <em>Tab</em> again, then <em>File → Export → glTF 2.0</em>, with <em>Format</em> set to <em>glTF Binary (.glb)</em> and compression left off.</li>
+      </ol>
+      <p>Blender writes each material's faces as their own part of the file, so the door needs no separate object.</p>
+      <p>Made with an AI 3D generator such as Meshy or Tripo? Open its GLB in Blender, give the door face the <code>portal</code> material as above, and export. Their download links expire after a few days, so upload the file rather than linking to it.</p>
+
+      <h2>An example to start from</h2>
+      <p>A gatehouse: two towers, a wall between them, and its gate as the <code>portal</code> face. Open it in Blender to see how the material is set up, or upload it as it is to try everything below.</p>
+      <a class="download" href="/buildings/gatehouse.glb" download="worldmesh-example-gatehouse.glb">Download the example (GLB, 20 KB)</a>
+
+      <h2>Put it on your world</h2>
+      <ol>
+        <li>Sign in on <a href="/">WorldMesh</a>, open your account and choose <strong>Buildings → Manage</strong>. Connect Sketchfab or your AT Protocol account, then upload your GLB there, or save a model already on it. Before uploading, the hub checks the file the way the city will and tells you how big its door will be, or what is wrong.</li>
+        <li>Choose <strong>Put a building on your world</strong>, pick the building and your world from the list, and press <strong>Link</strong>. It stands in the city at once, in place of your world's block. Nothing on your world's own site has to change.</li>
+      </ol>
+
+      <h2>Good to know</h2>
+      <ul>
+        <li>The city shows the file as it is on Sketchfab or in your AT Protocol account: replace it there and the new one stands, once it passes the same checks.</li>
+        <li><strong>Take off</strong> in My buildings brings the plain block back.</li>
+        <li>A world with a building of its own stands out in the city, even a multiplayer one that would otherwise have its door in the hall. The most entered worlds stand nearest the hall, the least entered furthest out.</li>
+        <li>Visitors can report a building, and reported buildings may be taken down. Use only models you have the rights to; see the <a href="/terms">terms</a>.</li>
+      </ul>
+      <p class="note">Every detail, including how the portal face is found and fitted, is in the <a href="https://github.com/eliaswillnat/worldmesh/blob/main/docs/specs/buildings.md">buildings spec</a>. Connecting the world itself comes first: <a href="/creators">Connect a world</a>.</p>
+
+      <nav aria-label="Learn about WorldMesh">
+        <a href="/about">About</a>
+        <a href="/protocol">Protocol</a>
+        <a href="/build-a-city">Build a city</a>
+        <a href="/creators">Connect a world</a>
+        <a href="/build-a-building">Make a building</a>
+      </nav>
+    </main>
+  </body>
+</html>

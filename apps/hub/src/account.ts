@@ -11,6 +11,7 @@
  */
 
 import { characterSummary, initAvatarWallet, setSignedIn, walletView } from './avatars';
+import { buildingsSummary, buildingsView, initBuildings, setBuildingsSignedIn } from './myBuildings';
 
 interface AccountUser {
   id: string;
@@ -53,9 +54,11 @@ let resetToken: string | null = null;
 /** Kept across re-renders so a failed attempt doesn't wipe what was typed. */
 let draft = { name: '', email: '', password: '' };
 /** Which page of the signed-in dialog is showing. */
-let signedInView: 'account' | 'wallet' = 'account';
+let signedInView: 'account' | 'wallet' | 'buildings' = 'account';
 /** Came back from connecting an avatar platform: open the wallet once signed in. */
 let openWallet = false;
+/** Came back from a platform's page opened in My buildings: open that once signed in. */
+let openBuildings = false;
 /** "Continue with Bluesky" was picked: ask for the handle in its place. */
 let atprotoOpen = false;
 
@@ -64,13 +67,39 @@ const PROFILE_ICON =
 /** The mobile menu button shows the same profile icon, or the avatar once signed in. */
 const mobileProfile = document.querySelector<HTMLSpanElement>('#mobile-profile');
 
+/** Called right before the dialog opens, so the page can make room for it. */
+let beforeOpen: () => void = () => {};
+
+/**
+ * The dialog lives in the gallery, which walk mode hides: shown over the
+ * lobby it would be invisible and still take every tap. The page passes what
+ * to do first (leave walk mode).
+ */
+export function beforeAccountDialogOpens(listener: () => void): void {
+  beforeOpen = listener;
+}
+
+/**
+ * Whether the dialog is open, or about to open once the account is known
+ * (back from a platform's page opened in My characters or My buildings).
+ * The page starts in the gallery then, not in walk mode.
+ */
+export function accountDialogPending(): boolean {
+  return dialog.open || openWallet || openBuildings;
+}
+
+function showDialog(): void {
+  beforeOpen();
+  if (!dialog.open) dialog.showModal();
+}
+
 export function openAccountDialog(): void {
   message = null;
   atprotoOpen = false;
   signedInView = 'account';
   if (view === 'forgot' || (view === 'reset' && !resetToken)) view = 'sign-in';
   renderDialog();
-  dialog.showModal();
+  showDialog();
   if (!user && !providers) void loadProviders();
 }
 
@@ -109,6 +138,10 @@ function safeReturnPath(value: string | null): string | null {
 }
 
 export function initAccount(): void {
+  // First: a trip begun in My buildings comes back with the same parameters as the wallet's.
+  openBuildings = initBuildings(() => {
+    if (dialog.open) renderDialog();
+  }) !== null;
   openWallet = initAvatarWallet(() => {
     if (dialog.open) renderDialog();
   }) !== null;
@@ -139,20 +172,20 @@ export function initAccount(): void {
       }
       message = returnTo ? { text: 'Log in to continue.', error: false } : null;
       renderDialog();
-      if (!dialog.open) dialog.showModal();
+      showDialog();
       if (!providers) void loadProviders();
     });
   } else if (outcome === 'error') {
     setHint(false);
     message = { text: 'Sign-in did not complete. Please try again.', error: true };
     renderDialog();
-    dialog.showModal();
+    showDialog();
     void loadProviders();
   } else if (outcome === 'reset') {
     view = resetToken ? 'reset' : 'forgot';
     if (!resetToken) message = { text: 'That reset link is invalid or has expired.', error: true };
     renderDialog();
-    dialog.showModal();
+    showDialog();
   } else if (outcome === 'verified') {
     setHint(true);
     void refresh(true);
@@ -168,18 +201,20 @@ async function refresh(openIfNoUsername: boolean): Promise<void> {
     user = ((await response.json()) as { user: AccountUser | null }).user;
     setHint(!!user);
     setSignedIn(!!user);
+    setBuildingsSignedIn(!!user);
     renderButton();
     for (const listener of accountListeners) listener();
     if (dialog.open) renderDialog();
-    if (user && openWallet) {
+    if (user && (openWallet || openBuildings)) {
+      signedInView = openBuildings ? 'buildings' : 'wallet';
       openWallet = false;
-      signedInView = 'wallet';
+      openBuildings = false;
       renderDialog();
-      dialog.showModal();
+      showDialog();
     }
     if (user && !user.username && openIfNoUsername) {
       renderDialog();
-      dialog.showModal();
+      showDialog();
     }
   } catch {
     // Offline or the account service is down: stay signed out in the UI.
@@ -326,6 +361,7 @@ async function signOut(): Promise<void> {
     user = null;
     setHint(false);
     setSignedIn(false);
+    setBuildingsSignedIn(false);
     renderButton();
     for (const listener of accountListeners) listener();
     dialog.close();
@@ -402,6 +438,13 @@ function renderDialog(): void {
         renderDialog();
       }),
     );
+  } else if (signedInView === 'buildings') {
+    body.append(
+      ...buildingsView(() => {
+        signedInView = 'account';
+        renderDialog();
+      }),
+    );
   } else {
     const who = document.createElement('div');
     who.className = 'account-who';
@@ -422,6 +465,11 @@ function renderDialog(): void {
     body.append(
       characterSummary(() => {
         signedInView = 'wallet';
+        message = null;
+        renderDialog();
+      }),
+      buildingsSummary(() => {
+        signedInView = 'buildings';
         message = null;
         renderDialog();
       }),

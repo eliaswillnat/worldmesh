@@ -1,15 +1,16 @@
 # Admin dashboard
 
 `https://admin.worldmesh.net` — one place to see everything WorldMesh runs.
-It lives in `workers/admin` and is **read-only**: approving worlds and
-reviewing ads keep using their existing, already-guarded flows, which the
-dashboard links to.
+It lives in `workers/admin` and is **read-only**: approving worlds,
+reviewing ads and reviewing buildings keep using their own, already-guarded
+flows, which the dashboard links to.
 
 | Page | What it shows | Source |
 | --- | --- | --- |
-| Overview | headline numbers, what needs you (worlds and ads waiting, services down, failing deliveries), sign-ups, sign-in providers, most viewed worlds, service health | everything below |
+| Overview | headline numbers, what needs you (worlds, ads and buildings waiting, reported buildings, services down, failing deliveries), sign-ups, sign-in providers, most viewed worlds, service health | everything below |
 | Users | every account, searchable: sign-in providers, username, joined, last seen, avatars, followers | D1 |
 | Worlds | submissions waiting (with the approve link), the directory with views and who is in each world now, account-owned worlds | KV `WORLDS`, KV `VIEWS`, D1, presence |
+| Buildings | worlds' own buildings, waiting and reported ones first, with visitors' open reports, each linking to the hub's review page (`/review-building`), where the reviewer's browser downloads the model, checks it, shows it on its block and approves it pinned to its SHA-256 ([specs/buildings.md](specs/buildings.md) §5.2) | D1 |
 | Live | every presence room (hub lobby and each listed world): who is walking around, refreshes every 15 s | `workers/presence` |
 | Ads | billboard submissions by status, captured revenue, links to the review page | D1 |
 | Fediverse | followers, most-followed creators, deliveries and their errors, likes/boosts/replies, Avatar Wallet | D1 |
@@ -37,6 +38,11 @@ hostname, `/api/dashboard/handoff`:
 Every page load re-reads the session row, so signing out on the hub, the
 session expiring, or an email leaving `ADMIN_EMAILS` ends access immediately.
 Pages carry a CSP with no scripts at all, are never cached, framed or indexed.
+
+Reviewing buildings needs a script (a 3D viewer and the hash), so it happens
+on the hub instead, at `worldmesh.net/review-building`: `workers/auth` answers
+its `/api/account/building/review` endpoints for verified emails in its own
+`ADMIN_EMAILS` var, which should list the same accounts as this Worker's.
 
 For a second lock, put Cloudflare Access (Zero Trust → Access → Applications,
 self-hosted, `admin.worldmesh.net`, allow your email) in front. It is free for

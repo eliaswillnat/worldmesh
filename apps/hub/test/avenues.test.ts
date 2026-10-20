@@ -248,3 +248,38 @@ describe('the hall dressed as storefronts', () => {
     }
   });
 });
+
+describe('blocks a building can replace', () => {
+  const plan = planAvenues(HUB, 12, STOREFRONT_WIDTH);
+
+  it('gives every world a block of its own', () => {
+    const blocks = plan.slots.map((slot) => slot.block);
+    expect(new Set(blocks).size).toBe(blocks.length);
+    expect(plan.capacity).toBe(plan.blocks.length);
+  });
+
+  it("builds a lot's whole block on its own, sign and all, and leaves it out of the city's shared meshes", () => {
+    const lots = new Set([0, 2, 5]);
+    const shared = buildAvenues(plan, plan.slots.length);
+    const built = buildAvenues(plan, plan.slots.length, lots);
+    expect([...built.lots.keys()].sort()).toEqual([0, 2, 5]);
+    expect(built.signs).toHaveLength(plan.slots.length);
+    expect(built.colliders).toHaveLength(shared.colliders.length - lots.size);
+    expect(built.solid).toHaveLength(shared.solid.length - lots.size * 3);
+    for (const index of lots) {
+      const block = plan.blocks[plan.slots[index].block];
+      const lot = built.lots.get(index)!;
+      expect(lot.width).toBeCloseTo(block.maxX - block.minX);
+      expect(lot.depth).toBeCloseTo(block.maxZ - block.minZ);
+      // Its collider is the block: as tall, and covering its footprint.
+      lot.collider.computeBoundingBox();
+      const box = lot.collider.boundingBox!;
+      expect(box.max.y).toBeCloseTo(14);
+      expect(box.min.x).toBeLessThanOrEqual(block.minX + 1e-6);
+      expect(box.max.z).toBeGreaterThanOrEqual(block.maxZ - 1e-6);
+      expect(lot.solid.length).toBe(3);
+      expect(lot.trim.length).toBeGreaterThan(0);
+    }
+    expect(shared.lots.size).toBe(0);
+  });
+});

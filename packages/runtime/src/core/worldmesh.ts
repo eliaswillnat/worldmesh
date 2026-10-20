@@ -87,6 +87,8 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   const vrEnabled = options.vr !== false;
   const overlay = new Overlay({
     ...options.ui,
+    aerial: options.view?.aerial === true,
+    onAerial: () => toggleAerial(),
     onEnter: (touch) => input.requestPointerLock(touch),
     onEnterVr: () => {
       void enterVR();
@@ -109,6 +111,11 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
       events.emit('pointer:lock', { locked });
     },
     onEscape: () => {
+      // Esc leaves the bird's-eye view first, and takes the cursor back for walking.
+      if (cameraRig.mode === 'aerial') {
+        setViewMode(cameraRig.walkingMode);
+        return true;
+      }
       if (overlay.isPaused()) {
         input.requestPointerLock();
         return true;
@@ -140,6 +147,8 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   let lastTime = 0;
   let elapsed = 0;
   let activePortal: ResolvedPortal | null = null;
+  /** A click or tap on the bird's-eye view this frame, landed once the camera has moved. */
+  let aerialTap: { x: number; y: number } | null = null;
   let disposed = false;
   const footsteps = options.footsteps ? new Footsteps() : null;
   let avatarDescriptor: AvatarDescriptor | null = null;
@@ -656,14 +665,23 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     if (playing && !presenting) {
       if (input.locked || isTouchDevice() || options.ui?.moveBeforeLock === true) {
         cameraRig.look(look.dx, look.dy);
-        if (input.locked) cameraRig.zoom(look.wheel);
+        if (input.locked || cameraRig.mode === 'aerial') cameraRig.zoom(look.wheel);
       }
       if (input.consume('toggleView')) setViewMode(cameraRig.nextMode());
+      if (input.consume('birdsEye')) toggleAerial();
       if (cameraRig.mode === 'aerial') {
-        // The move keys and the joystick pan the bird's-eye view; the player stays put.
+        // The move keys and the joystick slide the bird's-eye view, and so does
+        // dragging the ground; the player stays put.
         const axis = input.getMoveAxis();
         cameraRig.pan(axis.x, axis.z, dt, input.isDown('sprint'));
-        if (input.consumeClick() || input.consume('interact')) landFromAerial();
+        const pan = input.readPan();
+        cameraRig.drag(pan.dx, pan.dy, renderer.domElement.clientHeight);
+        const cursor = input.getCursor();
+        if (cursor) cameraRig.aimAt(...toNdc(cursor));
+        else cameraRig.aimAt(null);
+        aerialTap = input.consumeTap();
+        // E lands where the cursor points, or (no cursor) at the middle of the view.
+        if (input.consume('interact')) aerialTap = cursor ?? { x: renderer.domElement.clientWidth / 2, y: renderer.domElement.clientHeight / 2 };
       }
       const digit = input.consumeDigit();
       const expression = digit === null ? null : expressionForDigit(digit);
@@ -690,7 +708,10 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
       xrOrigin.position.copy(controller.position);
     } else {
       cameraRig.update(dt, controller.position, player.eyeHeight * (controller.height / height));
+      // Last: the bird's-eye camera is where it is drawn from, so the click lands where it was seen.
+      if (aerialTap && cameraRig.mode === 'aerial') landFromAerial(cameraRig.landingAt(...toNdc(aerialTap)));
     }
+    aerialTap = null;
     const footfall = player.sync(controller.position, cameraRig.yaw, controller.height, {
       dt,
       speed: Math.hypot(controller.velocity.x, controller.velocity.z),
@@ -726,8 +747,8 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     }
 
     if (aerial) {
-      const where = isTouchDevice() ? 'Tap E to land here' : 'Click or press E to land here';
-      overlay.setPrompt(cameraRig.landing && isPlaying() ? where : null);
+      // The bird's-eye view's own hint says how to land.
+      overlay.setPrompt(null);
       return;
     }
 
@@ -771,13 +792,26 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     if (cameraRig.mode !== mode) return;
     // The bird's-eye view is a quick look around, not a way to arrive: the next world opens walking.
     if (mode !== 'aerial') rememberView(mode);
+    input.setAerial(mode === 'aerial');
+    overlay.setAerial(mode === 'aerial');
     applyViewVisibility();
     events.emit('view:change', { mode });
   }
 
-  /** From the bird's-eye view: put the player where it points, facing the way it looks, and walk on from there. */
-  function landFromAerial(): void {
-    const spot = cameraRig.landing;
+  /** The bird's-eye view on or off, from its key or its button, whatever the player is doing. */
+  function toggleAerial(): void {
+    if (!cameraRig.aerialEnabled || viewing || renderer.xr.isPresenting) return;
+    setViewMode(cameraRig.mode === 'aerial' ? cameraRig.walkingMode : 'aerial');
+  }
+
+  /** CSS pixels on the canvas to normalized device coordinates. */
+  function toNdc(point: { x: number; y: number }): [number, number] {
+    const canvas = renderer.domElement;
+    return [(point.x / Math.max(1, canvas.clientWidth)) * 2 - 1, 1 - (point.y / Math.max(1, canvas.clientHeight)) * 2];
+  }
+
+  /** From the bird's-eye view: put the player at `spot`, facing the way it looks, and walk on from there. */
+  function landFromAerial(spot: Vector3 | null): void {
     if (!spot) return;
     controller.reset(spot.clone().setY(spot.y + 0.05));
     player.facing = cameraRig.yaw;

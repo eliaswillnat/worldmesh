@@ -3,8 +3,10 @@
  * The rotunda stands in a square plaza. A straight avenue runs out of each
  * of the hall's four axial exits (north, east, south, west), and streets
  * run parallel to them at an even pitch, so every block is the same square:
- * plain walls and a flat roof, with world doors along the streets.
- * avenues.ts turns this into geometry.
+ * plain walls and a flat roof. Each block is one world's: its door is in the
+ * middle of the wall facing the rotunda, and a building of its own can take
+ * the block's place (docs/specs/buildings.md). avenues.ts turns this into
+ * geometry.
  *
  * The city grows a ring at a time, a ring being the square of blocks just
  * outside the last: as many rings as the worlds need doors, never fewer than
@@ -41,7 +43,7 @@ export const AVENUES: AvenueConfig = {
 };
 
 /** How far a door stands proud of a block's wall. */
-const OUT = 0.3;
+export const DOOR_OUT = 0.3;
 
 export interface CityBlock {
   /** 0 is the ring nearest the rotunda. */
@@ -227,7 +229,8 @@ function planRing(hub: number, ring: number, first: number, slotWidth: number, c
     const [minZ, maxZ] = span(Math.floor(Math.abs(gz)), gz > 0 ? 1 : -1, config);
     const block: CityBlock = { ring, index, minX, maxX, minZ, maxZ };
     blocks.push(block);
-    // Every wall takes doors, those facing the rotunda first.
+    // One world to a block, its door on the wall facing the rotunda: the
+    // block is that world's building (docs/specs/buildings.md).
     const walls: Face[] = blockFaces(block).map((face) => {
       const length = face.length - config.cornerClear * 2;
       const [mx, mz] = face.at(face.length / 2, 0);
@@ -237,13 +240,14 @@ function planRing(hub: number, ring: number, first: number, slotWidth: number, c
         place: (count) =>
           spread(length, count).map((offset) => {
             const along = config.cornerClear + offset;
-            const [x, z] = face.at(along, OUT);
+            const [x, z] = face.at(along, DOOR_OUT);
             const [facingX, facingZ] = face.normal(along);
-            return { x, z, facingX, facingZ, out: OUT, ring, block: first + index, face: face.index, along };
+            return { x, z, facingX, facingZ, out: DOOR_OUT, ring, block: first + index, face: face.index, along };
           }),
       };
     });
-    faces.push(walls.filter((wall) => wall.capacity > 0).sort((a, b) => a.order - b.order));
+    const front = walls.filter((wall) => wall.capacity > 0).sort((a, b) => a.order - b.order)[0];
+    faces.push(front ? [{ ...front, capacity: 1 }] : []);
   });
   return { blocks, faces };
 }

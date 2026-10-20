@@ -1,0 +1,43 @@
+{
+  "lexicon": 1,
+  "id": "net.worldmesh.building",
+  "description": "A building for the WorldMesh hub city (https://worldmesh.net): a glTF binary model that stands in place of its world's block. The face whose material is named `portal` becomes the world's door. See docs/specs/buildings.md.",
+  "defs": {
+    "main": {
+      "type": "record",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["model", "createdAt"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 640,
+            "maxGraphemes": 64,
+            "description": "What its maker calls it."
+          },
+          "model": {
+            "type": "blob",
+            "accept": ["model/gltf-binary"],
+            "maxSize": 10485760,
+            "description": "The GLB: front facing +Z, the door's face given a material named `portal`."
+          },
+          "thumbnail": {
+            "type": "blob",
+            "accept": ["image/png", "image/jpeg", "image/webp"],
+            "maxSize": 1000000
+          },
+          "sourceUrl": {
+            "type": "string",
+            "format": "uri",
+            "description": "Where the model came from, for credit."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime"
+          }
+        }
+      }
+    }
+  }
+}

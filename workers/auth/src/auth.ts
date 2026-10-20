@@ -33,6 +33,11 @@ export interface Env extends AppleCredentials, MailEnv {
   VROID_SCOPE?: string;
   SKETCHFAB_CLIENT_ID?: string;
   SKETCHFAB_CLIENT_SECRET?: string;
+  /**
+   * Accounts that review buildings for the city (docs/specs/buildings.md §5.2),
+   * comma-separated verified emails: the same list as workers/admin's.
+   */
+  ADMIN_EMAILS?: string;
 }
 
 export const AUTH_BASE_PATH = '/api/auth';

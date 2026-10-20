@@ -56,7 +56,9 @@ import { doorFrameGeometry, frameOuterCorner, openingCorner } from './doorShape'
 import { describeBillboard } from './layout';
 import { planAvenues, type CityPlan } from './avenuePlan';
 import { buildAvenues, dressHall } from './avenues';
-import { STOREFRONT_WIDTH } from './facade';
+import { assignDoors } from './doorOrder';
+import { Buildings, DEMO_BUILDINGS, type BuildingDirectory, type BuildingLot, type BuildingSource } from './buildings';
+import { LOT_FORECOURT, LOT_HEIGHT, STOREFRONT_WIDTH } from './facade';
 import { playSendSound, playWarpSound } from './sounds';
 import { chatRejection } from '../../../../templates/relay/src/chatFilter';
 import { deviceLanguage, isForeign, translate } from './translate';
@@ -137,6 +139,13 @@ export interface LobbyOptions {
   signals?: SignalSource;
   /** How many times people have entered a world, by URL; shown beside its doors. */
   entries?: (url: string) => number | undefined;
+  /**
+   * Worlds' own buildings (docs/specs/buildings.md): where approved ones are
+   * downloaded from, each standing in place of its world's block. 'demo'
+   * puts the demo buildings on the city's first lots instead, to see how
+   * buildings look. Without either, every world keeps its block.
+   */
+  buildings?: BuildingDirectory | 'demo';
 }
 
 export interface Lobby {
@@ -162,11 +171,18 @@ export interface Lobby {
   setColor(color: string): void;
   /** The made-up name while private, or null while public. */
   readonly alias: string | null;
+  /**
+   * The world's building standing nearest this visitor, close enough to be
+   * the one they mean (docs/specs/buildings.md §8: reporting it), or null.
+   */
+  nearbyBuilding(): { world: string; name: string } | null;
   dispose(): void;
 }
 
 /** How often walk-mode doors ask presence how full each world room is. */
 const OCCUPANCY_MS = 15_000;
+/** A building this close (metres, to its door) is the one a visitor would report. */
+const REPORT_REACH = 30;
 
 /** Presence WebSocket base → HTTP base for the public occupancy read. */
 function presenceHttpBase(endpoint: string): string {
@@ -290,24 +306,6 @@ function doorAngles(total: number, radius: number): number[] {
     for (let i = 0; i < count; i++) angles.push(gate + (first + i * pitch) / radius);
   }
   return angles.map((angle) => (angle + Math.PI * 2) % (Math.PI * 2)).sort((a, b) => a - b);
-}
-/**
- * Which worlds get a door, and where. Multiplayer worlds go inside (the demos
- * first, then the newest); solo ones go out into the city, along its grid
- * of avenues and streets (newest first, avenuePlan), followed by any multiplayer
- * worlds that did not fit inside. Ties break on the URL, so everyone with
- * the same list gets the same doors. The rotunda's outer wall has none.
- */
-function assignDoors(worlds: LobbyWorld[], inside: number): { inside: string[]; city: string[] } {
-  const listed = (world: LobbyWorld) => Date.parse(world.addedAt ?? world.approvedAt ?? '') || 0;
-  const order = (a: LobbyWorld, b: LobbyWorld) =>
-    Number(b.source === 'demo') - Number(a.source === 'demo') || listed(b) - listed(a) || (a.url < b.url ? -1 : a.url > b.url ? 1 : 0);
-  const multiplayer = (world: LobbyWorld) => world.tags?.includes('multiplayer') ?? false;
-  const together = worlds.filter(multiplayer).sort(order);
-  const solo = worlds.filter((world) => !multiplayer(world)).sort(order);
-  const within = together.slice(0, inside);
-  const url = (world: LobbyWorld) => world.url;
-  return { inside: within.map(url), city: [...solo, ...together.slice(inside)].map(url) };
 }
 /** Stand this close in front of an empty door to be offered it. */
 const EMPTY_DOOR_REACH = 4.8;
@@ -974,6 +972,18 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   /** The city's blocks (just for looks) and their walls, one collider per block. */
   const cityMeshes: Mesh[] = [];
   const cityColliders: Mesh[] = [];
+  /** Each world's block that a building can replace, solid until the building stands there. */
+  const lotColliders: Mesh[] = [];
+  const directory = options.buildings && options.buildings !== 'demo' ? options.buildings : null;
+  // Collision snapshots its colliders: a block giving way to its building has to be looked at again.
+  const buildings = new Buildings(scene, renderer, !alias, directory, () => world.refreshColliders());
+  /** World (canonical URL) → the hash of its approved building, once the directory answered. */
+  let approvedBuildings = new Map<string, string | null>();
+  /** How far out the city starts, once it is built, to build it again when buildings arrive. */
+  let cityOuter: number | null = null;
+  /** The list the doors were last laid out from, and where that put them. */
+  let lastWorlds: LobbyWorld[] = options.worlds;
+  let laidOut = '';
   let nearEmpty: Door | null = null;
   let time = 0;
   let warping = false;
@@ -1101,6 +1111,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       ...[...doors.values(), ...emptyDoors, ...galleryDoors, ...(exitDoor ? [exitDoor] : [])].flatMap((door) => door.blockers),
       ...spawnPads.colliders,
       ...cityColliders,
+      ...buildings.colliders(),
       ...upper,
       ...lifts.colliders,
       ...boardColliders,
@@ -1139,6 +1150,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         if (!level(door)) continue;
         if (!warping && !emerging && door.contains(x, z)) enter(door);
       }
+      buildings.update(dt, x, z);
       walkThrough.update();
       if (world.getViewMode() === 'third' && !renderer.xr.isPresenting) keepCameraOutOfDoorways(feet.set(x, y, z));
       let near: Door | null = null;
@@ -1965,6 +1977,20 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   // a moment later and shift every door, and these already match the full list.
   if (options.start) emerge(options.start);
   startOccupancyPolling();
+  // Which worlds have a building of their own. The city is up meanwhile, every world on its block.
+  directory
+    ?.approved()
+    .then((approved) => {
+      if (disposed) return;
+      approvedBuildings = approved;
+      // A world with a building of its own moves out to the city.
+      if (relayoutIfMoved()) return;
+      // Built again only if one of the city's doors has a building now.
+      if (cityOuter === null || !cityDoors.some((door) => door.world && approved.has(canonicalUrl(door.world.url)))) return;
+      buildCity(cityOuter);
+      world.refreshColliders();
+    })
+    .catch((error: unknown) => console.warn('[buildings] could not read which worlds have buildings:', error instanceof Error ? error.message : error));
 
   if (import.meta.env.DEV) Object.assign(window, { lobby: world, spawnFx: () => triggerSpawnFx() });
 
@@ -1976,6 +2002,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     setColor,
     get alias() {
       return pendingAlias;
+    },
+    nearbyBuilding() {
+      const [x, , z] = world.getState().position;
+      const near = buildings.shownNear(x, z, REPORT_REACH);
+      return near && { world: near.world, name: near.door.world?.name ?? near.world };
     },
     dispose,
   };
@@ -2142,6 +2173,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     flash.classList.add('active');
     privateTimer = window.setTimeout(() => {
       alias = next;
+      buildings.setEnabled(!alias);
       world.clearAvatar();
       ghost?.restore();
       ghost = alias ? makeGhost(world.avatar) : null;
@@ -2200,6 +2232,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   }
 
   function refreshEntries(): void {
+    // The city keeps its most entered worlds nearest the hall.
+    if (relayoutIfMoved()) return;
     for (const [url, door] of doors) door.setEntries(options.entries?.(url));
   }
 
@@ -2259,11 +2293,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     if (!document.hidden) void refreshOccupancy();
   }
 
-  function setWorlds(worlds: LobbyWorld[]): void {
-    for (const entry of worlds) {
-      if (!known.has(entry.url)) known.set(entry.url, entry);
-    }
-
+  /**
+   * Where every listed world's door goes: the claims on the hall's empty
+   * openings, and the worlds in the hall and in the city.
+   */
+  function layout(worlds: LobbyWorld[]) {
     // Everyone with the same list gets the same ring, so visitors who see
     // each other also see the same doors around them.
     // A door claimed inside the lobby stays on the opening it was given.
@@ -2273,10 +2307,32 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     const claimUrls = new Set(claims.map((claim) => claim.url));
     const listed = [...known.entries()].filter(([url]) => !claimUrls.has(url)).map(([, world]) => world as LobbyWorld);
     // The same number of doors on every stretch, so both sides of every exit match.
+    const assigned = assignDoors(listed, GATE_COUNT * DOORS_PER_BAY, (url) => options.entries?.(url), (url) =>
+      approvedBuildings.has(canonicalUrl(url)),
+    );
+    return { claims, claimUrls, assigned, key: JSON.stringify(assigned) };
+  }
+
+  /** Lay the doors out again if counts or buildings now put them elsewhere. */
+  function relayoutIfMoved(): boolean {
+    if (layout(lastWorlds).key === laidOut) return false;
+    setWorlds(lastWorlds);
+    return true;
+  }
+
+  function setWorlds(worlds: LobbyWorld[]): void {
+    // Buildings come down while the doors are laid out again; buildCity puts them back.
+    buildings.setLots([]);
+    for (const entry of worlds) {
+      if (!known.has(entry.url)) known.set(entry.url, entry);
+    }
+    lastWorlds = worlds;
+
+    const { claims, claimUrls, assigned, key } = layout(worlds);
+    laidOut = key;
     const total = GATE_COUNT * DOORS_PER_BAY;
     const radius = HALL_RADIUS;
     const angles = doorAngles(total, radius);
-    const assigned = assignDoors(listed, total);
     const urls = assigned.inside;
     // Worlds sit next to each other; the doors after them stay empty.
     const slots = urls.map((_, i) => i);
@@ -2772,13 +2828,23 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
    */
   function buildCity(outer: number): void {
     billboards?.setSlots(billboardSlots);
-    for (const mesh of [...cityMeshes, ...cityColliders]) {
+    buildings.setLots([]);
+    for (const mesh of [...cityMeshes, ...cityColliders, ...lotColliders]) {
       mesh.geometry.dispose();
       mesh.removeFromParent();
     }
     cityMeshes.length = 0;
     cityColliders.length = 0;
-    const blocks = buildAvenues(city, cityDoors.length);
+    lotColliders.length = 0;
+    cityOuter = outer;
+    // Blocks a building replaces: approved worlds' own, or the demo's on the first doors of the city.
+    const sources = new Map<number, BuildingSource>();
+    if (options.buildings === 'demo') DEMO_BUILDINGS.slice(0, cityDoors.length).forEach((source, i) => sources.set(i, source));
+    else cityDoors.forEach((door, i) => {
+      const url = door.world && canonicalUrl(door.world.url);
+      if (url && approvedBuildings.has(url)) sources.set(i, { world: url, sha256: approvedBuildings.get(url) ?? undefined });
+    });
+    const blocks = buildAvenues(city, cityDoors.length, new Set(sources.keys()));
     // Each storefront's sign hangs from its door, so it comes and goes with the world.
     cityDoors.forEach((door, i) => {
       const sign = blocks.signs[i];
@@ -2796,6 +2862,24 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       collider.updateMatrixWorld(true);
       cityColliders.push(collider);
     }
+    // Each of those blocks as its own meshes, so it can step aside for the building.
+    const lots: BuildingLot[] = [];
+    for (const [index, block] of blocks.lots) {
+      const parts: Array<[BufferGeometry[], Material]> = [[block.solid, wallMaterial], [block.trim, facadeMaterial], [block.glow, cityMaterials.glow]];
+      const meshes = parts.map(([geometries, material]) => {
+        const mesh = new Mesh(mergeGeometries(geometries), material);
+        for (const geometry of geometries) geometry.dispose();
+        scene.add(mesh);
+        cityMeshes.push(mesh);
+        return mesh;
+      });
+      const collider = new Mesh(block.collider, colliderMaterial);
+      collider.updateMatrixWorld(true);
+      lotColliders.push(collider);
+      const lot = { width: block.width, depth: block.depth, forecourt: LOT_FORECOURT, height: LOT_HEIGHT };
+      lots.push({ door: cityDoors[index], lot, out: city.slots[index].out, block: { meshes, collider }, source: sources.get(index)! });
+    }
+    buildings.setLots(lots);
     // The walkable ground reaches past the corners of the outermost streets; the mirror floor under it too.
     const reach = Math.max(PLAZA_RADIUS, outer + PLAZA_RADIUS / 2, city.radius + 30);
     ground.scale.setScalar(reach);
@@ -2852,7 +2936,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       }
       mesh.geometry.dispose();
     }
-    for (const mesh of [...cityMeshes, ...cityColliders]) mesh.geometry.dispose();
+    buildings.dispose();
+    for (const mesh of [...cityMeshes, ...cityColliders, ...lotColliders]) mesh.geometry.dispose();
     if (interiorBannerRing) {
       interiorBannerRing.traverse((obj) => {
         if (obj instanceof Mesh) obj.geometry.dispose();

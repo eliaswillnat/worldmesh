@@ -174,9 +174,12 @@ function lobbyWorlds(): WorldEntry[] {
   return ALL_WORLDS;
 }
 
-import { getAccountId, getUsername, initAccount, onAccountChange } from './account';
+import { accountDialogPending, beforeAccountDialogOpens, getAccountId, getUsername, initAccount, onAccountChange, openAccountDialog } from './account';
+import { setBuildingWorlds } from './myBuildings';
 
 initAccount();
+// My buildings offers the worlds listed here to put a building on.
+setBuildingWorlds(lobbyWorlds());
 
 /**
  * Whether walk-mode billboard ads are mounted. Defaults to `AD_CONFIG.enabled`
@@ -441,11 +444,24 @@ document.addEventListener('click', (event) => {
   }
 });
 
+// The account dialog lives in the gallery, which walk mode covers: whenever
+// it opens (back from a platform's page, a new account choosing its
+// username), the gallery comes back first, even mid-load.
+beforeAccountDialogOpens(() => {
+  if (!walkRoot && !walkLoading) return;
+  walkAbandoned = walkLoading;
+  exitWalkMode();
+});
+
 // Walk mode is the front door. The gallery is there when someone asks for
-// the list. Back from a world entered through a door: into the lobby,
-// outside that door, however they came back.
+// the list, or comes back to the account dialog. Back from a world entered
+// through a door: into the lobby, outside that door, however they came back.
 const walkReturn = takeWalkReturn();
-if (window.location.hash !== '#list' || walkReturn) enterWalkMode(walkReturn?.spot ?? null, walkReturn?.color ?? null);
+if (accountDialogPending()) {
+  // index.html may already have dressed the page for walking.
+  document.documentElement.classList.remove('walking', 'walk-stalled');
+  history.replaceState(null, '', `${window.location.pathname}${window.location.search}#list`);
+} else if (window.location.hash !== '#list' || walkReturn) enterWalkMode(walkReturn?.spot ?? null, walkReturn?.color ?? null);
 
 // A back-button return can restore the page with the lobby still running; it
 // puts the visitor back itself, so the stored spot is no longer needed.
@@ -460,7 +476,7 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
   walkToggle.disabled = true;
   let imported = false;
   try {
-    const { createLobby } = await import('./walk/lobby');
+    const [{ createLobby }, { hubBuildingDirectory }] = await Promise.all([import('./walk/lobby'), import('./walk/buildingDirectory')]);
     imported = true;
     if (walkAbandoned) return;
     walkRoot = document.createElement('div');
@@ -477,6 +493,8 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
       private: loadWalkPrivate(),
       color,
       ads: adsEnabled(),
+      // Worlds' approved buildings (docs/specs/buildings.md); ?buildings=demo puts the demo ones on the city's first lots.
+      buildings: new URLSearchParams(window.location.search).get('buildings') === 'demo' ? 'demo' : hubBuildingDirectory,
       onPresenceCount: (count) => {
         const prev = walkOnline.dataset.count != null ? Number(walkOnline.dataset.count) : null;
         if (count === null) {
@@ -571,6 +589,8 @@ function showWalkOnline(): void {
 }
 
 function exitWalkMode(): void {
+  pauseWatch?.disconnect();
+  pauseWatch = null;
   lobbyMusic.setActive(false);
   lobby?.dispose();
   lobby = null;
@@ -832,9 +852,16 @@ function mountPauseActions(): void {
     theme.appendChild(button);
   }
 
+  // Shown while paused near a world's building (docs/specs/buildings.md §8).
+  const report = document.createElement('button');
+  report.type = 'button';
+  report.className = 'walk-report';
+  report.textContent = 'Report this building';
+  report.hidden = true;
+
   const colors = walkColors.cloneNode(true) as HTMLDivElement;
   colors.removeAttribute('id');
-  bar.append(gallery, discord, priv);
+  bar.append(gallery, discord, priv, report);
   if (lobbyMusic.supported) {
     const music = document.createElement('button');
     music.type = 'button';
@@ -855,7 +882,52 @@ function mountPauseActions(): void {
   applyThemeChoice(choice);
   showWalkColor(walkColor);
   showLobbyMusic();
+  watchPauseForBuildings(report);
 }
+
+let pauseWatch: { disconnect(): void } | null = null;
+
+/**
+ * While the pause screen is open: is a world's building standing near enough
+ * to report? Looked at as it opens, and again each second, since a building
+ * can finish loading while the screen is up.
+ */
+function watchPauseForBuildings(report: HTMLButtonElement): void {
+  pauseWatch?.disconnect();
+  const overlay = document.querySelector<HTMLElement>('.wm-overlay');
+  if (!overlay) return;
+  const update = () => {
+    const near = overlay.dataset.locked !== 'true' ? lobby?.nearbyBuilding() : null;
+    report.hidden = !near;
+    if (near) report.setAttribute('aria-label', `Report the building of ${near.name}`);
+  };
+  const observer = new MutationObserver(update);
+  observer.observe(overlay, { attributes: true, attributeFilter: ['data-locked'] });
+  const timer = window.setInterval(update, 1000);
+  pauseWatch = {
+    disconnect() {
+      observer.disconnect();
+      window.clearInterval(timer);
+    },
+  };
+  update();
+}
+
+document.addEventListener('click', (event) => {
+  const target = event.target instanceof Element ? event.target : null;
+  if (!target?.closest('.walk-report') || !lobby) return;
+  const near = lobby.nearbyBuilding();
+  if (!near) return;
+  void import('./walk/reportBuilding').then(({ openBuildingReport }) =>
+    openBuildingReport({
+      ...near,
+      light: walkIsLight(),
+      signedIn: getAccountId() !== null,
+      // Opening the account dialog takes the visitor to the gallery, where it lives.
+      onSignIn: openAccountDialog,
+    }),
+  );
+});
 
 /** An empty door in the lobby was picked: back to the list, straight into the add form. */
 function openAddFormFromWalk(): void {
@@ -892,6 +964,7 @@ async function fetchCommunityWorlds(): Promise<void> {
     ALL_WORLDS.push(...communityWorlds, ...DEMO_WORLDS);
     render();
     lobby?.setWorlds(lobbyWorlds());
+    setBuildingWorlds(lobbyWorlds());
     fetchViewCounts(ALL_WORLDS.map((w) => w.url));
   } catch {
     // Fall back to demo worlds only
