@@ -400,14 +400,26 @@ lobby asks it for a lot's building and gives it the door to dress.
 
 ### 7.1 Streaming
 
-Buildings load only near the visitor, nearest first:
+The city's **first ring**, the blocks round the hall, loads as soon as the
+city goes up, nearest first, and stays loaded: it is in view from the
+plaza and from the bird's-eye view. Beyond it, buildings load near where
+the visitor looks from: where they stand, or in the bird's-eye view the
+point on the ground the camera looks at, with a wider reach.
 
 | | Default |
 | --- | --- |
-| Start loading within | 90 m |
-| Unload beyond | 140 m |
-| Loaded at once, at most | 8 |
+| First ring (ring 0, 20 blocks) | Always loaded |
+| Beyond it, start loading within | 90 m (150 m round the bird's-eye view's point) |
+| Unload beyond | 50 m further |
+| Loaded at once beyond the first ring, at most | 8 |
 | Downloads at once, at most | 2 |
+
+**Without stutter.** Downloads run in the background; everything after
+happens one building at a time (`Buildings.inTurn`): parsing, then its
+shaders compiled ahead of showing it (`compileAsync`, both solid and
+see-through for its fade), then its textures uploaded one per frame, as a
+character's are. Only then does it fade in. Its own shape for walking on
+(§7.5) is made later, and only once the visitor is within 60 m.
 
 Until a building is ready the default block stands there, so the street is
 never missing a door. When it's ready the block swaps for the
@@ -481,6 +493,10 @@ door's opening, from 0.5 m in front of it to `PASSABLE_BACKSTOP` (12 m)
 behind it, are cut down to about 20 cm and dropped, so a wall the portal
 face was drawn on never stops anyone reaching the door. Hidden meshes
 (the portal face) are left out.
+
+Until the visitor comes within 60 m, the box below stops walkers instead,
+so a building far off costs no collision work; the shape takes over as they
+approach, one building at a time.
 
 Raycasting walkers against up to 150,000 triangles a building every frame
 would be slow, so the collider gets a bounding volume hierarchy

@@ -1,6 +1,7 @@
 import {
   Box3,
   BufferAttribute,
+  type Camera,
   BufferGeometry,
   Group,
   Mesh,
@@ -64,8 +65,15 @@ export interface BuildingDirectory {
 /** Demo buildings, standing in on the first lots of the city with `?buildings=demo`. */
 export const DEMO_BUILDINGS: readonly BuildingSource[] = demoBuildings;
 
-/** Load within, unload beyond (metres), at most so many loaded and downloading at once (§7.1). */
+/**
+ * What is loaded (§7.1): the city's first ring, round the hall, always, from
+ * the moment the city goes up; beyond it, what is within `load` metres of
+ * where the visitor looks from, up to `loaded` more, let go beyond `unload`.
+ * At most `downloads` downloading at once.
+ */
 export const STREAMING = { load: 90, unload: 140, loaded: 8, downloads: 2 };
+/** Closer than this (metres), a building's own shape stops walkers; further off, its footprint does. */
+const SHAPE_RANGE = 60;
 /**
  * The lobby is lit for its white walls, about three times as brightly as a
  * model is usually lit for: a building's colours are taken down this much,
@@ -104,6 +112,8 @@ export interface BuildingLot {
   /** The default block, shown until the building is, and its collider. */
   block: { meshes: Object3D[]; collider: Mesh };
   source: BuildingSource;
+  /** The ring of the city it stands in: 0 is round the hall. */
+  ring: number;
 }
 
 type Status = 'idle' | 'loading' | 'ready' | 'shown' | 'failed';
@@ -118,8 +128,10 @@ interface LotState extends BuildingLot {
   object: Group | null;
   /** The doorway its portal face makes, or null for the standard door. */
   shape: DoorShape | null;
-  /** What stops walkers at the building: its footprint, from the wall line back. */
+  /** What stops walkers at the building: its footprint, from the wall line back, or its own shape up close. */
   collider: Mesh | null;
+  /** Its own shape was made (or tried) for it to stop walkers. */
+  shaped: boolean;
   abort: AbortController | null;
   /** Seconds since it was shown, while it fades in. */
   shownFor: number;
@@ -140,10 +152,16 @@ export class Buildings {
   private colliderMaterial = new MeshBasicMaterial({ visible: false });
   /** A call to the directory is out: one at a time. */
   private resolving = false;
+  /** Buildings are readied (parsed, placed, warmed up) one at a time, in this queue. */
+  private readying: Promise<void> = Promise.resolve();
+  /** A building's own shape is being made: one at a time. */
+  private shaping = false;
 
   constructor(
     private scene: Scene,
     private renderer: WebGLRenderer,
+    /** What shaders are compiled for ahead of showing a building. */
+    private camera: Camera,
     enabled = true,
     private directory: BuildingDirectory | null = null,
     /** What stops walkers changed (a block gave way to its building, or came back): collision has to look again. */
@@ -163,6 +181,7 @@ export class Buildings {
       object: null,
       shape: null,
       collider: null,
+      shaped: false,
       abort: null,
       shownFor: 0,
       fading: [],
@@ -201,32 +220,40 @@ export class Buildings {
     return this.lots.flatMap((lot) => (lot.status !== 'shown' ? [lot.block.collider] : lot.collider ? [lot.collider] : []));
   }
 
-  /** Each frame, with where the visitor stands. */
-  update(dt: number, x: number, z: number): void {
+  /**
+   * Each frame, with where the visitor stands, and where they look from when
+   * that is somewhere else (the bird's-eye view: the point on the ground it
+   * looks at, and how far round it the city is in view).
+   */
+  update(dt: number, x: number, z: number, focus: { x: number; z: number; reach: number } | null = null): void {
     for (const lot of this.lots) if (lot.status === 'shown' && lot.fading.length) this.fade(lot, dt);
     this.sinceLook += dt;
     if (this.sinceLook < LOOK_SECONDS) return;
     this.sinceLook = 0;
     if (!this.enabled) return;
 
-    const distance = (lot: LotState) => Math.hypot(lot.door.group.position.x - x, lot.door.group.position.z - z);
+    const from = focus ?? { x, z, reach: STREAMING.load };
+    const distance = (lot: LotState) => Math.hypot(lot.door.group.position.x - from.x, lot.door.group.position.z - from.z);
     const byDistance = [...this.lots].sort((a, b) => distance(a) - distance(b));
-    // Keep what is in reach, nearest first, up to the budget; let the rest go.
+    // The first ring stands round the hall, in view from its plaza and from above: always kept.
+    const always = (lot: LotState) => lot.ring === 0;
+    // Beyond it, keep what is in reach, nearest first, up to the budget; let the rest go.
+    const letGo = from.reach + STREAMING.unload - STREAMING.load;
     let kept = 0;
     for (const lot of byDistance) {
-      if (lot.status === 'idle' || lot.status === 'failed') continue;
-      if (distance(lot) > STREAMING.unload || kept >= STREAMING.loaded) this.unload(lot);
+      if (lot.status === 'idle' || lot.status === 'failed' || always(lot)) continue;
+      if (distance(lot) > letGo || kept >= STREAMING.loaded) this.unload(lot);
       else kept++;
     }
-    const near = byDistance.filter((lot) => distance(lot) <= STREAMING.load);
+    const wanted = byDistance.filter((lot) => always(lot) || distance(lot) <= from.reach);
     // Ahead of loading: which files this browser has already, and where to download the rest.
-    for (const lot of near) if (lot.status === 'idle' && lot.cache === 'unknown') void this.checkCache(lot);
-    this.resolveSome(near.filter((lot) => lot.status === 'idle' && lot.cache === 'miss' && !lot.source.modelUrl && !fresh(lot.resolved)));
+    for (const lot of wanted) if (lot.status === 'idle' && lot.cache === 'unknown') void this.checkCache(lot);
+    this.resolveSome(wanted.filter((lot) => lot.status === 'idle' && lot.cache === 'miss' && !lot.source.modelUrl && !fresh(lot.resolved)));
     let downloading = this.lots.filter((lot) => lot.status === 'loading').length;
-    for (const lot of near) {
-      if (kept >= STREAMING.loaded) break;
+    for (const lot of wanted) {
+      if (!always(lot) && kept >= STREAMING.loaded) continue;
       if (lot.status !== 'idle' || downloading >= STREAMING.downloads || !canLoad(lot)) continue;
-      kept++;
+      if (!always(lot)) kept++;
       downloading++;
       void this.load(lot);
     }
@@ -235,6 +262,13 @@ export class Buildings {
       const front = lot.door.distanceInFront(x, z);
       if (front === null || front > SWAP_CLEAR) this.show(lot);
     }
+    // Up close, its own shape stops walkers instead of its footprint: the nearest first, one at a time.
+    if (this.shaping) return;
+    const walkedTo = (lot: LotState) => Math.hypot(lot.door.group.position.x - x, lot.door.group.position.z - z);
+    const next = this.lots
+      .filter((lot) => lot.status === 'shown' && !lot.shaped && walkedTo(lot) <= SHAPE_RANGE)
+      .sort((a, b) => walkedTo(a) - walkedTo(b))[0];
+    if (next) void this.shapeUp(next);
   }
 
   dispose(): void {
@@ -311,15 +345,24 @@ export class Buildings {
         data = await downloadBuilding(url, sha256, abort.signal);
         if (key) lot.cache = (await keep(key, data)) ? 'hit' : 'miss';
       }
-      const object = await parseBuilding(data);
-      const bvh = await loadBvh().catch(() => null);
-      if (abort.signal.aborted || this.disposed) {
-        disposeObject(object);
-        return;
-      }
-      checkWeight(object);
-      this.place(lot, object, bvh);
-      lot.status = 'ready';
+      const file = data;
+      await this.inTurn(async () => {
+        if (abort.signal.aborted || this.disposed) return;
+        const object = await parseBuilding(file);
+        if (abort.signal.aborted || this.disposed) {
+          disposeObject(object);
+          return;
+        }
+        try {
+          checkWeight(object);
+        } catch (error) {
+          disposeObject(object);
+          throw error;
+        }
+        this.place(lot, object);
+        await this.warmUp(lot.object!, abort.signal);
+        if (!abort.signal.aborted) lot.status = 'ready';
+      });
     } catch (error) {
       if (abort.signal.aborted) return;
       lot.status = 'failed';
@@ -329,8 +372,77 @@ export class Buildings {
     }
   }
 
+  /** One building readied at a time: parsing it, compiling its shaders and uploading its textures each wait their turn. */
+  private inTurn(work: () => Promise<void>): Promise<void> {
+    const turn = this.readying.then(work);
+    this.readying = turn.catch(() => undefined);
+    return turn;
+  }
+
+  /**
+   * Without this, the first frame that draws a building compiles all its
+   * shaders and uploads all its textures at once, and the walk freezes for
+   * a moment. Shaders compile in the background where the browser can (in
+   * both variants: solid, and see-through for its fade), then the textures
+   * go up one per frame, as a character's do.
+   */
+  private async warmUp(object: Object3D, signal: AbortSignal): Promise<void> {
+    const materials = new Set<Material>();
+    object.traverse((child) => {
+      if (!(child instanceof Mesh)) return;
+      for (const material of Array.isArray(child.material) ? child.material : [child.material]) materials.add(material);
+    });
+    await this.renderer.compileAsync(object, this.camera, this.scene);
+    if (signal.aborted) return;
+    const solid = [...materials].filter((material) => !material.transparent);
+    const seeThrough = (on: boolean) => {
+      for (const material of solid) {
+        material.transparent = on;
+        material.needsUpdate = true;
+      }
+    };
+    if (solid.length) {
+      seeThrough(true);
+      try {
+        await this.renderer.compileAsync(object, this.camera, this.scene);
+      } finally {
+        seeThrough(false);
+      }
+      if (signal.aborted) return;
+    }
+    const textures = new Set<Texture>();
+    for (const material of materials) for (const value of Object.values(material)) if (value instanceof Texture) textures.add(value);
+    for (const texture of textures) {
+      await nextFrame();
+      if (signal.aborted) return;
+      this.renderer.initTexture(texture);
+    }
+  }
+
+  /** Its own shape in place of its footprint, for walking on and round it up close. */
+  private async shapeUp(lot: LotState): Promise<void> {
+    this.shaping = true;
+    lot.shaped = true;
+    const object = lot.object;
+    try {
+      const bvh = await loadBvh();
+      // A frame to itself: the triangles and their tree are the heavy part.
+      await nextFrame();
+      if (lot.status !== 'shown' || !object || lot.object !== object) return;
+      const collider = this.shapeCollider(lot, object, bvh);
+      if (!collider) return;
+      lot.collider?.geometry.dispose();
+      lot.collider = collider;
+      this.onCollidersChange();
+    } catch (error) {
+      console.warn(`[buildings] ${lot.source.world ?? lot.source.modelUrl} is walked round as a box:`, error instanceof Error ? error.message : error);
+    } finally {
+      this.shaping = false;
+    }
+  }
+
   /** Turn, scale and move the model onto its lot, round its door (§6). */
-  private place(lot: LotState, model: Object3D, bvh: typeof Bvh | null): void {
+  private place(lot: LotState, model: Object3D): void {
     const plan = planBuilding(model, lot.lot, lot.out);
     if (plan.problem) throw new Error(plan.problem);
     const { fit, turn, bounds } = plan;
@@ -358,7 +470,9 @@ export class Buildings {
     holder.add(model);
     holder.updateMatrixWorld(true);
     lot.object = holder;
-    lot.collider = (bvh && this.shapeCollider(lot, holder, bvh)) ?? this.footprint(lot, bounds.clone().applyMatrix4(fit.matrix));
+    // Its footprint until the visitor comes close: its own shape takes over then (shapeUp).
+    lot.collider = this.footprint(lot, bounds.clone().applyMatrix4(fit.matrix));
+    lot.shaped = false;
   }
 
   /**
@@ -459,6 +573,7 @@ export class Buildings {
     }
     lot.collider?.geometry.dispose();
     lot.collider = null;
+    lot.shaped = false;
     if (lot.object) {
       lot.object.removeFromParent();
       disposeObject(lot.object, this.studio);
@@ -469,6 +584,14 @@ export class Buildings {
     if (lot.status !== 'failed') lot.status = 'idle';
     if (wasShown) this.onCollidersChange();
   }
+}
+
+/** Roughly one frame at 60 fps. */
+const FRAME_MS = 16;
+
+/** Let the page draw a frame, so the work before and after lands in different ones (a timer: requestAnimationFrame stops in VR). */
+function nextFrame(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, FRAME_MS));
 }
 
 let bvhModule: Promise<typeof Bvh> | null = null;
