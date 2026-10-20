@@ -5,6 +5,7 @@
 ## For AI coding agents
 
 - [Connect a Three.js world to WorldMesh](https://worldmesh.net/connect.md): step-by-step instructions to follow in a creator's project.
+- [Make a building](https://worldmesh.net/build-a-building): a world's own building in the hub city, one GLB with a face whose material is named `portal`.
 
 ## Vision and open protocol
 

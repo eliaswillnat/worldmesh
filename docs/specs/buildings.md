@@ -1,9 +1,10 @@
 # Buildings: a world's own front in the hub city
 
-**Status:** Draft 0.5, October 2026. Steps 1 to 4 (§9) are built: demo
+**Status:** Draft 0.5, October 2026. Every step (§9) is built: demo
 buildings stand on the city's first lots with `?buildings=demo`, accounts
 have My buildings, a building linked to a world and approved stands in place
-of that world's block, and visitors can report one.
+of that world's block, visitors can report one, and creators have a guide at
+[worldmesh.net/build-a-building](https://worldmesh.net/build-a-building).
 **Owner:** Elias Willnat.
 **Builds on:** [avatar-wallet.md](../avatar-wallet.md) (where models live and
 how they load), [doorway.md](doorway.md) (what a door can show and how
@@ -515,8 +516,11 @@ metallic materials get a soft studio environment of their own
 4. **Reports and hiding.** *Built.* `building_report`, `/report`, the pause
    screen's *Report this building*, reports on the dashboard and the review
    page, *Dismiss reports*, and the emails to reviewers and owners.
-5. **Creator docs.** A page on worldmesh.net (next to `creators.html`) with
-   the Blender steps, the limits and a downloadable example building.
+5. **Creator docs.** *Built.* `/build-a-building`
+   (`apps/hub/public/build-a-building.html`, linked from `creators.html`,
+   the footer and My buildings): the rule, the limits, how a building is
+   fitted, the Blender steps, the demo gatehouse to download, and linking
+   it to a world.
 
 ## 10. Open questions
 

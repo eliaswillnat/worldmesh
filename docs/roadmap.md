@@ -57,8 +57,9 @@ push hosting costs onto WorldMesh instead of onto the creators.
    hub city with their own model, whose `portal` face becomes the door.
    Models stay on Sketchfab or the creator's PDS, like characters. Saving,
    linking to a world through its manifest, review, the city showing
-   approved ones, and reporting and hiding them are built; a page for
-   creators comes next. See [specs/buildings.md](specs/buildings.md).
+   approved ones, reporting and hiding them, and a guide for creators
+   (worldmesh.net/build-a-building) are built. See
+   [specs/buildings.md](specs/buildings.md).
 
 ## Open questions
 
