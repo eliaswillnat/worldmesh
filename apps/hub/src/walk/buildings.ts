@@ -32,24 +32,27 @@ import demoBuildings from './demoBuildings.json';
 export interface BuildingSource {
   /** Where to download it. A world's approved building is resolved through the directory instead, just before. */
   modelUrl?: string;
-  /** SHA-256 of the approved file, as hex. The building shows only if the download matches. */
+  /** SHA-256 of a pinned file, as hex: the building shows only if the download matches. Unpinned: any file. */
   sha256?: string;
-  /** The world (its canonical URL) whose approved building this is. */
+  /** The world (its canonical URL) whose building this is. */
   world?: string;
 }
 
-/** A world's approved building, as the directory resolves it. */
+/** A world's building, as the directory resolves it. */
 export interface ResolvedBuilding {
   modelUrl: string;
   /** Unix ms when `modelUrl` stops working, or null. */
   expiresAt: number | null;
-  sha256: string;
+  /** The hash a reviewer pinned the file to, or null. */
+  sha256: string | null;
+  /** What the platform says the file is: a blob CID (content-addressed), a GLB size, or null. */
+  version: string | null;
 }
 
-/** Where worlds' approved buildings are downloaded from (§7.2; ./buildingDirectory.ts on the hub). */
+/** Where worlds' buildings are downloaded from (§7.2; ./buildingDirectory.ts on the hub). */
 export interface BuildingDirectory {
-  /** Each world (canonical URL) with an approved building, and the SHA-256 its file must have. */
-  approved(): Promise<Map<string, string>>;
+  /** Each world (canonical URL) with a building, and the SHA-256 its file is pinned to, or null. */
+  approved(): Promise<Map<string, string | null>>;
   /** Where to download these worlds' buildings now. Worlds without one are missing from the answer. */
   resolve(worlds: string[]): Promise<Map<string, ResolvedBuilding>>;
 }
@@ -265,8 +268,9 @@ export class Buildings {
       .then((found) => {
         for (const lot of asking) {
           const building = found.get(lot.source.world!);
-          // No longer approved, or a different file than the city was told: the block stays.
-          if (building && building.sha256 === lot.source.sha256) lot.resolved = building;
+          // Gone, or pinned to a different file than the city was told: the block stays.
+          // Unpinned since (its owner replaced the file), it shows the new one.
+          if (building && (building.sha256 === null || building.sha256 === lot.source.sha256)) lot.resolved = building;
           else if (lot.status === 'idle') lot.status = 'failed';
         }
       })
@@ -285,8 +289,11 @@ export class Buildings {
     lot.abort = abort;
     const label = lot.source.world ?? lot.source.modelUrl;
     try {
-      const sha256 = lot.source.sha256;
-      let data = lot.cache === 'hit' && sha256 ? await cached(sha256, true) : null;
+      // The hash the file must have: as resolved just now, else as the city was told.
+      const sha256 = lot.resolved ? (lot.resolved.sha256 ?? undefined) : lot.source.sha256;
+      // Kept under its pinned hash, or under its blob's CID, which names the content just as well.
+      const key = sha256 ?? contentKey(lot.resolved?.version ?? null);
+      let data = key && (lot.cache === 'hit' || !sha256) ? await cached(key, true, sha256) : null;
       if (!data) {
         const url = lot.source.modelUrl ?? (fresh(lot.resolved) ? lot.resolved!.modelUrl : null);
         if (!url) {
@@ -296,7 +303,7 @@ export class Buildings {
           return;
         }
         data = await downloadBuilding(url, sha256, abort.signal);
-        if (sha256) lot.cache = (await keep(sha256, data)) ? 'hit' : 'miss';
+        if (key) lot.cache = (await keep(key, data)) ? 'hit' : 'miss';
       }
       const object = await parseBuilding(data);
       if (abort.signal.aborted || this.disposed) {
@@ -454,29 +461,38 @@ async function buildingCache(): Promise<Cache | null> {
   }
 }
 
-const cacheKey = (sha256: string) => new URL(`/__buildings/${sha256}.glb`, location.href).toString();
+const cacheKey = (key: string) => new URL(`/__buildings/${key}.glb`, location.href).toString();
 
-/** Whether this browser holds the file with this hash; with `read`, its bytes, checked again. */
-async function cached(sha256: string, read: true): Promise<ArrayBuffer | null>;
-async function cached(sha256: string): Promise<boolean>;
-async function cached(sha256: string, read = false): Promise<ArrayBuffer | boolean | null> {
+/**
+ * A key naming an unpinned file's content: its blob CID on AT Protocol. A
+ * Sketchfab GLB's size is no such name (the file can change, the size not),
+ * so those are downloaded each visit.
+ */
+function contentKey(version: string | null): string | null {
+  return version && /^[a-z0-9]+$/i.test(version) ? `cid-${version}` : null;
+}
+
+/** Whether this browser holds the file under `key`; with `read`, its bytes, checked against `sha256` when given. */
+async function cached(key: string, read: true, sha256?: string): Promise<ArrayBuffer | null>;
+async function cached(key: string): Promise<boolean>;
+async function cached(key: string, read = false, sha256?: string): Promise<ArrayBuffer | boolean | null> {
   try {
-    const response = await (await buildingCache())?.match(cacheKey(sha256));
+    const response = await (await buildingCache())?.match(cacheKey(key));
     if (!read) return !!response;
     if (!response) return null;
     const data = await response.arrayBuffer();
-    return (await sha256Hex(data)) === sha256.toLowerCase() ? data : null;
+    return !sha256 || (await sha256Hex(data)) === sha256.toLowerCase() ? data : null;
   } catch {
     return read ? null : false;
   }
 }
 
 /** Keeps a checked file for next time, letting the oldest go past CACHE_KEEP. */
-async function keep(sha256: string, data: ArrayBuffer): Promise<boolean> {
+async function keep(key: string, data: ArrayBuffer): Promise<boolean> {
   try {
     const cache = await buildingCache();
     if (!cache) return false;
-    await cache.put(cacheKey(sha256), new Response(data, { headers: { 'Content-Type': 'model/gltf-binary' } }));
+    await cache.put(cacheKey(key), new Response(data, { headers: { 'Content-Type': 'model/gltf-binary' } }));
     const keys = await cache.keys();
     for (const old of keys.slice(0, Math.max(0, keys.length - CACHE_KEEP))) await cache.delete(old);
     return true;

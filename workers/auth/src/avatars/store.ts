@@ -278,15 +278,19 @@ export function linkOf(db: D1Database, worldUrl: string) {
   return db.prepare('select * from building_link where world_url = ?1').bind(worldUrl).first<BuildingLinkRow>();
 }
 
-/** The world shows `buildingId` once reviewed: a new link, or one that replaces the world's previous building. */
+/**
+ * The world shows `buildingId` from now on: a new link, or one that replaces
+ * the world's previous building. No review first (docs/specs/buildings.md
+ * §5.2): reports and hiding take a bad one down.
+ */
 export function saveLink(db: D1Database, worldUrl: string, buildingId: string) {
   const now = Date.now();
   return db
     .prepare(
       `insert into building_link (world_url, building_id, status, checked_at, created_at, updated_at)
-       values (?1, ?2, 'pending', ?3, ?3, ?3)
+       values (?1, ?2, 'approved', ?3, ?3, ?3)
        on conflict (world_url) do update set
-         building_id = excluded.building_id, status = 'pending', sha256 = null, version = null, portal_json = null,
+         building_id = excluded.building_id, status = 'approved', sha256 = null, version = null, portal_json = null,
          reason = null, checked_at = excluded.checked_at, reviewed_at = null, reviewed_by = null,
          created_at = excluded.created_at, updated_at = excluded.updated_at`,
     )
@@ -294,7 +298,7 @@ export function saveLink(db: D1Database, worldUrl: string, buildingId: string) {
     .run();
 }
 
-/** Linked again while it waits or stands: nothing to review again. */
+/** Linked again while it stands: nothing changes. */
 export function touchLink(db: D1Database, worldUrl: string) {
   const now = Date.now();
   return db.prepare('update building_link set checked_at = ?2, updated_at = ?2 where world_url = ?1').bind(worldUrl, now).run();
@@ -314,8 +318,8 @@ export function unlink(db: D1Database, userId: string, buildingId: string, world
 /** Worlds whose building visitors may see, with the file it must be. */
 export function approvedLinks(db: D1Database) {
   return db
-    .prepare("select world_url, sha256 from building_link where status = 'approved' and sha256 is not null order by world_url")
-    .all<{ world_url: string; sha256: string }>()
+    .prepare("select world_url, sha256 from building_link where status = 'approved' order by world_url")
+    .all<{ world_url: string; sha256: string | null }>()
     .then((r) => r.results);
 }
 
@@ -330,21 +334,21 @@ export function approvedFor(db: D1Database, worldUrls: string[]) {
        from building_link l
        join building b on b.id = l.building_id
        join avatar_connection c on c.id = b.connection_id
-       where l.world_url in (select value from json_each(?1)) and l.status = 'approved' and l.sha256 is not null`,
+       where l.world_url in (select value from json_each(?1)) and l.status = 'approved'`,
     )
     .bind(JSON.stringify(worldUrls))
     .all<ApprovedRow>()
     .then((r) => r.results);
 }
 
-/** An approved building whose file changed: back to review (§5.3). */
-export function sendBackToReview(db: D1Database, worldUrl: string, sha256: string, reason: string) {
+/**
+ * A reviewer pinned the file, and its owner replaced it since: the new one
+ * stands instead, unpinned. Nobody reviews it again first (§5.3).
+ */
+export function unpin(db: D1Database, worldUrl: string, version: string) {
   return db
-    .prepare(
-      `update building_link set status = 'pending', reason = ?3, updated_at = ?4
-       where world_url = ?1 and status = 'approved' and sha256 = ?2`,
-    )
-    .bind(worldUrl, sha256, reason, Date.now())
+    .prepare("update building_link set sha256 = null, version = null, updated_at = ?3 where world_url = ?1 and version = ?2 and status = 'approved'")
+    .bind(worldUrl, version, Date.now())
     .run();
 }
 
@@ -433,7 +437,8 @@ interface JoinedConnection {
 
 export interface ApprovedRow extends BuildingRow, JoinedConnection {
   world_url: string;
-  sha256: string;
+  /** Pinned by a reviewer, or null: shown as it is on its platform. */
+  sha256: string | null;
   version: string | null;
 }
 

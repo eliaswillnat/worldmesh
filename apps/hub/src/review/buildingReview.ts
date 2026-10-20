@@ -59,7 +59,7 @@ interface Report {
   reason: ReportReason;
   note: string | null;
   /** About the file standing now, rather than one approved before it. */
-  sameFile: boolean;
+  sameFile: boolean | null;
   createdAt: number;
   reporter: string;
 }
@@ -201,7 +201,7 @@ function reportsSection(details: Details): HTMLElement {
   for (const report of details.reports) {
     const item = el('p');
     item.append(el('strong', REASONS[report.reason]), ` · ${when(report.createdAt)} · ${report.reporter}`);
-    if (!report.sameFile) item.append(el('span', ' · about a file approved before this one', 'warn'));
+    if (report.sameFile === false) item.append(el('span', ' · about a file approved before this one', 'warn'));
     section.append(item);
     if (report.note) section.append(el('p', `“${report.note}”`, 'muted'));
   }
@@ -283,7 +283,7 @@ function renderDecision(section: HTMLElement, details: Details, check: Check | n
     }),
   );
   section.append(
-    el('p', 'Approving pins this exact file. If its owner replaces it, the building comes down until it is reviewed again.', 'muted'),
+    el('p', 'Buildings stand without review; approving pins this exact file, so visitors only see it as you saw it. If its owner replaces it, the new file stands, unpinned. Rejecting takes it down until they link it again; hiding, for good.', 'muted'),
     approve,
   );
   const reason = el('textarea') as HTMLTextAreaElement;

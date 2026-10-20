@@ -273,7 +273,7 @@ const STATUS_TEXT: Record<BuildingWorld['status'], string> = {
   hidden: 'Taken down',
 };
 
-/** Which buildings stand on which worlds, and how their review went. */
+/** Which buildings stand on which worlds, and any taken down. */
 function worldsList(linked: { building: SavedBuilding; world: BuildingWorld }[]): HTMLElement {
   const box = document.createElement('div');
   box.className = 'building-worlds';
@@ -310,13 +310,10 @@ function worldsList(linked: { building: SavedBuilding; world: BuildingWorld }[])
       box.append(reason);
     }
   }
-  if (linked.some(({ world }) => world.status === 'pending')) {
-    box.append(note('A person looks at each building before it stands in the city. That usually takes a day or two.'));
-  }
   return box;
 }
 
-/** Putting a building on one of the worlds WorldMesh lists, for review. */
+/** Putting a building on one of the worlds WorldMesh lists: it stands in the city at once. */
 function linkForm(building: SavedBuilding, saved: SavedBuilding[]): HTMLElement {
   const form = document.createElement('form');
   form.className = 'wallet-upload';
@@ -366,7 +363,7 @@ function linkForm(building: SavedBuilding, saved: SavedBuilding[]): HTMLElement 
     title,
     ...(saved.length > 1 ? [which] : [note(`Building: ${building.name || 'Unnamed'}`)]),
     row,
-    note("A person looks at the building before it stands in the city, in place of the world's block."),
+    note("It stands in the city at once, in place of the world's block."),
     cancel,
   );
   form.addEventListener('submit', (event) => {
@@ -679,7 +676,7 @@ async function link(saved: SavedBuilding, world: string): Promise<void> {
     applyList(await building<BuildingList>('/link', { buildingId: saved.id, world: world.trim() }));
     linking = null;
     linkWorld = '';
-    message = { text: `${saved.name || 'Your building'} is linked. It stands in the city once it has been reviewed.`, error: false };
+    message = { text: `${saved.name || 'Your building'} now stands in the city, in place of the world's block.`, error: false };
   });
 }
 

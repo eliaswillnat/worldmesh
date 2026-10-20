@@ -565,6 +565,10 @@ const TALK_NOTES: Record<MicState, string> = {
   denied: 'microphone blocked',
   unavailable: 'voice is not available',
 };
+/** Microphone level (presence.micLevel) above which you count as speaking, not just holding the key. */
+const SPEAKING_LEVEL = 0.08;
+/** The bars keep moving this long after the last loud moment. */
+const SPEAKING_HOLD_MS = 250;
 
 /**
  * Walk mode: the directory as a place. You arrive inside the citadel, a tall
@@ -974,7 +978,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   // Collision snapshots its colliders: a block giving way to its building has to be looked at again.
   const buildings = new Buildings(scene, renderer, !alias, directory, () => world.refreshColliders());
   /** World (canonical URL) → the hash of its approved building, once the directory answered. */
-  let approvedBuildings = new Map<string, string>();
+  let approvedBuildings = new Map<string, string | null>();
   /** How far out the city starts, once it is built, to build it again when buildings arrive. */
   let cityOuter: number | null = null;
   /** The list the doors were last laid out from, and where that put them. */
@@ -1398,6 +1402,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   let talkHeld = false;
   let micState: MicState = 'off';
   let talkNoteUntil = 0;
+  /** Until when the bars keep moving: a short pause between words does not stop them. */
+  let speakingUntil = 0;
   const talkPoint = new Vector3();
 
   function talk(held: boolean): void {
@@ -1488,6 +1494,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       talkBadge.classList.remove('visible');
       return;
     }
+    if (micState === 'live' && (presence?.micLevel ?? 0) > SPEAKING_LEVEL) speakingUntil = now + SPEAKING_HOLD_MS;
+    talkBadge.classList.toggle('speaking', now < speakingUntil);
     const [x, y, z] = world.getState().position;
     talkPoint.set(x, y + 2.45, z).project(camera);
     if (talkPoint.z > 1) {
@@ -2834,8 +2842,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     if (options.buildings === 'demo') DEMO_BUILDINGS.slice(0, cityDoors.length).forEach((source, i) => sources.set(i, source));
     else cityDoors.forEach((door, i) => {
       const url = door.world && canonicalUrl(door.world.url);
-      const sha256 = url && approvedBuildings.get(url);
-      if (url && sha256) sources.set(i, { world: url, sha256 });
+      if (url && approvedBuildings.has(url)) sources.set(i, { world: url, sha256: approvedBuildings.get(url) ?? undefined });
     });
     const blocks = buildAvenues(city, cityDoors.length, new Set(sources.keys()));
     // Each storefront's sign hangs from its door, so it comes and goes with the world.
