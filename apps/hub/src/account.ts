@@ -67,13 +67,39 @@ const PROFILE_ICON =
 /** The mobile menu button shows the same profile icon, or the avatar once signed in. */
 const mobileProfile = document.querySelector<HTMLSpanElement>('#mobile-profile');
 
+/** Called right before the dialog opens, so the page can make room for it. */
+let beforeOpen: () => void = () => {};
+
+/**
+ * The dialog lives in the gallery, which walk mode hides: shown over the
+ * lobby it would be invisible and still take every tap. The page passes what
+ * to do first (leave walk mode).
+ */
+export function beforeAccountDialogOpens(listener: () => void): void {
+  beforeOpen = listener;
+}
+
+/**
+ * Whether the dialog is open, or about to open once the account is known
+ * (back from a platform's page opened in My characters or My buildings).
+ * The page starts in the gallery then, not in walk mode.
+ */
+export function accountDialogPending(): boolean {
+  return dialog.open || openWallet || openBuildings;
+}
+
+function showDialog(): void {
+  beforeOpen();
+  if (!dialog.open) dialog.showModal();
+}
+
 export function openAccountDialog(): void {
   message = null;
   atprotoOpen = false;
   signedInView = 'account';
   if (view === 'forgot' || (view === 'reset' && !resetToken)) view = 'sign-in';
   renderDialog();
-  dialog.showModal();
+  showDialog();
   if (!user && !providers) void loadProviders();
 }
 
@@ -146,20 +172,20 @@ export function initAccount(): void {
       }
       message = returnTo ? { text: 'Log in to continue.', error: false } : null;
       renderDialog();
-      if (!dialog.open) dialog.showModal();
+      showDialog();
       if (!providers) void loadProviders();
     });
   } else if (outcome === 'error') {
     setHint(false);
     message = { text: 'Sign-in did not complete. Please try again.', error: true };
     renderDialog();
-    dialog.showModal();
+    showDialog();
     void loadProviders();
   } else if (outcome === 'reset') {
     view = resetToken ? 'reset' : 'forgot';
     if (!resetToken) message = { text: 'That reset link is invalid or has expired.', error: true };
     renderDialog();
-    dialog.showModal();
+    showDialog();
   } else if (outcome === 'verified') {
     setHint(true);
     void refresh(true);
@@ -184,11 +210,11 @@ async function refresh(openIfNoUsername: boolean): Promise<void> {
       openWallet = false;
       openBuildings = false;
       renderDialog();
-      dialog.showModal();
+      showDialog();
     }
     if (user && !user.username && openIfNoUsername) {
       renderDialog();
-      dialog.showModal();
+      showDialog();
     }
   } catch {
     // Offline or the account service is down: stay signed out in the UI.

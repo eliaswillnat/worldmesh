@@ -174,7 +174,7 @@ function lobbyWorlds(): WorldEntry[] {
   return ALL_WORLDS;
 }
 
-import { getAccountId, getUsername, initAccount, onAccountChange, openAccountDialog } from './account';
+import { accountDialogPending, beforeAccountDialogOpens, getAccountId, getUsername, initAccount, onAccountChange, openAccountDialog } from './account';
 
 initAccount();
 
@@ -441,11 +441,24 @@ document.addEventListener('click', (event) => {
   }
 });
 
+// The account dialog lives in the gallery, which walk mode covers: whenever
+// it opens (back from a platform's page, a new account choosing its
+// username), the gallery comes back first, even mid-load.
+beforeAccountDialogOpens(() => {
+  if (!walkRoot && !walkLoading) return;
+  walkAbandoned = walkLoading;
+  exitWalkMode();
+});
+
 // Walk mode is the front door. The gallery is there when someone asks for
-// the list. Back from a world entered through a door: into the lobby,
-// outside that door, however they came back.
+// the list, or comes back to the account dialog. Back from a world entered
+// through a door: into the lobby, outside that door, however they came back.
 const walkReturn = takeWalkReturn();
-if (window.location.hash !== '#list' || walkReturn) enterWalkMode(walkReturn?.spot ?? null, walkReturn?.color ?? null);
+if (accountDialogPending()) {
+  // index.html may already have dressed the page for walking.
+  document.documentElement.classList.remove('walking', 'walk-stalled');
+  history.replaceState(null, '', `${window.location.pathname}${window.location.search}#list`);
+} else if (window.location.hash !== '#list' || walkReturn) enterWalkMode(walkReturn?.spot ?? null, walkReturn?.color ?? null);
 
 // A back-button return can restore the page with the lobby still running; it
 // puts the visitor back itself, so the stored spot is no longer needed.
@@ -907,11 +920,8 @@ document.addEventListener('click', (event) => {
       ...near,
       light: walkIsLight(),
       signedIn: getAccountId() !== null,
-      // The account dialog lives in the gallery: walk mode would cover it.
-      onSignIn: () => {
-        exitWalkMode();
-        openAccountDialog();
-      },
+      // Opening the account dialog takes the visitor to the gallery, where it lives.
+      onSignIn: openAccountDialog,
     }),
   );
 });
