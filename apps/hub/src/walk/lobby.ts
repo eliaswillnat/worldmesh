@@ -205,6 +205,8 @@ const FLOOR_SIZE = 600;
 const HALL_RADIUS = 59;
 /** How far the walkable plaza reaches around the lobby. */
 const PLAZA_RADIUS = 120;
+/** From the bird's-eye view, buildings this far round where it looks are loaded (metres): it sees a wide stretch of the city. */
+const AERIAL_BUILDING_REACH = 150;
 const DOOR_SPACING = 4.2;
 /** A tall drum under a glass dome, with the doors around the inside of its base. */
 const CITADEL_HEIGHT = DRUM_HEIGHT;
@@ -864,6 +866,14 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const cameraEye = new Vector3();
   const cameraBack = new Vector3();
   const faceNormal = new Vector3();
+  const aerialLook = new Vector3();
+  /** Where the bird's-eye camera looks on the ground, and how far round it buildings are loaded. */
+  function aerialFocus(): { x: number; z: number; reach: number } {
+    camera.getWorldDirection(aerialLook);
+    // Looking down: where the view meets the street. Level or up (it never is): straight under the camera.
+    const along = aerialLook.y < -0.05 ? -camera.position.y / aerialLook.y : 0;
+    return { x: camera.position.x + aerialLook.x * along, z: camera.position.z + aerialLook.z * along, reach: AERIAL_BUILDING_REACH };
+  }
   /**
    * A world's doorway is open (walk in and you go through), so it is no
    * collider and the camera's boom would pass it, stopping only at the
@@ -976,7 +986,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const lotColliders: Mesh[] = [];
   const directory = options.buildings && options.buildings !== 'demo' ? options.buildings : null;
   // Collision snapshots its colliders: a block giving way to its building has to be looked at again.
-  const buildings = new Buildings(scene, renderer, !alias, directory, () => world.refreshColliders());
+  const buildings = new Buildings(scene, renderer, camera, !alias, directory, () => world.refreshColliders());
   /** World (canonical URL) → the hash of its approved building, once the directory answered. */
   let approvedBuildings = new Map<string, string | null>();
   /** How far out the city starts, once it is built, to build it again when buildings arrive. */
@@ -1158,7 +1168,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         if (!level(door)) continue;
         if (!warping && !emerging && door.contains(x, z)) enter(door);
       }
-      buildings.update(dt, x, z);
+      buildings.update(dt, x, z, world.getViewMode() === 'aerial' ? aerialFocus() : null);
       walkThrough.update();
       if (world.getViewMode() === 'third' && !renderer.xr.isPresenting) keepCameraOutOfDoorways(feet.set(x, y, z));
       let near: Door | null = null;
@@ -2891,7 +2901,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       collider.updateMatrixWorld(true);
       lotColliders.push(collider);
       const lot = { width: block.width, depth: block.depth, forecourt: LOT_FORECOURT, height: LOT_HEIGHT };
-      lots.push({ door: cityDoors[index], lot, out: city.slots[index].out, block: { meshes, collider }, source: sources.get(index)! });
+      lots.push({ door: cityDoors[index], lot, out: city.slots[index].out, block: { meshes, collider }, source: sources.get(index)!, ring: city.slots[index].ring });
     }
     buildings.setLots(lots);
     // The walkable ground reaches past the corners of the outermost streets; the mirror floor under it too.
