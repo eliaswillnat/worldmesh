@@ -5,7 +5,6 @@ import worker, { type Env } from '../src/index';
 import { createAuth } from '../src/auth';
 import { atprotoClientId, BUILDING_UPLOAD_SCOPE, UPLOAD_SCOPE } from '../src/avatars/atproto';
 import { fromBase64url, pkceChallenge, seal } from '../src/avatars/crypto';
-import { recheckStale } from '../src/avatars/buildingLinks';
 import { sharePayload, type SignedShare } from '../src/avatars/share';
 
 const ORIGIN = 'https://worldmesh.net';
@@ -1362,12 +1361,6 @@ describe('My buildings', { timeout: 15_000 }, () => {
 
 const SHA = 'a'.repeat(64);
 
-/** The world's manifest: `building` names one, null serves one without, undefined serves none. */
-function manifest(building: string | null | undefined) {
-  route('GET', `${WORLD}/.well-known/worldmesh.json`, () => (building === undefined ? new Response('Not found', { status: 404 }) : reply({ worldmesh: 1, name: 'Forest', ...(building ? { building } : {}) })));
-  route('GET', `${WORLD}/worldmesh.json`, () => new Response('Not found', { status: 404 }));
-}
-
 /** A signed-in user with a saved Sketchfab building. */
 async function ownerWithBuilding(email: string) {
   const owner = await signedInUser(email);
@@ -1383,7 +1376,6 @@ function sketchfabDownload(size = 4_000_000) {
 
 async function linked(email: string) {
   const owner = await ownerWithBuilding(email);
-  manifest(owner.buildingId);
   expect((await post('/api/account/building/link', owner.cookie, { buildingId: owner.buildingId, world: `${WORLD}/` })).status).toBe(200);
   return owner;
 }
@@ -1421,25 +1413,14 @@ describe('Buildings on worlds', { timeout: 20_000 }, () => {
     await env.DB.prepare('delete from building_link').run();
   });
 
-  it('links a building only once the world’s manifest names it, and only for its owner', async () => {
+  it('links a building for review, its owner only, without asking anything of the world', async () => {
     const owner = await ownerWithBuilding('links-owner@example.com');
     const link = (world: unknown, cookie = owner.cookie, buildingId = owner.buildingId) =>
       post('/api/account/building/link', cookie, { buildingId, world });
 
-    manifest(undefined);
-    const none = await link(WORLD);
-    expect(none.status).toBe(409);
-    expect(((await none.json()) as { error: string }).error).toContain(`"building": "${owner.buildingId}"`);
-    manifest(null);
-    expect(((await (await link(WORLD)).json()) as { error: string }).error).toMatch(/does not name this building/);
-    manifest('bld_someoneelse000000');
-    expect((await link(WORLD)).status).toBe(409);
-
     expect((await link('http://forest.worlds.example.org')).status).toBe(400);
     expect((await link('not a url')).status).toBe(400);
-    expect((await link('https://10.0.0.1/world')).status).toBe(400);
 
-    manifest(owner.buildingId);
     const other = await signedInUser('links-other@example.com');
     expect((await link(WORLD, other.cookie)).status).toBe(404);
     expect((await post('/api/account/building/link', owner.cookie, { buildingId: owner.buildingId, world: WORLD }, 'https://evil.example')).status).toBe(403);
@@ -1447,8 +1428,9 @@ describe('Buildings on worlds', { timeout: 20_000 }, () => {
     // The address is kept as the hub compares them: lower-case host, no trailing slash or hash.
     const ok = (await (await link('https://Forest.Worlds.Example.org/#spawn')).json()) as BuildingList;
     expect(ok.buildings[0].worlds).toEqual([{ url: WORLD, status: 'pending', reason: null }]);
-    // Waiting for review: not in the city yet.
+    // Waiting for review: not in the city yet. Nothing was fetched from the world.
     expect(await approvedWorlds()).toEqual([]);
+    expect(calls.some((request) => new URL(request.url).hostname === 'forest.worlds.example.org')).toBe(false);
 
     // Someone else can't take it off; its owner can.
     await post('/api/account/building/unlink', other.cookie, { buildingId: owner.buildingId, world: WORLD });
@@ -1503,7 +1485,6 @@ describe('Buildings on worlds', { timeout: 20_000 }, () => {
     await decide(reviewerUser.cookie, { buildingId: owner.buildingId, action: 'reject', reason: 'The door is  behind a wall.' });
     expect((await buildingList(owner.cookie)).buildings[0].worlds).toEqual([{ url: WORLD, status: 'rejected', reason: 'The door is behind a wall.' }]);
     // Linking it again sends it back for review.
-    manifest(owner.buildingId);
     await post('/api/account/building/link', owner.cookie, { buildingId: owner.buildingId, world: WORLD });
     expect((await buildingList(owner.cookie)).buildings[0].worlds[0]).toMatchObject({ status: 'pending', reason: null });
 
@@ -1552,7 +1533,6 @@ describe('Buildings on worlds', { timeout: 20_000 }, () => {
     let record = buildingRecord('3kcity', 'City Gate');
     route('GET', `${PDS}/xrpc/com.atproto.repo.getRecord`, () => reply(record));
     const buildingId = ((await (await post('/api/account/building/collect', cookie, { connectionId, modelId: record.uri })).json()) as BuildingList).buildings[0].id;
-    manifest(buildingId);
     await post('/api/account/building/link', cookie, { buildingId, world: WORLD });
     const reviewerUser = await reviewer();
     await decide(reviewerUser.cookie, { buildingId, action: 'approve', sha256: SHA, version: 'bafkreibuildingmodel' });
@@ -1567,25 +1547,6 @@ describe('Buildings on worlds', { timeout: 20_000 }, () => {
     record = { ...record, value: { ...record.value, model: { ...record.value.model, ref: { $link: 'bafkreianothermodel' } } } };
     expect(await resolveWorld()).toEqual({});
     expect((await buildingList(cookie)).buildings[0].worlds[0].status).toBe('pending');
-  });
-
-  it('takes a building down once its world’s manifest stops naming it, but not while the site is down', async () => {
-    const owner = await linked('recheck-owner@example.com');
-    const reviewerUser = await reviewer();
-    await decide(reviewerUser.cookie, { buildingId: owner.buildingId, action: 'approve', sha256: SHA });
-    const age = () => env.DB.prepare('update building_link set checked_at = ?1').bind(Date.now() - 2 * 24 * 60 * 60_000).run();
-
-    await age();
-    route('GET', `${WORLD}/.well-known/worldmesh.json`, () => new Response('down', { status: 503 }));
-    route('GET', `${WORLD}/worldmesh.json`, () => new Response('down', { status: 503 }));
-    await recheckStale(env, ORIGIN);
-    expect(await approvedWorlds()).toHaveLength(1);
-
-    await age();
-    manifest(null);
-    await recheckStale(env, ORIGIN);
-    expect(await approvedWorlds()).toEqual([]);
-    expect((await buildingList(owner.cookie)).buildings[0].worlds).toEqual([]);
   });
 
   it('lets signed-in visitors report a standing building once, and reviewers dismiss reports or act on them', async () => {
@@ -1678,18 +1639,23 @@ describe('Buildings on worlds', { timeout: 20_000 }, () => {
     await env.DB.prepare('delete from building_report').run();
   });
 
-  it('gives a world to the building its manifest names now, and lets links go with their building', async () => {
+  it('keeps a world for the building linked to it until a reviewer rejects it, and lets links go with their building', async () => {
     const first = await linked('first-owner@example.com');
     const reviewerUser = await reviewer();
     await decide(reviewerUser.cookie, { buildingId: first.buildingId, action: 'approve', sha256: SHA });
 
-    // The world's manifest now names someone else's building: the world changes hands, back to review.
+    // Someone else can't take over a world whose building stands there, or waits for review.
     const second = await ownerWithBuilding('second-owner@example.com');
-    manifest(second.buildingId);
+    const taken = await post('/api/account/building/link', second.cookie, { buildingId: second.buildingId, world: WORLD });
+    expect(taken.status).toBe(409);
+    expect(((await taken.json()) as { error: string }).error).toMatch(/already has a building/);
+    expect(await approvedWorlds()).toHaveLength(1);
+
+    // Once the reviewer rejects the first, the world is free again.
+    await decide(reviewerUser.cookie, { buildingId: first.buildingId, action: 'reject', reason: 'Not the creator.' });
     await post('/api/account/building/link', second.cookie, { buildingId: second.buildingId, world: WORLD });
     expect((await buildingList(first.cookie)).buildings[0].worlds).toEqual([]);
     expect((await buildingList(second.cookie)).buildings[0].worlds).toEqual([{ url: WORLD, status: 'pending', reason: null }]);
-    expect(await approvedWorlds()).toEqual([]);
 
     await post('/api/account/building/remove', second.cookie, { buildingId: second.buildingId });
     expect((await env.DB.prepare('select count(*) as n from building_link').first<{ n: number }>())?.n).toBe(0);

@@ -30,8 +30,8 @@ there.
 creator                      hub (worldmesh.net)                          visitor's browser
  Blender / AI tool
    └─ GLB with a `portal` ──► My buildings (pointer in D1) ─┐
-      material, uploaded      link to a world ◄── world's   │
-      to Sketchfab or PDS     worldmesh.json names it       │
+      material, uploaded      link to a listed world        │
+      to Sketchfab or PDS                                   │
                               review: approve + pin hash ───┤
                                                             ▼
                               /api/account/building/worlds  ──► which worlds, which hash
@@ -100,6 +100,15 @@ block's fascia, so every door in the city still reads the same way.
 
 The forecourt and height live in `facade.ts` (`LOT_FORECOURT`,
 `LOT_HEIGHT`); the width and depth are the block's.
+
+**Who stands where** (`walk/doorOrder.ts`). Multiplayer worlds have their
+door inside the hall while it has room; every other world has a block in the
+city. A world with an approved building always stands in the city, even a
+multiplayer one, since buildings only replace blocks. The city's blocks
+fill from the hall outwards by how often each world was entered: the most
+entered nearest the hall, the least entered furthest out (ties: the newest,
+then the URL). The order follows the entry counts as they arrive, the same
+for every visitor.
 
 ## 3. Making a building
 
@@ -206,8 +215,7 @@ building too big for the user's PDS goes to Sketchfab instead.
 Next to **My characters**, the account dialog has **My buildings**
 (`apps/hub/src/myBuildings.ts`): up to 20 saved buildings, each a pointer,
 in the `building` table (`db/migrations/0008_buildings.sql`). Each gets an
-id, `bld_` and 16 random characters, which only its owner sees; it is what a
-world's manifest will name (§5).
+id, `bld_` and 16 random characters, which only its owner sees.
 
 Endpoints, under `/api/account/building` in `workers/auth`
 (`src/avatars/buildings.ts`), same-origin and signed in:
@@ -219,7 +227,7 @@ Endpoints, under `/api/account/building` in `workers/auth`
 | `POST /collect` `{ connectionId, modelId }` | Saves one, checked with the platform: only the account's own models |
 | `POST /rename` `{ buildingId, name }` | Names it here; `null` goes back to the platform's name |
 | `POST /remove` `{ buildingId }` | Its links go with it |
-| `POST /link` `{ buildingId, world }` | Puts it on a world whose manifest names it, for review (§5.1) |
+| `POST /link` `{ buildingId, world }` | Puts it on a world, for review (§5.1) |
 | `POST /unlink` `{ buildingId, world }` | |
 
 `GET /list` gives each saved building its `worlds`: `{ url, status, reason }`.
@@ -239,40 +247,22 @@ will have ("Its portal face makes a 5.7 × 10.1 m door on a block").
 
 ## 5. Linking a building to a world
 
-### 5.1 Both sides agree
+### 5.1 The owner links it
 
-A building shows on a world's lot only when **both** say so:
+The building's owner chooses *Put a building on your world* in My
+buildings, picks the building and one of the worlds WorldMesh lists, and
+presses *Link*. `POST /link { buildingId, world }` records a pending link.
+Nothing on the world's own site has to change: creators are never asked to
+edit their code for this. Whether the world is the linker's own is left to
+the reviewer for now; worlds added through *Add world* belong to whoever
+added them anyway. (Draft 0.4 asked the world's `worldmesh.json` to name the
+building instead, read server-side; that is gone.)
 
-1. **The building's owner** chooses *Put a building on your world* in My
-   buildings, picks the building and pastes the world's URL.
-2. **The world's site** names it, in its own manifest (`worldmesh.json`,
-   [compatibility.md](../compatibility.md#the-manifest)):
-
-   ```json
-   {
-     "worldmesh": 1,
-     "name": "Forest",
-     "building": "bld_7Hq2kX9mPz"
-   }
-   ```
-
-The hub shows the line to paste. `POST /link { buildingId, world }` reads
-the manifest server-side (both `/.well-known/worldmesh.json` and
-`/worldmesh.json`, as the hub already does, through the same guarded fetch
-as the Avatar Wallet's: public https only, small and time-limited) and, if it
-names the building, records a pending link. This proves control of the world
-without WorldMesh having to know who owns which world, and it works for
-worlds hosted anywhere. The manifest belongs to the world's origin, so worlds
-sharing an origin (`?galaxy=…`) share the proof. A user's buildings stand on
-at most 20 worlds together.
-
-Removing the line from the manifest, or *Take off* in My buildings, takes the
-building down. The manifest is re-checked daily, without a cron: each look
-at the approved list (`GET /worlds`, §7.2) re-reads up to three manifests
-last read over a day ago, after answering. A manifest that names another
-building, or none, takes the building down; one that can't be read (the site
-is down) leaves it standing. Linking a building to a world that already has
-one replaces it, back in review: the manifest decides.
+A world keeps the building linked to it first: someone else's link to a
+world whose building waits for review or stands there is refused, until a
+reviewer rejects it. The owner can link another of their own buildings in
+its place, back to review. *Take off* in My buildings takes a building down.
+A user's buildings stand on at most 20 worlds together.
 
 ```sql
 create table building_link (           -- db/migrations/0009_building_links.sql
@@ -283,7 +273,7 @@ create table building_link (           -- db/migrations/0009_building_links.sql
   version text,                        -- the platform's marker for that file (§5.3)
   portal_json text,                    -- the portal face and fit the reviewer saw (§6)
   reason text,                         -- shown to the owner when rejected or hidden
-  checked_at integer not null,         -- last manifest check
+  checked_at integer not null,         -- last linked (Draft 0.4: the last manifest check)
   reviewed_at integer,
   reviewed_by text,
   created_at integer not null,
@@ -508,8 +498,8 @@ metallic materials get a soft studio environment of their own
 2. **My buildings.** *Built.* The `building` table and endpoints, listing
    from Sketchfab and AT Protocol, uploading (reusing both upload paths) with
    the file checked first, the UI next to My characters (§4.2).
-3. **Links and review.** *Built.* `building_link`, `/link` with the manifest
-   check and its daily re-check, the Buildings page in the admin dashboard
+3. **Links and review.** *Built.* `building_link`, `/link`, the Buildings
+   page in the admin dashboard
    and the review page on the hub (viewer, checks, hash), `/worlds` and
    `/resolve`, the city resolving and caching approved buildings, and
    *Put a building on your world* in My buildings.
@@ -545,10 +535,9 @@ metallic materials get a soft studio environment of their own
   the records without it. Publishing it for others to resolve takes a
   `_lexicon.worldmesh.net` DNS record naming a DID, and the schema as a
   `com.atproto.lexicon.schema` record in that DID's repository.
-- **Linking on the preview.** Preview worlds sit behind Cloudflare Access,
-  so the auth Worker reading their manifest gets Access's login page and
-  linking refuses them. Trying links on the preview needs a world hosted
-  elsewhere (any public https site with a `worldmesh.json`).
+- **Who owns a world.** Linking doesn't check that the world is the
+  linker's: the reviewer judges. Once worlds added through *Add world* are
+  tied to accounts, linking can offer only one's own worlds.
 - **Notifying reviewers.** A new link only shows on the dashboard's overview.
   An email to the reviewers may be worth it once links come in regularly.
 - **Fab.com and other stores.** No public download API is known that would

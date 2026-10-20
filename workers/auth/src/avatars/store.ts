@@ -294,7 +294,7 @@ export function saveLink(db: D1Database, worldUrl: string, buildingId: string) {
     .run();
 }
 
-/** The world's manifest still names its building. */
+/** Linked again while it waits or stands: nothing to review again. */
 export function touchLink(db: D1Database, worldUrl: string) {
   const now = Date.now();
   return db.prepare('update building_link set checked_at = ?2, updated_at = ?2 where world_url = ?1').bind(worldUrl, now).run();
@@ -311,38 +311,12 @@ export function unlink(db: D1Database, userId: string, buildingId: string, world
     .run();
 }
 
-/** A world's building is gone from its manifest. Only if the link is still for that building. */
-export function dropLink(db: D1Database, worldUrl: string, buildingId: string) {
-  return db.prepare('delete from building_link where world_url = ?1 and building_id = ?2').bind(worldUrl, buildingId).run();
-}
-
 /** Worlds whose building visitors may see, with the file it must be. */
 export function approvedLinks(db: D1Database) {
   return db
     .prepare("select world_url, sha256 from building_link where status = 'approved' and sha256 is not null order by world_url")
     .all<{ world_url: string; sha256: string }>()
     .then((r) => r.results);
-}
-
-/** Links whose manifest was last read before `before`, oldest first. */
-export function staleLinks(db: D1Database, before: number, limit: number) {
-  return db
-    .prepare(
-      `select world_url, building_id, checked_at from building_link
-       where status in ('pending', 'approved') and checked_at < ?1 order by checked_at limit ?2`,
-    )
-    .bind(before, limit)
-    .all<Pick<BuildingLinkRow, 'world_url' | 'building_id' | 'checked_at'>>()
-    .then((r) => r.results);
-}
-
-/** Claims a stale link for re-checking, so two requests don't both read its manifest. */
-export async function claimLink(db: D1Database, worldUrl: string, was: number): Promise<boolean> {
-  const { meta } = await db
-    .prepare('update building_link set checked_at = ?3 where world_url = ?1 and checked_at = ?2')
-    .bind(worldUrl, was, Date.now())
-    .run();
-  return meta.changes > 0;
 }
 
 /** Approved links of these worlds, with their building and its connection, for resolving. */
