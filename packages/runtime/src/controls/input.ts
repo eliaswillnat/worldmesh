@@ -359,18 +359,19 @@ export class Input {
   readLook(): { dx: number; dy: number; wheel: number } {
     let dx = this.mouseDeltaX;
     let dy = this.mouseDeltaY;
+    let wheel = this.wheelDelta;
     if (this.touch) {
       const touchLook = this.touch.readLook();
-      if (this.aerial) {
-        // A finger dragged across the bird's-eye view moves the ground with it.
-        this.panX += touchLook.dx;
-        this.panY += touchLook.dy;
-      } else {
-        dx += touchLook.dx;
-        dy += touchLook.dy;
-      }
+      dx += touchLook.dx;
+      dy += touchLook.dy;
+      // In the bird's-eye view a finger drags the ground with it, and a pinch
+      // zooms like the wheel does (the wheel scales the distance by e^(wheel/1000)).
+      const pan = this.touch.readPan();
+      this.panX += pan.dx;
+      this.panY += pan.dy;
+      wheel += Math.log(this.touch.readPinch()) * 1000;
     }
-    const look = { dx, dy, wheel: this.wheelDelta };
+    const look = { dx, dy, wheel };
     this.mouseDeltaX = 0;
     this.mouseDeltaY = 0;
     this.wheelDelta = 0;

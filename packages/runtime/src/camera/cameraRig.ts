@@ -206,7 +206,7 @@ export class CameraRig {
   update(dt: number, feet: Vector3, eyeHeight: number): void {
     this.feet.copy(feet);
     if (this.mode === 'aerial') {
-      this.updateAerial(dt);
+      this.updateAerial();
     } else {
       this.updateWalking(dt, feet, eyeHeight);
     }
@@ -245,17 +245,15 @@ export class CameraRig {
 
   /**
    * High above the focus, looking down at it at a three-quarter angle. The
-   * focus rides up and down with the ground under it, so the view keeps its
-   * height over rooftops and hills alike.
+   * focus stays at the height the view opened at (the player's feet), so
+   * panning glides at one height instead of bobbing up over every roof.
    */
-  private updateAerial(dt: number): void {
+  private updateAerial(): void {
     if (!this.focusSet) {
       this.focus.copy(this.feet);
       this.focusSet = true;
     }
     const reach = this.aerialReach;
-    const ground = this.groundUnder(this.focus.x, this.focus.z, this.focus.y + reach, reach * 2);
-    if (ground !== null) this.focus.y += (ground - this.focus.y) * (1 - Math.exp(-6 * dt));
 
     this.euler.set(this.aerialPitch, this.yaw, 0);
     this.camera.quaternion.setFromEuler(this.euler);

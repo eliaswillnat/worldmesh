@@ -1314,6 +1314,8 @@
         html.walking .walk-talk-btn { display: flex; align-items: center; justify-content: center; }
         html.chatting .walk-talk-btn { display: none; }
       }
+      /* From the bird's-eye view the screen is for pointing at the ground: no talk or chat buttons. */
+      html.birds-eye .walk-talk-btn, html.birds-eye .walk-chat-btn { display: none !important; }
       html.walking[data-walk-theme="light"] .walk-talk-btn:not(.held) { background: rgba(8, 11, 16, 0.65); }
       /* Over your own head while you talk: sound bars, or a short note when the microphone cannot. */
       .walk-talk {
