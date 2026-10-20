@@ -56,6 +56,7 @@ import { doorFrameGeometry, frameOuterCorner, openingCorner } from './doorShape'
 import { describeBillboard } from './layout';
 import { planAvenues, type CityPlan } from './avenuePlan';
 import { buildAvenues, dressHall } from './avenues';
+import { assignDoors } from './doorOrder';
 import { Buildings, DEMO_BUILDINGS, type BuildingDirectory, type BuildingLot, type BuildingSource } from './buildings';
 import { LOT_FORECOURT, LOT_HEIGHT, STOREFRONT_WIDTH } from './facade';
 import { playSendSound, playWarpSound } from './sounds';
@@ -305,24 +306,6 @@ function doorAngles(total: number, radius: number): number[] {
     for (let i = 0; i < count; i++) angles.push(gate + (first + i * pitch) / radius);
   }
   return angles.map((angle) => (angle + Math.PI * 2) % (Math.PI * 2)).sort((a, b) => a - b);
-}
-/**
- * Which worlds get a door, and where. Multiplayer worlds go inside (the demos
- * first, then the newest); solo ones go out into the city, along its grid
- * of avenues and streets (newest first, avenuePlan), followed by any multiplayer
- * worlds that did not fit inside. Ties break on the URL, so everyone with
- * the same list gets the same doors. The rotunda's outer wall has none.
- */
-function assignDoors(worlds: LobbyWorld[], inside: number): { inside: string[]; city: string[] } {
-  const listed = (world: LobbyWorld) => Date.parse(world.addedAt ?? world.approvedAt ?? '') || 0;
-  const order = (a: LobbyWorld, b: LobbyWorld) =>
-    Number(b.source === 'demo') - Number(a.source === 'demo') || listed(b) - listed(a) || (a.url < b.url ? -1 : a.url > b.url ? 1 : 0);
-  const multiplayer = (world: LobbyWorld) => world.tags?.includes('multiplayer') ?? false;
-  const together = worlds.filter(multiplayer).sort(order);
-  const solo = worlds.filter((world) => !multiplayer(world)).sort(order);
-  const within = together.slice(0, inside);
-  const url = (world: LobbyWorld) => world.url;
-  return { inside: within.map(url), city: [...solo, ...together.slice(inside)].map(url) };
 }
 /** Stand this close in front of an empty door to be offered it. */
 const EMPTY_DOOR_REACH = 4.8;
@@ -994,6 +977,9 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   let approvedBuildings = new Map<string, string>();
   /** How far out the city starts, once it is built, to build it again when buildings arrive. */
   let cityOuter: number | null = null;
+  /** The list the doors were last laid out from, and where that put them. */
+  let lastWorlds: LobbyWorld[] = options.worlds;
+  let laidOut = '';
   let nearEmpty: Door | null = null;
   let time = 0;
   let warping = false;
@@ -1989,6 +1975,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     .then((approved) => {
       if (disposed) return;
       approvedBuildings = approved;
+      // A world with a building of its own moves out to the city.
+      if (relayoutIfMoved()) return;
       // Built again only if one of the city's doors has a building now.
       if (cityOuter === null || !cityDoors.some((door) => door.world && approved.has(canonicalUrl(door.world.url)))) return;
       buildCity(cityOuter);
@@ -2236,6 +2224,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   }
 
   function refreshEntries(): void {
+    // The city keeps its most entered worlds nearest the hall.
+    if (relayoutIfMoved()) return;
     for (const [url, door] of doors) door.setEntries(options.entries?.(url));
   }
 
@@ -2295,13 +2285,11 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     if (!document.hidden) void refreshOccupancy();
   }
 
-  function setWorlds(worlds: LobbyWorld[]): void {
-    // Buildings come down while the doors are laid out again; buildCity puts them back.
-    buildings.setLots([]);
-    for (const entry of worlds) {
-      if (!known.has(entry.url)) known.set(entry.url, entry);
-    }
-
+  /**
+   * Where every listed world's door goes: the claims on the hall's empty
+   * openings, and the worlds in the hall and in the city.
+   */
+  function layout(worlds: LobbyWorld[]) {
     // Everyone with the same list gets the same ring, so visitors who see
     // each other also see the same doors around them.
     // A door claimed inside the lobby stays on the opening it was given.
@@ -2311,10 +2299,32 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     const claimUrls = new Set(claims.map((claim) => claim.url));
     const listed = [...known.entries()].filter(([url]) => !claimUrls.has(url)).map(([, world]) => world as LobbyWorld);
     // The same number of doors on every stretch, so both sides of every exit match.
+    const assigned = assignDoors(listed, GATE_COUNT * DOORS_PER_BAY, (url) => options.entries?.(url), (url) =>
+      approvedBuildings.has(canonicalUrl(url)),
+    );
+    return { claims, claimUrls, assigned, key: JSON.stringify(assigned) };
+  }
+
+  /** Lay the doors out again if counts or buildings now put them elsewhere. */
+  function relayoutIfMoved(): boolean {
+    if (layout(lastWorlds).key === laidOut) return false;
+    setWorlds(lastWorlds);
+    return true;
+  }
+
+  function setWorlds(worlds: LobbyWorld[]): void {
+    // Buildings come down while the doors are laid out again; buildCity puts them back.
+    buildings.setLots([]);
+    for (const entry of worlds) {
+      if (!known.has(entry.url)) known.set(entry.url, entry);
+    }
+    lastWorlds = worlds;
+
+    const { claims, claimUrls, assigned, key } = layout(worlds);
+    laidOut = key;
     const total = GATE_COUNT * DOORS_PER_BAY;
     const radius = HALL_RADIUS;
     const angles = doorAngles(total, radius);
-    const assigned = assignDoors(listed, total);
     const urls = assigned.inside;
     // Worlds sit next to each other; the doors after them stay empty.
     const slots = urls.map((_, i) => i);

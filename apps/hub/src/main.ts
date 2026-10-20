@@ -175,8 +175,11 @@ function lobbyWorlds(): WorldEntry[] {
 }
 
 import { accountDialogPending, beforeAccountDialogOpens, getAccountId, getUsername, initAccount, onAccountChange, openAccountDialog } from './account';
+import { setBuildingWorlds } from './myBuildings';
 
 initAccount();
+// My buildings offers the worlds listed here to put a building on.
+setBuildingWorlds(lobbyWorlds());
 
 /**
  * Whether walk-mode billboard ads are mounted. Defaults to `AD_CONFIG.enabled`
@@ -961,6 +964,7 @@ async function fetchCommunityWorlds(): Promise<void> {
     ALL_WORLDS.push(...communityWorlds, ...DEMO_WORLDS);
     render();
     lobby?.setWorlds(lobbyWorlds());
+    setBuildingWorlds(lobbyWorlds());
     fetchViewCounts(ALL_WORLDS.map((w) => w.url));
   } catch {
     // Fall back to demo worlds only

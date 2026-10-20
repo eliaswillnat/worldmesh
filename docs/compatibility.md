@@ -360,12 +360,6 @@ A world without a manifest works exactly the same; it just shows up under its
 hostname. Serve it with `Access-Control-Allow-Origin: *` if you want the hub to
 be able to read it.
 
-To give your world its own building in the hub city, add the id of a building
-saved in your account's **My buildings**: `"building": "bld_7Hq2kX9mPz…"`.
-Naming it here is how WorldMesh knows the world is yours; a person reviews the
-building before it stands in place of your world's block
-([specs/buildings.md](specs/buildings.md) §5).
-
 ## What compatibility does *not* require
 
 No WorldMesh account. No build plugin. No asset upload. No SDK beyond one

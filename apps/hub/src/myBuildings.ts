@@ -85,6 +85,8 @@ let checking = false;
 /** The saved building being put on a world, and the address typed so far. */
 let linking: string | null = null;
 let linkWorld = '';
+/** The worlds WorldMesh lists, to put a building on: set by the page (main.ts). */
+let worlds: { name: string; url: string }[] = [];
 let rerender: () => void = () => {};
 
 /**
@@ -119,6 +121,12 @@ export function initBuildings(onChange: () => void): 'connected' | 'upload' | 'e
           ? { text: 'That approval was for a different account than the one connected here.', error: true }
           : { text: 'That did not complete. Please try again.', error: true };
   return outcome;
+}
+
+/** The worlds a building can be put on: every world WorldMesh lists. Call whenever the list changes. */
+export function setBuildingWorlds(next: { name: string; url: string }[]): void {
+  worlds = next.filter((world) => /^https:\/\//.test(world.url));
+  rerender();
 }
 
 /** Call whenever the account state changes. */
@@ -304,11 +312,7 @@ function worldsList(linked: { building: SavedBuilding; world: BuildingWorld }[])
   return box;
 }
 
-/**
- * Putting a building on a world: the world's own worldmesh.json names it,
- * which shows the world is yours wherever it is hosted, then WorldMesh
- * reads that file and the building goes to review.
- */
+/** Putting a building on one of the worlds WorldMesh lists, for review. */
 function linkForm(building: SavedBuilding, saved: SavedBuilding[]): HTMLElement {
   const form = document.createElement('form');
   form.className = 'wallet-upload';
@@ -324,37 +328,18 @@ function linkForm(building: SavedBuilding, saved: SavedBuilding[]): HTMLElement 
     linking = which.value;
     rerender();
   });
-  const line = `"building": "${building.id}"`;
-  const lineRow = document.createElement('div');
-  lineRow.className = 'building-line';
-  const code = document.createElement('code');
-  code.textContent = line;
-  const copy = document.createElement('button');
-  copy.type = 'button';
-  copy.className = 'wallet-link';
-  copy.textContent = 'Copy';
-  copy.addEventListener('click', () => {
-    void navigator.clipboard?.writeText(line).then(
-      () => {
-        copy.textContent = 'Copied';
-      },
-      () => undefined,
-    );
-  });
-  lineRow.append(code, copy);
-
-  const input = document.createElement('input');
-  input.type = 'url';
-  input.placeholder = 'https://your-world.example';
-  input.required = true;
-  input.maxLength = 2048;
-  input.autocomplete = 'off';
-  input.spellcheck = false;
-  input.value = linkWorld;
-  input.setAttribute('aria-label', "Your world's address");
-  input.disabled = busy;
-  input.addEventListener('input', () => {
-    linkWorld = input.value;
+  // The worlds WorldMesh lists: a building can only stand on one of their blocks.
+  const world = document.createElement('select');
+  world.className = 'building-pick';
+  world.required = true;
+  world.setAttribute('aria-label', 'World');
+  world.append(new Option('Choose a world', '', true, !linkWorld));
+  for (const listed of [...worlds].sort((a, b) => a.name.localeCompare(b.name))) {
+    world.append(new Option(`${listed.name} (${hostOf(listed.url)})`, listed.url, false, listed.url === linkWorld));
+  }
+  world.disabled = busy;
+  world.addEventListener('change', () => {
+    linkWorld = world.value;
   });
   const submit = document.createElement('button');
   submit.type = 'submit';
@@ -362,7 +347,7 @@ function linkForm(building: SavedBuilding, saved: SavedBuilding[]): HTMLElement 
   submit.disabled = busy;
   const row = document.createElement('div');
   row.className = 'account-username-row';
-  row.append(input, submit);
+  row.append(world, submit);
   const cancel = document.createElement('button');
   cancel.type = 'button';
   cancel.className = 'wallet-link';
@@ -376,15 +361,13 @@ function linkForm(building: SavedBuilding, saved: SavedBuilding[]): HTMLElement 
   form.append(
     title,
     ...(saved.length > 1 ? [which] : [note(`Building: ${building.name || 'Unnamed'}`)]),
-    note("1. Add this line to your world's worldmesh.json (at /worldmesh.json or /.well-known/worldmesh.json):"),
-    lineRow,
-    note("2. Enter your world's address. WorldMesh reads that file to check, and a person reviews the building before it stands in the city."),
     row,
+    note("A person looks at the building before it stands in the city, in place of the world's block."),
     cancel,
   );
   form.addEventListener('submit', (event) => {
     event.preventDefault();
-    void link(building, input.value);
+    if (world.value) void link(building, world.value);
   });
   return form;
 }
@@ -816,6 +799,14 @@ function note(text: string): HTMLElement {
   p.className = 'account-hint';
   p.textContent = text;
   return p;
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
 }
 
 function fileSize(bytes: number): string {

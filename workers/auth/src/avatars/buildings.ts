@@ -12,7 +12,7 @@
  *   POST /collect                    { connectionId, modelId } saves one (checked with the platform)
  *   POST /rename                     { buildingId, name } names it here; null goes back to the platform's name
  *   POST /remove                     { buildingId }
- *   POST /link                       { buildingId, world } puts it on a world whose worldmesh.json names it, for review
+ *   POST /link                       { buildingId, world } puts it on a world, for review
  *   POST /unlink                     { buildingId, world }
  *   POST /report                     { world, reason, note } flags a building standing in the city (§8)
  *
@@ -29,7 +29,7 @@ import type { Auth, Env } from '../auth';
 import { isPlaceholderEmail } from '../atprotoSignIn';
 import { HttpError, isSameOrigin, json, readJson } from '../http';
 import { mailConfigured, sendMail } from '../mail';
-import { canonicalWorldUrl, manifestBuilding, recheckStale, resolveWorlds } from './buildingLinks';
+import { canonicalWorldUrl, resolveWorlds } from './buildingLinks';
 import { UnsafeUrlError, parseMetadata } from './net';
 import { avatarWalletEnabled, configuredProviders, context, PROVIDERS, providerFor, type WaitUntil } from './routes';
 import * as store from './store';
@@ -134,7 +134,7 @@ export async function handleBuildingRequest(request: Request, env: Env, getAuth:
 
     if (path === '/link' && method === 'POST') {
       const body = (await readJson(request, 4096)) as { buildingId?: unknown; world?: unknown } | null;
-      await link(env, origin, userId, body?.buildingId, body?.world);
+      await link(env, userId, body?.buildingId, body?.world);
       return json(await buildings(env, userId));
     }
 
@@ -173,12 +173,12 @@ export async function handleBuildingRequest(request: Request, env: Env, getAuth:
 }
 
 /**
- * Puts a saved building on a world, waiting for review (§5.1). The world's
- * own manifest has to name the building first: that proves whoever links it
- * controls the world, wherever it is hosted.
+ * Puts a saved building on a world, waiting for review (§5.1). The reviewer
+ * is the check: nothing on the world's own site has to change.
  */
-async function link(env: Env, origin: string, userId: string, buildingId: unknown, rawWorld: unknown): Promise<void> {
-  const building = typeof buildingId === 'string' ? (await store.buildingsOf(env.DB, userId)).find((b) => b.id === buildingId) : undefined;
+async function link(env: Env, userId: string, buildingId: unknown, rawWorld: unknown): Promise<void> {
+  const mine = await store.buildingsOf(env.DB, userId);
+  const building = typeof buildingId === 'string' ? mine.find((b) => b.id === buildingId) : undefined;
   if (!building) throw new HttpError(404, 'That building is not in My buildings.');
   const world = canonicalWorldUrl(rawWorld);
   if (!world) throw new HttpError(400, "Enter your world's address, starting with https://.");
@@ -190,20 +190,14 @@ async function link(env: Env, origin: string, userId: string, buildingId: unknow
   if (same && existing.status === 'hidden') {
     throw new HttpError(409, `This building was taken down from that world${existing.reason ? `: ${existing.reason}` : '.'}`);
   }
+  // Someone else's building waits for review there or stands there: the
+  // reviewer decides between them, not whoever linked last.
+  if (existing && !mine.some((b) => b.id === existing.building_id) && existing.status !== 'rejected') {
+    throw new HttpError(409, 'That world already has a building, or one waiting for review.');
+  }
   if (!same && (await store.linkCount(env.DB, userId)) >= MAX_LINKS) {
     throw new HttpError(409, `Your buildings stand on ${MAX_LINKS} worlds already. Take one off first.`);
   }
-
-  let manifest: { read: boolean; building: string | null };
-  try {
-    manifest = await manifestBuilding(world, new URL(origin).host);
-  } catch (error) {
-    if (error instanceof UnsafeUrlError) throw new HttpError(400, 'WorldMesh cannot read that address. A world needs a public https address.');
-    throw error;
-  }
-  const line = `"building": "${building.id}"`;
-  if (!manifest.read) throw new HttpError(409, `No worldmesh.json found for ${world}. Add one with ${line}, then try again.`);
-  if (manifest.building !== building.id) throw new HttpError(409, `The world's worldmesh.json does not name this building yet. Add ${line} to it, then try again.`);
 
   // Already on its way or standing: nothing to review again.
   if (same && (existing.status === 'pending' || existing.status === 'approved')) await store.touchLink(env.DB, world);
@@ -224,8 +218,6 @@ async function publicRequest(request: Request, env: Env, exec: WaitUntil, origin
   if (path === '/worlds') {
     if (request.method !== 'GET') throw new HttpError(405, 'Method not allowed.');
     if (!avatarWalletEnabled(env)) return reply({ worlds: [] });
-    // Visitors keep the list fresh: a day after a manifest was read, the next look reads it again.
-    exec.waitUntil(recheckStale(env, origin).catch((error) => console.error('building re-check failed', error)));
     const worlds = await store.approvedLinks(env.DB);
     return reply({ worlds: worlds.map((link) => ({ url: link.world_url, sha256: link.sha256 })) });
   }
