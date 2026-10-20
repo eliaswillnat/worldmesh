@@ -69,7 +69,7 @@ const THRESHOLD = 0.1;
  */
 const REACH = 1;
 /** Where the backstop goes while the doorway can be walked through: far enough for the camera to follow. */
-const PASSABLE_BACKSTOP = 12;
+export const PASSABLE_BACKSTOP = 12;
 /** A doorway on a building's portal face stands this far in front of it, clear of the wall the face was drawn on. */
 const SHAPED_PORTAL_OUT = 0.04;
 /** How far the floor runs on behind the doorway, through the wall: the hall's own floor stops at it. */

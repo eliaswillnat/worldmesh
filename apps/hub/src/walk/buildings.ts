@@ -1,5 +1,7 @@
 import {
   Box3,
+  BufferAttribute,
+  BufferGeometry,
   Group,
   Mesh,
   MeshBasicMaterial,
@@ -12,8 +14,10 @@ import {
 } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import type { Door, DoorShape } from './door';
+import type * as Bvh from 'three-mesh-bvh';
+import { DOOR_HEIGHT, DOOR_WIDTH, PASSABLE_BACKSTOP, type Door, type DoorShape } from './door';
 import { prismRoof, prismWalls } from './avenues';
+import { bothSides, colliderTriangles, doorPassage } from './buildingCollider';
 import { planBuilding, type Lot } from './buildingFit';
 import { checkWeight, downloadBuilding, parseBuilding, sha256Hex } from './buildingModel';
 import demoBuildings from './demoBuildings.json';
@@ -76,6 +80,8 @@ const FADE_SECONDS = 0.6;
 const LOOK_SECONDS = 0.25;
 /** Nobody standing this close in front of the doorway: it doesn't change shape under them. */
 const SWAP_CLEAR = 1.5;
+/** The doorway stays clear this far out in front of the door, as well as all the way through it (metres). */
+const PASSAGE_FRONT = 0.5;
 /** Worlds resolved per call, at most (workers/auth MAX_RESOLVE). */
 const RESOLVE_BATCH = 16;
 /** A resolved download link is used only while it has this long left (ms). */
@@ -306,12 +312,13 @@ export class Buildings {
         if (key) lot.cache = (await keep(key, data)) ? 'hit' : 'miss';
       }
       const object = await parseBuilding(data);
+      const bvh = await loadBvh().catch(() => null);
       if (abort.signal.aborted || this.disposed) {
         disposeObject(object);
         return;
       }
       checkWeight(object);
-      this.place(lot, object);
+      this.place(lot, object, bvh);
       lot.status = 'ready';
     } catch (error) {
       if (abort.signal.aborted) return;
@@ -323,7 +330,7 @@ export class Buildings {
   }
 
   /** Turn, scale and move the model onto its lot, round its door (§6). */
-  private place(lot: LotState, model: Object3D): void {
+  private place(lot: LotState, model: Object3D, bvh: typeof Bvh | null): void {
     const plan = planBuilding(model, lot.lot, lot.out);
     if (plan.problem) throw new Error(plan.problem);
     const { fit, turn, bounds } = plan;
@@ -351,14 +358,37 @@ export class Buildings {
     holder.add(model);
     holder.updateMatrixWorld(true);
     lot.object = holder;
-    lot.collider = this.footprint(lot, bounds.clone().applyMatrix4(fit.matrix));
+    lot.collider = (bvh && this.shapeCollider(lot, holder, bvh)) ?? this.footprint(lot, bounds.clone().applyMatrix4(fit.matrix));
+  }
+
+  /**
+   * The building's own shape, both sides of every triangle, with its doorway
+   * left clear (./buildingCollider.ts): what stops walkers once it shows.
+   * Null if nothing of it is left to stand on or bump into.
+   */
+  private shapeCollider(lot: LotState, holder: Object3D, bvh: typeof Bvh): Mesh | null {
+    const frame = lot.door.group.matrixWorld;
+    const opening = lot.shape ?? { width: DOOR_WIDTH, height: DOOR_HEIGHT };
+    const passage = doorPassage(opening.width, opening.height, PASSAGE_FRONT, PASSABLE_BACKSTOP);
+    const positions = colliderTriangles(holder, frame.clone().invert(), passage);
+    if (!positions.length) return null;
+    const geometry = new BufferGeometry();
+    geometry.setAttribute('position', new BufferAttribute(positions, 3));
+    geometry.setIndex(new BufferAttribute(bothSides(positions.length / 9), 1));
+    geometry.applyMatrix4(frame);
+    geometry.boundsTree = new bvh.MeshBVH(geometry);
+    const collider = new Mesh(geometry, this.colliderMaterial);
+    collider.raycast = bvh.acceleratedRaycast;
+    collider.updateMatrixWorld(true);
+    return collider;
   }
 
   /**
    * A solid box round the building, from the wall line back, as the block's
    * walls were: walkers reach its door as they reached the storefront's,
    * and go no further. `placed` is the fitted model's box, in its door's
-   * frame. What stands in the forecourt is not solid.
+   * frame. What stands in the forecourt is not solid. Only when the
+   * building's own shape can't be used.
    */
   private footprint(lot: LotState, placed: Box3): Mesh | null {
     const { width, depth, height } = lot.lot;
@@ -439,6 +469,17 @@ export class Buildings {
     if (lot.status !== 'failed') lot.status = 'idle';
     if (wasShown) this.onCollidersChange();
   }
+}
+
+let bvhModule: Promise<typeof Bvh> | null = null;
+
+/** three-mesh-bvh, fetched with the first building rather than with the hub. */
+function loadBvh(): Promise<typeof Bvh> {
+  bvhModule ??= import('three-mesh-bvh').catch((error: unknown) => {
+    bvhModule = null;
+    throw error;
+  });
+  return bvhModule;
 }
 
 /** Whether a lot can start loading: its file is in this browser, or there is a link to download it from. */

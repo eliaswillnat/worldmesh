@@ -472,10 +472,21 @@ whatever the face was drawn on.
 ### 7.5 Collisions
 
 While the default block shows, it is solid as always. Once the building
-shows, a box round the building is: as wide and tall as the fitted model,
-from the wall line back. Visitors reach its door as they reached the
-block's, and go no further. Steps, columns and signs in the forecourt are
-not solid in this version.
+shows, **the building's own shape** is (`walk/buildingCollider.ts`):
+every visible triangle of the fitted model, each both ways round, so a wall
+stops people from either side however its maker wound it. Visitors walk up
+its steps, round its towers, under its arches, onto its roofs, and inside
+it wherever it has rooms. The doorway is kept clear: triangles crossing the
+door's opening, from 0.5 m in front of it to `PASSABLE_BACKSTOP` (12 m)
+behind it, are cut down to about 20 cm and dropped, so a wall the portal
+face was drawn on never stops anyone reaching the door. Hidden meshes
+(the portal face) are left out.
+
+Raycasting walkers against up to 150,000 triangles a building every frame
+would be slow, so the collider gets a bounding volume hierarchy
+(three-mesh-bvh, fetched with the first building, not with the hub). If
+that can't load, or nothing of the model is left, the city falls back to a
+box round the building from the wall line back, as in the first version.
 
 ### 7.6 Light
 
