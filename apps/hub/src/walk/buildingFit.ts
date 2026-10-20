@@ -9,15 +9,19 @@ import { Box3, Group, Matrix4, Mesh, Vector3, type BufferAttribute, type Materia
 /** `portal`, `Portal`, `portal.001`, or a named portal such as `portal:arena` (§3.4). */
 const PORTAL_NAME = /^portal(:[^.]*)?(\.\d+)?$/i;
 /** The face may lean this far from upright (its normal this far from level). */
-const MAX_LEAN = Math.PI / 6;
+export const MAX_LEAN = Math.PI / 6;
 /** How far a portal face's points may stray from its plane, as a share of its size. */
 const FLATNESS = 0.02;
 /** A fitted doorway at least this wide and tall, so a visitor fits through. */
 export const MIN_PORTAL_WIDTH = 2;
 export const MIN_PORTAL_HEIGHT = 2.5;
 
+export function isPortalName(name: string): boolean {
+  return PORTAL_NAME.test(name.trim());
+}
+
 export function isPortalMaterial(material: Material | Material[] | null | undefined): boolean {
-  return !Array.isArray(material) && Boolean(material) && PORTAL_NAME.test(material!.name.trim());
+  return !Array.isArray(material) && Boolean(material) && isPortalName(material!.name);
 }
 
 /** The doorway a portal face makes, in the model's own space. */

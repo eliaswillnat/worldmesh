@@ -148,9 +148,24 @@ material named `portal`, press *Assign*, then *File → Export → glTF 2.0
 primitive, so no separate object is needed.
 
 AI 3D generators (Meshy, Tripo and the like) produce GLBs too. Open the
-result in Blender to assign the `portal` material, then upload it (§4.1).
-Their own download links expire after a few days, so they cannot be used
-directly.
+result in Blender to assign the `portal` material, or draw the door in the
+hub (below), then upload it (§4.1). Their own download links expire after a
+few days, so they cannot be used directly.
+
+**Drawing the door in the hub.** Uploading from My buildings (§4.2), once the
+file is checked and within the limits, its maker can draw the door instead
+(`apps/hub/src/doorPicker.ts`): turn the model, then drag a rectangle across
+an upright face (within 30° of level, as above). The rectangle's sides run
+up that face and level across it, and it stands a thousandth of the model's
+size in front of it. The hub shows the doorway it makes on a block, and the
+street at its bottom edge. *Use this door* writes it into the GLB
+(`apps/hub/src/walk/drawnDoor.ts`) as a node of its own with one
+two-triangle primitive and a new material named `portal`; materials that
+were portals already are renamed `former <name>`, so the drawn face is the
+only door. Every other byte of the model is kept. The edited file is checked
+again and is what gets uploaded, so review, hashing and fitting don't know
+the difference. Models already on a platform and saved from its list aren't
+edited: the file is changed only on its way up.
 
 ### 3.3 No portal face?
 
