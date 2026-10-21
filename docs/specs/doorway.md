@@ -303,6 +303,14 @@ destination's exit (its own portal or menu item back) SHOULD lead there. The
 host SHOULD push a history entry when the destination takes over, so the
 browser's Back button returns the visitor to the door they came through.
 
+The way back MAY itself be a live view: the destination plays host, and the
+page it came from draws itself in the destination's exit exactly as in §3.1,
+loaded with `doorway-view` and with `from` naming the destination, so it can
+draw from the door the visitor came through. Walking through that exit
+travels to `from` with `from` set to the destination; a host that knows the
+door brings the visitor back out of it. WorldMesh worlds do this towards the
+hub's lobby (`lobbyPortal`, [compatibility.md](../compatibility.md#the-way-back-to-the-lobby)).
+
 ## 6. Characters (Level 3)
 
 While the destination is still dormant, the host MAY hand over the visitor's

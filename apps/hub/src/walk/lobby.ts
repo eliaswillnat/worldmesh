@@ -59,7 +59,7 @@ import { buildAvenues, dressHall } from './avenues';
 import { assignDoors } from './doorOrder';
 import { Buildings, DEMO_BUILDINGS, type BuildingDirectory, type BuildingLot, type BuildingSource } from './buildings';
 import { LOT_FORECOURT, LOT_HEIGHT, STOREFRONT_WIDTH } from './facade';
-import { playSendSound, playWarpSound } from './sounds';
+import { playSendSound, playWarpSound, silence } from './sounds';
 import { chatRejection } from '../../../../templates/relay/src/chatFilter';
 import { deviceLanguage, isForeign, translate } from './translate';
 import { fetchOccupancy } from './occupancy';
@@ -98,6 +98,18 @@ export interface LobbyOptions {
   worlds: LobbyWorld[];
   /** Walk out of the door behind this spot instead of starting in the middle of the hall. */
   start?: WalkSpot | null;
+  /**
+   * The world a visitor came back from through its lobby portal (`from` in
+   * the address): they walk out of its door, if it has one here. Drawn in
+   * that portal (`doorwayView`), the lobby is seen from that door.
+   */
+  from?: string | null;
+  /**
+   * Drawn live in a world's lobby portal (Doorway §3.1, `?doorway-view`):
+   * the runtime draws the views the world sends. The lobby only watches its
+   * room, makes no sound, opens no live doors of its own and never travels.
+   */
+  doorwayView?: boolean;
   /** Draw the lobby white with dark lines instead of black with light ones. */
   light?: boolean;
   /** WebSocket base URL of the lobby's relay (workers/lobby). Leave empty for single-player. */
@@ -337,6 +349,12 @@ const WARP_MATCH = 3;
 const WARP_GIVE_UP = 8;
 /** Someone back from a world ends up this far out in front of the door they took. */
 const RETURN_STEP = 2.4;
+/**
+ * In a world's lobby portal, the view is from this far in front of that
+ * world's door: the runtime draws a live view from this far behind where
+ * the visitor stands, so the portal is the door's own opening.
+ */
+const VIEW_STEP = 0.6;
 /**
  * Coming back, they appear this far behind the doorway's face, hidden by it,
  * and walk out through it for WALK_OUT_S seconds.
@@ -582,6 +600,13 @@ const SPEAKING_HOLD_MS = 250;
  * the worlds themselves use.
  */
 export function createLobby(container: HTMLElement, options: LobbyOptions): Lobby {
+  const viewOnly = options.doorwayView === true;
+  if (viewOnly) silence();
+  /** Back through a world's lobby portal: its door, where they came out of it, and the layout it was in then. */
+  let cameBack: { url: string; spot: WalkSpot; layout: string } | null = null;
+  /** In a world's lobby portal: the door it is seen from (placeViewer), and the layout it was found in. */
+  let viewDoor: Door | null = null;
+  let viewLayout: string | null = null;
   // Alpha, so a live door's world can show through its doorway (liveDoors).
   const renderer = new WebGLRenderer({ antialias: true, alpha: true });
   container.appendChild(renderer.domElement);
@@ -726,6 +751,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const presence = options.presenceEndpoint
     ? new Presence({
         url: `${options.presenceEndpoint.replace(/\/$/, '')}/room/lobby`,
+        // In a world's lobby portal: everyone shows through it, and nobody sees the visitor.
+        watch: viewOnly,
         scene,
         onCount: (count) => {
           options.onPresenceCount?.(count);
@@ -757,7 +784,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         },
         place: (position, grounded) => lifts.ground(position, grounded),
         // Push-to-talk (hold T, or the mic button on touch): heard by everyone nearby.
-        voice: true,
+        voice: !viewOnly,
         onMic: (state) => showMic(state),
         // On touch there is no aiming prompt: say once how muting works.
         onVoice: () => {
@@ -784,7 +811,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
           playWarpSound(true, 0.2, loudnessAt(x, z));
         },
         // Everyone else's footsteps, jumps and landings, heard from where we stand.
-        listener: () => listenerPoint.fromArray(world.getState().position),
+        listener: viewOnly ? undefined : () => listenerPoint.fromArray(world.getState().position),
         // Someone leaving, by a door or by closing the page: the same sound as our own leaving.
         // One warping out through a door is kept until the warp has played out; one
         // closing the page warps out where they stand, up and down and as quick as an arrival.
@@ -918,6 +945,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   characterNote.textContent = 'Loading character…';
   container.appendChild(characterNote);
   async function loadCharacter(): Promise<void> {
+    // In a world's lobby portal the visitor has no body here.
+    if (viewOnly) return;
     const turn = ++characterTurn;
     const ticket = alias ? null : characterTicket();
     characterNote.classList.toggle('visible', !!ticket);
@@ -1097,7 +1126,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const occupancyByOrigin = new Map<string, { count: number; cap: number }>();
 
   const world = createWorldMesh({
-    footsteps: true,
+    footsteps: !viewOnly,
     scene,
     camera,
     renderer,
@@ -1114,6 +1143,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       aerialDistance: 200,
     },
     vr: true,
+    // The lobby is where the way back leads.
+    lobbyPortal: false,
     // Minecraft-style flight: double-tap Space.
     abilities: { flying: true },
     ui: { title: 'WorldMesh', badge: false, crosshair: false, deferLockPanel: true, moveBeforeLock: true },
@@ -1136,6 +1167,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     ],
     onUpdate: (dt, handle) => {
       time += dt;
+      if (viewOnly) placeViewer();
+      else if (cameBack && cameBack.layout !== laidOut) followComeBack(handle.getState().position);
       if (emerging) stepEmerging(dt);
       updateDepartures(dt);
       if (pendingWarp) {
@@ -1166,7 +1199,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       for (const door of doors.values()) {
         door.update(time);
         if (!level(door)) continue;
-        if (!warping && !emerging && door.contains(x, z)) enter(door);
+        if (!warping && !emerging && !viewOnly && door.contains(x, z)) enter(door);
       }
       buildings.update(dt, x, z, world.getViewMode() === 'aerial' ? aerialFocus() : null);
       walkThrough.update();
@@ -1218,7 +1251,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       placeTalkBadge();
       // Last, with the camera where it will be drawn from: the worlds seen live through their doors.
       walkThrough.step(camera, feet.set(x, y, z));
-      liveDoors.update(doors.values(), camera, feet, !renderer.xr.isPresenting);
+      // Never another world's live view inside a world's lobby portal.
+      liveDoors.update(doors.values(), camera, feet, !renderer.xr.isPresenting && !viewOnly);
     },
   });
   // The page's own buttons (talk, chat) stand aside in the bird's-eye view, like the runtime's.
@@ -1530,7 +1564,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   }
 
   // Warp in as soon as the world is running, before doors and towers finish building.
-  if (!options.start) triggerSpawnFx();
+  // Back through a world's lobby portal, its door is looked up once the doors are up.
+  if (!options.start && !options.from && !viewOnly) triggerSpawnFx();
 
   /** Walking through a lobby door: flash, then travel to the world's own URL. */
   function enter(door: Door): void {
@@ -1954,7 +1989,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   // Coming back with the browser's back button can restore this page as it
   // was left: mid-warp and standing in a doorway. Step the visitor back out.
   const handlePageShow = (event: PageTransitionEvent) => {
-    if (!event.persisted) return;
+    if (!event.persisted || viewOnly) return;
     window.clearTimeout(warpTimer);
     warpDoor?.settle();
     warpDoor = null;
@@ -1996,7 +2031,12 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   // Stored coordinates rather than a door to look up: community worlds arrive
   // a moment later and shift every door, and these already match the full list.
   if (options.start) emerge(options.start);
-  startOccupancyPolling();
+  else if (options.from && !viewOnly) {
+    // Back through a world's lobby portal: out of its door, in the same light the warp left in.
+    if (comeBackFrom(options.from)) flash.classList.add('active');
+    else triggerSpawnFx();
+  }
+  if (!viewOnly) startOccupancyPolling();
   // Which worlds have a building of their own. The city is up meanwhile, every world on its block.
   directory
     ?.approved()
@@ -2110,6 +2150,64 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   function aimSpawn(): void {
     const yaw = padYaw();
     world.setState({ yaw, facing: yaw + Math.PI });
+  }
+
+  /** The door of the world at `url` (address and path; any query or fragment aside), or null if it has none here. */
+  function doorOf(url: string): Door | null {
+    const place = (address: string) => canonicalUrl(address).replace(/[?#].*$/, '');
+    const key = place(url);
+    for (const door of doors.values()) if (door.world && place(door.world.url) === key) return door;
+    return null;
+  }
+
+  /**
+   * Back through the lobby portal of the world at `url`: come out of its
+   * door. False if it has none here.
+   */
+  function comeBackFrom(url: string): boolean {
+    const door = doorOf(url);
+    if (!door) return false;
+    const out = door.inFront(RETURN_STEP * door.group.scale.x);
+    const spot: WalkSpot = { position: [out.x, door.group.position.y, out.z], yaw: out.yaw };
+    const moved = !cameBack || Math.hypot(cameBack.spot.position[0] - out.x, cameBack.spot.position[2] - out.z) > 0.5;
+    cameBack = { url, spot, layout: laidOut };
+    if (moved) emerge(spot);
+    return true;
+  }
+
+  /**
+   * The doors were laid out again (the full list, visit counts and buildings
+   * arrive after the lobby is up). Not walked off yet: out of the door where
+   * it is now. Otherwise they are left where they are.
+   */
+  function followComeBack([x, , z]: Vec3Tuple): void {
+    const { url, spot } = cameBack!;
+    const waiting = emerging || Math.hypot(x - spot.position[0], z - spot.position[2]) < 0.5;
+    if (!waiting || !comeBackFrom(url)) cameBack = null;
+  }
+
+  /**
+   * In a world's lobby portal: stand just in front of that world's door,
+   * facing into the lobby, so the portal opens where the door does (and
+   * follow it as the doors are laid out again); without one, on a pad.
+   * The door's own face is taken down: the view is clipped at the doorway,
+   * but not the face's shader, which would cover everything.
+   */
+  function placeViewer(): void {
+    if (viewLayout !== laidOut) {
+      viewLayout = laidOut;
+      const door = options.from ? doorOf(options.from) : null;
+      if (viewDoor) viewDoor.face.visible = true;
+      if (door) door.face.visible = false;
+      viewDoor = door;
+    }
+    const door = viewDoor;
+    const out = door?.inFront(VIEW_STEP);
+    const position: Vec3Tuple = out && door ? [out.x, door.group.position.y, out.z] : padSpawn();
+    const yaw = out ? out.yaw : padYaw();
+    const [x, , z] = world.getState().position;
+    if (Math.hypot(position[0] - x, position[2] - z) < 0.01 && angleDelta(world.getState().yaw, yaw) < 0.001) return;
+    world.teleport(position, yaw);
   }
 
   /** Come back out of the door behind `spot`, walking a few steps into the hall. */

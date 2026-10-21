@@ -1,6 +1,6 @@
 import type { AvatarDescriptor, SignedAvatarShare } from './avatar/descriptor.js';
 import type { AvatarExpression } from './player/avatar.js';
-import type { Camera, Object3D, PerspectiveCamera, Scene, WebGLRenderer } from 'three';
+import type { Camera, Mesh, Object3D, PerspectiveCamera, Scene, WebGLRenderer } from 'three';
 
 export type Vec3Tuple = [number, number, number];
 
@@ -148,6 +148,36 @@ export interface PortalOptions {
   visual?: Object3D | false;
 }
 
+/**
+ * The way back to the WorldMesh lobby: a quad (two triangles) showing the
+ * lobby live, drawn by the lobby itself from the visitor's camera. Walking
+ * through it from the front goes back to the lobby, out of this world's door.
+ * It is only a quad on purpose: frame it with your own geometry, or give it
+ * your own mesh. The renderer needs `alpha: true` for the lobby to show
+ * through; without it the quad stays covered and still leads back.
+ */
+export interface LobbyPortalOptions {
+  /** The lobby. Defaults to `ui.hubUrl`, then worldmesh.net. Visitors who came from a WorldMesh lobby go back to that one. */
+  url?: string;
+  /**
+   * Your own quad instead, already in the scene: any flat mesh of two
+   * triangles. The lobby shows on its front (the side its triangles wind
+   * counter-clockwise on), and its own material is the cover while the lobby
+   * isn't showing. `position`, `yaw`, `width`, `height` and `color` are then ignored.
+   */
+  mesh?: Mesh;
+  /** The middle of the quad's bottom edge. Defaults to 2.5 m behind the spawn point, on the ground. */
+  position?: Vec3Tuple;
+  /** The way its front faces, in radians about +Y like `view.yaw` (0 faces +Z). Defaults to facing the spawn point. */
+  yaw?: number;
+  /** In metres. Defaults to 2. */
+  width?: number;
+  /** In metres. Defaults to 3. */
+  height?: number;
+  /** The cover's colour while the lobby isn't showing. */
+  color?: number | string;
+}
+
 export interface UiOptions {
   /** Crosshair dot in the middle of the screen. Off unless set to true. */
   crosshair?: boolean;
@@ -260,6 +290,12 @@ export interface WorldMeshOptions {
    */
   colliders?: Object3D[] | (() => Object3D[]);
   portals?: PortalOptions[];
+  /**
+   * The way back to the WorldMesh lobby, shown to visitors who came from one.
+   * Set it (`{}` will do) to place or dress it and show it to everyone, or
+   * `false` to leave it out.
+   */
+  lobbyPortal?: LobbyPortalOptions | false;
   player?: PlayerOptions;
   /** Show the visitor's own avatar. Off by default. */
   avatar?: AvatarOptions;

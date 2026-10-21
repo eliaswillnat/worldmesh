@@ -56,6 +56,16 @@ import { entryIconSvg, formatEntries, hasEntries } from './entries';
 import { HUB_VISIT_KEY, shouldCountHubVisit } from './hubVisit';
 import { claimStaleBuildReload } from './staleBuild';
 
+/**
+ * Drawn live in a world's lobby portal (Doorway §3.1, docs/specs/doorway.md):
+ * only the lobby, seen from that world's door. No gallery, no music, no
+ * visit counted, and nothing taken from this tab's storage.
+ */
+const DOORWAY_VIEW = window.parent !== window && new URLSearchParams(window.location.search).has('doorway-view');
+if (DOORWAY_VIEW) document.documentElement.classList.add('doorway-view');
+/** The world a visitor came from through its lobby portal (`from`, which every portal adds), if any. */
+const FROM_WORLD = ((from) => (from && /^https?:\/\//.test(from) ? from : null))(new URLSearchParams(window.location.search).get('from'));
+
 const VIEWS_ENDPOINT = (import.meta.env.VITE_VIEWS_ENDPOINT as string | undefined)
   || (import.meta.env.DEV ? 'https://worldmesh-views.elias-willnat.workers.dev' : '/api/views');
 const viewCounts: Record<string, number> = {};
@@ -383,9 +393,9 @@ function snapFirstCard(): void {
 if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
 render();
 
-fetchCommunityWorlds();
+const communityLoaded = fetchCommunityWorlds();
 // Count this visit to the hub (production only; QA can opt out). Display still loads the public total.
-recordHubVisit();
+if (!DOORWAY_VIEW) recordHubVisit();
 
 // ── Walk mode ────────────────────────────────────────────────────────────────
 // The same directory as a place: every world is a door on a grid. Three.js
@@ -397,6 +407,8 @@ const walkPrivate = document.querySelector<HTMLButtonElement>('#walk-private')!;
 const walkColors = document.querySelector<HTMLDivElement>('#walk-colors')!;
 /** Remembered per browser, so a reload never quietly makes someone public again. */
 const PRIVATE_KEY = 'worldmesh.walkPrivate';
+/** How long walk mode waits for the full world list before bringing someone out of a world's door. */
+const COMMUNITY_WAIT_MS = 2000;
 /** Where someone left the lobby into a world, so coming back puts them there. This tab only. */
 const WALK_RETURN_KEY = 'worldmesh.walkReturn';
 /** Default-character tints. White is the ordinary body; the rest are a short visit-only palette. */
@@ -463,8 +475,9 @@ beforeAccountDialogOpens(() => {
 // Walk mode is the front door. The gallery is there when someone asks for
 // the list, or comes back to the account dialog. Back from a world entered
 // through a door: into the lobby, outside that door, however they came back.
-const walkReturn = takeWalkReturn();
-if (accountDialogPending()) {
+const walkReturn = DOORWAY_VIEW ? null : takeWalkReturn();
+if (DOORWAY_VIEW) enterWalkMode();
+else if (accountDialogPending()) {
   // index.html may already have dressed the page for walking.
   document.documentElement.classList.remove('walking', 'walk-stalled');
   history.replaceState(null, '', `${window.location.pathname}${window.location.search}#list`);
@@ -473,7 +486,7 @@ if (accountDialogPending()) {
 // A back-button return can restore the page with the lobby still running; it
 // puts the visitor back itself, so the stored spot is no longer needed.
 window.addEventListener('pageshow', (event) => {
-  if (event.persisted) takeWalkReturn();
+  if (event.persisted && !DOORWAY_VIEW) takeWalkReturn();
 });
 
 async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = null, color: string | null = null): Promise<void> {
@@ -483,7 +496,12 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
   walkToggle.disabled = true;
   let imported = false;
   try {
-    const [{ createLobby }, { hubBuildingDirectory }] = await Promise.all([import('./walk/lobby'), import('./walk/buildingDirectory')]);
+    const [{ createLobby }, { hubBuildingDirectory }] = await Promise.all([
+      import('./walk/lobby'),
+      import('./walk/buildingDirectory'),
+      // Back through a world's lobby portal: its door is looked up once, so let the full list in first.
+      FROM_WORLD && !start && !DOORWAY_VIEW ? Promise.race([communityLoaded, new Promise((resolve) => setTimeout(resolve, COMMUNITY_WAIT_MS))]) : null,
+    ]);
     imported = true;
     if (walkAbandoned) return;
     walkRoot = document.createElement('div');
@@ -493,6 +511,8 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
     lobby = createLobby(walkRoot, {
       worlds: lobbyWorlds(),
       start,
+      from: FROM_WORLD,
+      doorwayView: DOORWAY_VIEW,
       light: walkIsLight(),
       presenceEndpoint: PRESENCE_ENDPOINT,
       worldRelayEndpoint: WORLD_RELAY_ENDPOINT,
@@ -544,11 +564,12 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
     applyWalkTheme();
     mountPauseActions();
     showWalkPrivate(lobby.alias);
-    lobbyMusic.setActive(true);
+    if (!DOORWAY_VIEW) lobbyMusic.setActive(true);
     walkColor = color && WALK_COLORS.includes(color) ? color : savedWalkColor() ?? randomWalkColor();
     lobby.setColor(walkColor);
     showWalkColor(walkColor);
-    history.replaceState(null, '', '#walk');
+    // `from` has been used: a reload starts on a pad, as any other.
+    history.replaceState(null, '', `${window.location.pathname}${searchWithout('from')}#walk`);
     setWalkToggleLabel('Gallery mode');
     // Its first frame is on screen: the slow-load Gallery mode button is no longer needed.
     requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -567,6 +588,14 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
     walkLoading = false;
     walkToggle.disabled = false;
   }
+}
+
+/** This page's query without `name`, with its `?` (or empty). */
+function searchWithout(name: string): string {
+  const params = new URLSearchParams(window.location.search);
+  params.delete(name);
+  const query = params.toString();
+  return query ? `?${query}` : '';
 }
 
 /**

@@ -4,7 +4,8 @@ import { buildCity } from './world';
 
 const scene = new Scene();
 const camera = new PerspectiveCamera(76, window.innerWidth / window.innerHeight, 0.1, 400);
-const renderer = new WebGLRenderer({ antialias: true });
+// alpha: the lobby shows through the way back to it (lobbyPortal) under the canvas.
+const renderer = new WebGLRenderer({ antialias: true, alpha: true });
 renderer.shadowMap.enabled = true;
 document.body.appendChild(renderer.domElement);
 

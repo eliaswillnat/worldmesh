@@ -1,8 +1,14 @@
 let context: AudioContext | null = null;
+let silent = false;
+
+/** Never make a sound on this page (a lobby drawn in a world's lobby portal). */
+export function silence(): void {
+  silent = true;
+}
 
 /** The lobby's one audio context, made on first use and woken if the browser suspended it. Shared with the lobby music. */
 export function audio(): AudioContext | null {
-  if (typeof AudioContext === 'undefined') return null;
+  if (silent || typeof AudioContext === 'undefined') return null;
   if (!context) {
     context = new AudioContext();
     // Browsers keep audio off until the visitor does something; wake it then.
