@@ -42,6 +42,7 @@ const world = await loadWorldMesh({
     moveBeforeLock: true,
     title: 'Space Station - Demo',
     badge: false,
+    crosshair: false,
     hubUrl:
       import.meta.env.VITE_WORLDMESH_HUB ??
       (import.meta.env.DEV
