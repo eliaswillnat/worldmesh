@@ -22,7 +22,7 @@ Create world with AI  →  deploy it yourself  →  paste the URL into WorldMesh
 | the shared runtime (`@worldmesh/runtime`) | models, textures, environments |
 | the world directory | world-specific logic |
 | navigation conventions | large assets |
-| the compatibility standard | their own multiplayer servers, if they need them |
+| the compatibility standard | their own multiplayer, if they want any |
 
 ## Status
 
@@ -34,18 +34,16 @@ ActivityPub foundation, so creators can be followed from Mastodon as
 [docs/accounts-and-federation.md](docs/accounts-and-federation.md). No moderation of
 listed worlds yet. See [docs/roadmap.md](docs/roadmap.md).
 
-The hub also has a **walk mode**: the directory
-as a place. Every listed world is a doorway set into a round wall around a
-mirrored floor, showing its cover, and walking into one travels there. The lobby is black or white depending on each visitor's own
-light/dark setting. Everyone in
-walk mode sees everyone else, through the lobby's own presence relay in
-`workers/lobby`. Outside the citadel stands the tower city: a tower per
-category, floors of doors showing each world's poster or preview loop, a slow
-elevator up the middle and bridges between towers (see
-[docs/tower-city.md](docs/tower-city.md)). The billboard ad system
-(`workers/ads`, see [docs/advertising.md](docs/advertising.md)) is kept, but
-the towers have no screens for it yet, and the hub ads UI stays off until
-deliberately enabled (`AD_CONFIG.enabled` / `VITE_ADS_ENABLED`).
+The hub also has a **walk mode**: the directory as a place. It is one
+street, lined on both sides with plain storefront buildings standing wall to
+wall, one per listed world, each with its door facing the street. Visitors
+arrive at the top of the street as the default character and walk in through
+any door. Where a world supports it ([Doorway](docs/specs/doorway.md)), its
+door shows the world live, and the world's way back shows the street live.
+Walk mode is single-player and black or white depending on each visitor's own
+light/dark setting. The billboard ad system (`workers/ads`, see
+[docs/advertising.md](docs/advertising.md)) is kept, but the street has no
+screens for it, and the hub ads UI stays off.
 
 ## Repo layout
 
@@ -97,8 +95,7 @@ npm run dev:forest
 ```
 
 Open <http://localhost:5170>. Portals between worlds assume all six dev servers
-are running. To see other visitors in walk mode locally, also run
-`npm run dev:presence`.
+are running.
 
 ## Making a Three.js project WorldMesh-compatible
 
@@ -131,8 +128,7 @@ reference and [docs/controls.md](docs/controls.md) for the control convention.
 - [Compatibility](docs/compatibility.md) — the world-facing contract
 - [Controls](docs/controls.md) — the navigation convention
 - [Accounts and federation](docs/accounts-and-federation.md) — login, D1, ActivityPub
-- [Tower city](docs/tower-city.md) — walk mode's towers, doors, rotation and ranking
-- [Billboard advertising](docs/advertising.md) — paid, reviewed ads on walk mode's screens
+- [Billboard advertising](docs/advertising.md) — paid, reviewed ads (no screens in walk mode right now)
 - [Admin dashboard](docs/admin.md) — admin.worldmesh.net: users, worlds, live, ads, traffic, health
 - [Publishing](docs/publishing.md) — how the runtime is built and versioned
 - [Roadmap](docs/roadmap.md) — what is deliberately not built yet

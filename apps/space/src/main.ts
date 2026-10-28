@@ -17,8 +17,6 @@ const world = await loadWorldMesh({
   renderer,
   spawn: [0, 2, 14],
   colliders,
-  // Preview builds set VITE_PRESENCE_ENDPOINT to their own relay (docs/previews.md).
-  multiplayer: import.meta.env.VITE_PRESENCE_ENDPOINT ? { server: import.meta.env.VITE_PRESENCE_ENDPOINT } : true,
   vr: true,
   abilities: {
     flying: true,
@@ -30,12 +28,6 @@ const world = await loadWorldMesh({
     gravity: 12,
     jumpSpeed: 6.2,
     fallLimit: -40,
-  },
-  // Visitors arriving from the hub with a character picked in their Avatar
-  // Wallet walk around as it; everyone else keeps the default body.
-  avatar: {
-    source: 'worldmesh',
-    hubUrl: import.meta.env.VITE_WORLDMESH_HUB ?? (import.meta.env.DEV ? 'http://localhost:5170/' : 'https://worldmesh.net/'),
   },
   ui: {
     // No click-to-enter panel: WASD works from the first frame, Esc brings up the menu.

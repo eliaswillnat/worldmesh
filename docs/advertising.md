@@ -1,9 +1,8 @@
 # Billboard advertising
 
-> The plaza buildings that carried these screens were replaced by the tower
-> city ([tower-city.md](tower-city.md)), which has no screens yet, so walk mode
-> currently shows no billboards. Everything below still works and comes back
-> once the towers hand out billboard slots and ads are enabled (see below).
+> Walk mode is now a single street with no screens, so it shows no
+> billboards and no longer mounts the billboard code. The ads Worker and the
+> payment flow below are untouched, for if screens come back.
 
 The towers around the citadel in the hub's walk mode carry screens. Each one is
 a billboard anyone can book: €2, reviewed by hand, then shown for 30 days.

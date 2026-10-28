@@ -11,8 +11,7 @@
   },
   "dependencies": {
     "@worldmesh/runtime": "*",
-    "three": "^0.169.0",
-    "three-mesh-bvh": "^0.9.16"
+    "three": "^0.169.0"
   },
   "devDependencies": {
     "@types/three": "^0.169.0"

@@ -7,9 +7,7 @@
  * instead. Square piers stand at the block's corners, and one beam runs the
  * whole wall over every bay. avenues.ts turns this into geometry.
  *
- * Nothing here knows whether the wall is straight or curved: everything is
- * measured along it, so the same layout lines the city's straight streets
- * and bends round the hall.
+ * Everything is measured along the wall, from one corner to the other.
  */
 
 import { DOOR_HALF_SPAN, DOOR_TOP } from './door';
@@ -26,12 +24,6 @@ const DOOR_MARGIN = 0.6;
 export const STOREFRONT_HALF = DOOR_HALF_SPAN + DOOR_MARGIN + PIER_WIDTH / 2;
 /** A storefront bay, pier centre to pier centre: what each door takes along the wall. */
 export const STOREFRONT_WIDTH = STOREFRONT_HALF * 2;
-/**
- * A building lot (docs/specs/buildings.md §2) is its world's whole block,
- * with a forecourt this deep out in front, and this tall at most.
- */
-export const LOT_FORECOURT = 2;
-export const LOT_HEIGHT = 28;
 /** Blank bays come out about half a storefront wide, so the rhythm stays the same along every wall. */
 const BLANK_TARGET = STOREFRONT_HALF;
 /** Wall narrower than this between two bays is not a bay: the pier widens to fill it. */
@@ -61,7 +53,7 @@ export interface FacadeLevels {
   panelTop: number;
 }
 
-/** Out on the streets, under the blocks' cornice. */
+/** Out on the street, under the blocks' cornice. */
 export const STREET_LEVELS: FacadeLevels = {
   fasciaBottom: FASCIA_BOTTOM,
   fasciaTop: FASCIA_TOP,
@@ -70,24 +62,6 @@ export const STREET_LEVELS: FacadeLevels = {
   panelBottom: PANEL_BOTTOM,
   panelTop: PANEL_TOP,
 };
-
-/**
- * The same parts fitted under a ceiling, such as the rotunda's band of
- * screens: the beam just under it, the fascia as tall as is left over the doors.
- */
-export function levelsUnder(ceiling: number): FacadeLevels {
-  const beamTop = ceiling - 0.15;
-  const beamBottom = beamTop - 0.5;
-  const fasciaTop = beamBottom - 0.15;
-  return {
-    fasciaBottom: Math.min(FASCIA_BOTTOM, DOOR_TOP + 0.4),
-    fasciaTop,
-    beamBottom,
-    beamTop,
-    panelBottom: PANEL_BOTTOM,
-    panelTop: fasciaTop - 0.25,
-  };
-}
 
 /** Blank bays narrower than this keep a plain wall, without a panel. */
 const PANEL_MIN = PANEL_INSET * 2 + PANEL_RIM * 2 + 1;

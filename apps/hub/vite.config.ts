@@ -38,7 +38,6 @@ export default defineConfig({
   build: {
     target: 'es2022',
     // /music-credits is built from src/music/tracks.ts, so it is a page of its own here, not in public/.
-    // /review-building is where reviewers check worlds' buildings (docs/specs/buildings.md §5.2).
-    rolldownOptions: { input: { main: 'index.html', 'music-credits': 'music-credits.html', 'review-building': 'review-building.html' } },
+    rolldownOptions: { input: { main: 'index.html', 'music-credits': 'music-credits.html' } },
   },
 });

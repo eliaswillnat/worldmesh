@@ -24,8 +24,6 @@ interface WorldEntry {
   preview?: string | string[];
   featured?: boolean;
   source?: 'admin' | 'submitted' | 'demo' | 'discovered';
-  /** A demo world's building in the city, one of the hub's demo models. */
-  building?: string;
 }
 
 import communityWorldsJson from './community.json';
@@ -90,18 +88,6 @@ try {
  * serverless function. Leave unset to skip notifications.
  */
 const NOTIFY_WEBHOOK = import.meta.env.VITE_NOTIFY_WEBHOOK as string | undefined;
-/**
- * WebSocket base of workers/lobby, the lobby's own relay. Walk mode is
- * single-player without it. Its own variable: VITE_PRESENCE_ENDPOINT, set on
- * the Pages project, still means the free relay, as it does for the worlds.
- */
-const PRESENCE_ENDPOINT =
-  (import.meta.env.VITE_LOBBY_RELAY_ENDPOINT as string | undefined) ||
-  (import.meta.env.DEV ? 'ws://localhost:8787' : 'wss://lobby-relay.worldmesh.net');
-/** WebSocket base of workers/presence, the free relay the worlds behind the doors use: asked how full each one is. */
-const WORLD_RELAY_ENDPOINT =
-  (import.meta.env.VITE_PRESENCE_ENDPOINT as string | undefined) ||
-  (import.meta.env.DEV ? 'ws://localhost:8787' : 'wss://relay.worldmesh.net');
 function getDemoWorldUrl(envKey: string, localPort: number, defaultSubdomain: string): string {
   const envVal = import.meta.env[envKey] as string | undefined;
   if (envVal) return envVal;
@@ -125,9 +111,8 @@ const DEMO_WORLDS: WorldEntry[] = [
     creator: 'Elias Willnat',
     portfolio: 'https://x.com/eliaswillnat',
     categories: ['explore'],
-    tags: ['multiplayer', 'vr'],
+    tags: ['vr'],
     source: 'demo',
-    building: '/buildings/lodge.glb',
   },
   {
     name: 'Mars - Demo',
@@ -138,9 +123,8 @@ const DEMO_WORLDS: WorldEntry[] = [
     creator: 'Elias Willnat',
     portfolio: 'https://x.com/eliaswillnat',
     categories: ['space'],
-    tags: ['multiplayer', 'vr'],
+    tags: ['vr'],
     source: 'demo',
-    building: '/buildings/hangar.glb',
   },
   {
     name: 'Neon City - Demo',
@@ -151,9 +135,8 @@ const DEMO_WORLDS: WorldEntry[] = [
     creator: 'Elias Willnat',
     portfolio: 'https://x.com/eliaswillnat',
     categories: ['explore'],
-    tags: ['multiplayer', 'vr'],
+    tags: ['vr'],
     source: 'demo',
-    building: '/buildings/neon-tower.glb',
   },
   {
     name: 'Medieval Village - Demo',
@@ -164,9 +147,8 @@ const DEMO_WORLDS: WorldEntry[] = [
     creator: 'Elias Willnat',
     portfolio: 'https://x.com/eliaswillnat',
     categories: ['explore'],
-    tags: ['multiplayer', 'vr'],
+    tags: ['vr'],
     source: 'demo',
-    building: '/buildings/gatehouse.glb',
   },
   {
     name: 'Space Station - Demo',
@@ -177,26 +159,22 @@ const DEMO_WORLDS: WorldEntry[] = [
     creator: 'Elias Willnat',
     portfolio: 'https://x.com/eliaswillnat',
     categories: ['space'],
-    tags: ['multiplayer', 'vr'],
+    tags: ['vr'],
     source: 'demo',
-    building: '/buildings/observatory.glb',
   },
 ];
 
 let communityWorlds: WorldEntry[] = communityWorldsStatic as WorldEntry[];
 const ALL_WORLDS: WorldEntry[] = [...communityWorlds, ...DEMO_WORLDS];
 
-/** Lobby doors: community worlds plus the five demos, each in its own building out in the city (demos stay in the gallery too). */
+/** Lobby doors: community worlds plus the five demos, a building each down the street (demos stay in the gallery too). */
 function lobbyWorlds(): WorldEntry[] {
   return ALL_WORLDS;
 }
 
-import { accountDialogPending, beforeAccountDialogOpens, getAccountId, getUsername, initAccount, onAccountChange, openAccountDialog } from './account';
-import { setBuildingWorlds } from './myBuildings';
+import { accountDialogPending, beforeAccountDialogOpens, getAccountId, initAccount, onAccountChange } from './account';
 
 initAccount();
-// My buildings offers the worlds listed here to put a building on.
-setBuildingWorlds(lobbyWorlds());
 
 /**
  * Whether walk-mode billboard ads are mounted. Defaults to `AD_CONFIG.enabled`
@@ -398,15 +376,11 @@ const communityLoaded = fetchCommunityWorlds();
 if (!DOORWAY_VIEW) recordHubVisit();
 
 // ── Walk mode ────────────────────────────────────────────────────────────────
-// The same directory as a place: every world is a door on a grid. Three.js
+// The same directory as a place: one street with a door per world. Three.js
 // and the runtime load only when someone asks for it.
 
 const walkToggle = document.querySelector<HTMLButtonElement>('#walk-toggle')!;
-const walkOnline = document.querySelector<HTMLDivElement>('#walk-online')!;
-const walkPrivate = document.querySelector<HTMLButtonElement>('#walk-private')!;
 const walkColors = document.querySelector<HTMLDivElement>('#walk-colors')!;
-/** Remembered per browser, so a reload never quietly makes someone public again. */
-const PRIVATE_KEY = 'worldmesh.walkPrivate';
 /** How long walk mode waits for the full world list before bringing someone out of a world's door. */
 const COMMUNITY_WAIT_MS = 2000;
 /** Where someone left the lobby into a world, so coming back puts them there. This tab only. */
@@ -496,9 +470,8 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
   walkToggle.disabled = true;
   let imported = false;
   try {
-    const [{ createLobby }, { hubBuildingDirectory }] = await Promise.all([
+    const [{ createLobby }] = await Promise.all([
       import('./walk/lobby'),
-      import('./walk/buildingDirectory'),
       // Back through a world's lobby portal: its door is looked up once, so let the full list in first.
       FROM_WORLD && !start && !DOORWAY_VIEW ? Promise.race([communityLoaded, new Promise((resolve) => setTimeout(resolve, COMMUNITY_WAIT_MS))]) : null,
     ]);
@@ -514,47 +487,11 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
       from: FROM_WORLD,
       doorwayView: DOORWAY_VIEW,
       light: walkIsLight(),
-      presenceEndpoint: PRESENCE_ENDPOINT,
-      worldRelayEndpoint: WORLD_RELAY_ENDPOINT,
-      playerName: getUsername,
-      private: loadWalkPrivate(),
-      color,
-      ads: adsEnabled(),
-      // Worlds' approved buildings (docs/specs/buildings.md); ?buildings=demo puts the demo ones on the city's first lots.
-      buildings: new URLSearchParams(window.location.search).get('buildings') === 'demo' ? 'demo' : hubBuildingDirectory,
-      onPresenceCount: (count) => {
-        const prev = walkOnline.dataset.count != null ? Number(walkOnline.dataset.count) : null;
-        if (count === null) {
-          delete walkOnline.dataset.count;
-          walkOnline.textContent = '';
-        } else {
-          walkOnline.dataset.count = String(count);
-          showWalkOnline();
-          if (prev !== null && count > prev) {
-            walkOnline.classList.remove('glow');
-            void walkOnline.offsetWidth;
-            walkOnline.classList.add('glow');
-          }
-        }
-      },
       onListener: (x, y, z, radius) => lobbyMusic.setListener(x, y, z, radius),
       onEnterWorld: (world, returnTo) => {
         trackClick(world.url);
         saveWalkReturn(returnTo, walkColor);
       },
-      onAddWorld: openAddFormFromWalk,
-      onClaimWorld: (world) => {
-        const entry: WorldEntry = {
-          id: `${slugify(world.name) || 'world'}-${Math.random().toString(36).substring(2, 8)}`,
-          name: world.name,
-          url: world.url,
-          email: world.email,
-          submittedAt: new Date().toISOString(),
-        };
-        notifySubmission(entry);
-      },
-      // Lifetime visits, for ranking in the towers (see discovery/ranking.ts).
-      signals: { signals: (world) => ({ views: viewCounts[world.url] }) },
       // The same counter, shown beside each door as "entries".
       entries: (url) => {
         const count = viewCounts[url];
@@ -563,12 +500,11 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
     });
     applyWalkTheme();
     mountPauseActions();
-    showWalkPrivate(lobby.alias);
     if (!DOORWAY_VIEW) lobbyMusic.setActive(true);
     walkColor = color && WALK_COLORS.includes(color) ? color : savedWalkColor() ?? randomWalkColor();
     lobby.setColor(walkColor);
     showWalkColor(walkColor);
-    // `from` has been used: a reload starts on a pad, as any other.
+    // `from` has been used: a reload starts at the top of the street, as any other.
     history.replaceState(null, '', `${window.location.pathname}${searchWithout('from')}#walk`);
     setWalkToggleLabel('Gallery mode');
     // Its first frame is on screen: the slow-load Gallery mode button is no longer needed.
@@ -616,17 +552,7 @@ function reloadIntoWalk(): boolean {
   return true;
 }
 
-/** "3 online", plus the hub's all-time visits once they have loaded. */
-function showWalkOnline(): void {
-  const count = walkOnline.dataset.count;
-  if (count == null) return;
-  const visits = viewCounts[HUB_VISIT_KEY];
-  walkOnline.textContent = visits ? `${count} online · ${visits.toLocaleString('en')} visits` : `${count} online`;
-}
-
 function exitWalkMode(): void {
-  pauseWatch?.disconnect();
-  pauseWatch = null;
   lobbyMusic.setActive(false);
   lobby?.dispose();
   lobby = null;
@@ -635,35 +561,8 @@ function exitWalkMode(): void {
   document.documentElement.classList.remove('walking', 'walk-ready', 'walk-stalled');
   delete document.documentElement.dataset.walkTheme;
   setThemeColor(null);
-  delete walkOnline.dataset.count;
   history.replaceState(null, '', `${window.location.pathname}${window.location.search}#list`);
   setWalkToggleLabel('Walk between worlds');
-}
-
-// Private mode: a ghost with a made-up name, back at the start. P asks the
-// same way the button does, including while the mouse is captured.
-document.addEventListener('click', (event) => {
-  const target = event.target instanceof Element ? event.target : null;
-  if (target?.closest('.walk-private')) void confirmPrivate();
-});
-window.addEventListener('keydown', (event) => {
-  if (!lobby || event.code !== 'KeyP' || event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
-  const target = event.target as HTMLElement | null;
-  if (target?.closest('input, textarea, select, [contenteditable="true"]')) return;
-  void confirmPrivate();
-});
-
-function toggleWalkPrivate(): void {
-  if (!lobby) return;
-  const on = walkPrivate.getAttribute('aria-pressed') !== 'true';
-  const alias = lobby.setPrivate(on);
-  try {
-    if (alias) localStorage.setItem(PRIVATE_KEY, '1');
-    else localStorage.removeItem(PRIVATE_KEY);
-  } catch {
-    // Storage blocked: private mode just lasts until the page is left.
-  }
-  showWalkPrivate(alias);
 }
 
 function saveWalkReturn(spot: import('./walk/lobby').WalkSpot, color: string): void {
@@ -692,15 +591,6 @@ function takeWalkReturn(): { spot: import('./walk/lobby').WalkSpot; color: strin
   }
 }
 
-function loadWalkPrivate(): boolean {
-  try {
-    return localStorage.getItem(PRIVATE_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
-
-/** alias: the made-up name while private, or null while public. */
 function showWalkColor(color: string): void {
   for (const swatch of document.querySelectorAll<HTMLButtonElement>('.walk-colors button')) {
     swatch.setAttribute('aria-pressed', String(swatch.dataset.color === color));
@@ -761,17 +651,6 @@ onAccountChange(() => {
   }
 });
 
-function showWalkPrivate(alias: string | null): void {
-  const label = alias === null ? 'Go private' : `Private · ${alias}`;
-  const title = alias === null ? 'Private mode (P)' : 'Go public again (P)';
-  for (const button of document.querySelectorAll<HTMLButtonElement>('.walk-private')) {
-    button.setAttribute('aria-pressed', String(alias !== null));
-    button.title = title;
-    const text = button.querySelector('.walk-private-label');
-    if (text) text.textContent = label;
-  }
-}
-
 /** The pause screen's music switch, and the song playing with a link to its credit. */
 function showLobbyMusic(): void {
   const on = lobbyMusic.enabled;
@@ -828,19 +707,6 @@ async function confirmLeaveWalk(): Promise<void> {
   if (yes) exitWalkMode();
 }
 
-async function confirmPrivate(): Promise<void> {
-  if (!lobby) return;
-  const turningOn = walkPrivate.getAttribute('aria-pressed') !== 'true';
-  const yes = await askWalk(
-    turningOn ? 'Go private?' : 'Go public again?',
-    turningOn
-      ? 'You show up as a plain figure under a made-up name. Your username stays hidden, and your own avatar does not come with you into worlds. You are sent back to the start, so the two visits cannot be followed from one to the other.'
-      : 'Your username shows again, and you are sent back to the start as a new arrival.',
-    turningOn ? 'Go private' : 'Go public',
-  );
-  if (yes) toggleWalkPrivate();
-}
-
 /** Copies of the corner controls, so the pause screen can use them too. */
 function mountPauseActions(): void {
   const content = document.querySelector('.wm-lock-content');
@@ -860,17 +726,6 @@ function mountPauseActions(): void {
   discord.rel = 'noopener noreferrer';
   discord.textContent = 'Feedback on Discord';
 
-  const priv = document.createElement('button');
-  priv.type = 'button';
-  priv.className = 'walk-private';
-  priv.setAttribute('aria-pressed', 'false');
-  const icon = walkPrivate.querySelector('svg');
-  if (icon) priv.appendChild(icon.cloneNode(true));
-  const privLabel = document.createElement('span');
-  privLabel.className = 'walk-private-label';
-  privLabel.textContent = 'Go private';
-  priv.appendChild(privLabel);
-
   const theme = document.createElement('div');
   theme.className = 'walk-theme';
   theme.setAttribute('role', 'group');
@@ -888,16 +743,9 @@ function mountPauseActions(): void {
     theme.appendChild(button);
   }
 
-  // Shown while paused near a world's building (docs/specs/buildings.md §8).
-  const report = document.createElement('button');
-  report.type = 'button';
-  report.className = 'walk-report';
-  report.textContent = 'Report this building';
-  report.hidden = true;
-
   const colors = walkColors.cloneNode(true) as HTMLDivElement;
   colors.removeAttribute('id');
-  bar.append(gallery, discord, priv, report);
+  bar.append(gallery, discord);
   if (lobbyMusic.supported) {
     const music = document.createElement('button');
     music.type = 'button';
@@ -918,59 +766,6 @@ function mountPauseActions(): void {
   applyThemeChoice(choice);
   showWalkColor(walkColor);
   showLobbyMusic();
-  watchPauseForBuildings(report);
-}
-
-let pauseWatch: { disconnect(): void } | null = null;
-
-/**
- * While the pause screen is open: is a world's building standing near enough
- * to report? Looked at as it opens, and again each second, since a building
- * can finish loading while the screen is up.
- */
-function watchPauseForBuildings(report: HTMLButtonElement): void {
-  pauseWatch?.disconnect();
-  const overlay = document.querySelector<HTMLElement>('.wm-overlay');
-  if (!overlay) return;
-  const update = () => {
-    const near = overlay.dataset.locked !== 'true' ? lobby?.nearbyBuilding() : null;
-    report.hidden = !near;
-    if (near) report.setAttribute('aria-label', `Report the building of ${near.name}`);
-  };
-  const observer = new MutationObserver(update);
-  observer.observe(overlay, { attributes: true, attributeFilter: ['data-locked'] });
-  const timer = window.setInterval(update, 1000);
-  pauseWatch = {
-    disconnect() {
-      observer.disconnect();
-      window.clearInterval(timer);
-    },
-  };
-  update();
-}
-
-document.addEventListener('click', (event) => {
-  const target = event.target instanceof Element ? event.target : null;
-  if (!target?.closest('.walk-report') || !lobby) return;
-  const near = lobby.nearbyBuilding();
-  if (!near) return;
-  void import('./walk/reportBuilding').then(({ openBuildingReport }) =>
-    openBuildingReport({
-      ...near,
-      light: walkIsLight(),
-      signedIn: getAccountId() !== null,
-      // Opening the account dialog takes the visitor to the gallery, where it lives.
-      onSignIn: openAccountDialog,
-    }),
-  );
-});
-
-/** An empty door in the lobby was picked: back to the list, straight into the add form. */
-function openAddFormFromWalk(): void {
-  exitWalkMode();
-  form.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  input.focus({ preventScroll: true });
-  setStatus("Paste your world's URL to give it a door in the lobby.");
 }
 
 /** Darken the mobile browser's toolbar while walking; null restores the page's own colours. */
@@ -1000,7 +795,6 @@ async function fetchCommunityWorlds(): Promise<void> {
     ALL_WORLDS.push(...communityWorlds, ...DEMO_WORLDS);
     render();
     lobby?.setWorlds(lobbyWorlds());
-    setBuildingWorlds(lobbyWorlds());
     fetchViewCounts(ALL_WORLDS.map((w) => w.url));
   } catch {
     // Fall back to demo worlds only
@@ -1304,7 +1098,6 @@ function trackClick(url: string): void {
         viewCounts[url] = data.views;
         render();
         lobby?.refreshEntries();
-        showWalkOnline();
       }
     })
     .catch(() => {});
@@ -1321,7 +1114,6 @@ async function fetchViewCounts(urls: string[]): Promise<void> {
     }
     render();
     lobby?.refreshEntries();
-    if (HUB_VISIT_KEY in counts) showWalkOnline();
   } catch {
     // Network or server error — keep existing counts.
   }

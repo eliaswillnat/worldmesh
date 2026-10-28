@@ -121,8 +121,10 @@ cheap: rooms with nobody in them, or where nobody moves (clients send only a
 keep-alive the relay answers without waking the room), hibernate and cost
 nothing.
 
-WorldMesh pays for multiplayer in its own city and offers a bounded free relay
-to everyone else, so third-party growth cannot become an open-ended bill or
+The hub's own lobby no longer uses it (October 2026: the lobby is a
+single-player street). The relay below still serves worlds that already pass
+`multiplayer`, but the connect instructions no longer offer it. WorldMesh
+offered a bounded free relay to everyone else, so third-party growth cannot become an open-ended bill or
 take the hub down:
 
 - the hub lobby runs on its own Worker (`workers/lobby`, `lobby-relay.worldmesh.net`),

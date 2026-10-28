@@ -5,8 +5,10 @@ project. Follow them in order. Ask the creator only where a step says to.
 
 WorldMesh links independently hosted 3D worlds. A connected world gets the
 shared WorldMesh controls (WASD, mouse look, jump, first/third person, touch),
-portals to other worlds, and multiplayer: visitors see each other. The world
-stays on the creator's own hosting. No WorldMesh account or server is needed.
+portals to other worlds, and a way back to the WorldMesh lobby that shows the
+lobby live. In the lobby, its door shows the world live in the same way. The
+world stays on the creator's own hosting. No WorldMesh account or server is
+needed.
 
 ## 1. Check the project
 
@@ -15,7 +17,7 @@ stays on the creator's own hosting. No WorldMesh account or server is needed.
 - **Anything else** (Babylon.js, PlayCanvas, Unity, Godot, Unreal, A-Frame):
   stop. The WorldMesh runtime only supports Three.js. Tell the creator they
   can still submit the world at https://worldmesh.net if it uses the standard
-  controls in step 4, but it will not get WorldMesh multiplayer or portals.
+  controls in step 4, but it will not get WorldMesh portals or the live way back.
 
 ## 2. Install
 
@@ -59,7 +61,6 @@ const world = await loadWorldMesh({
   renderer,
   spawn: [0, 2, 0],      // where visitors appear: feet position, above the floor
   colliders: [ground, ...walls], // meshes to stand on and bump into
-  multiplayer: true,     // visitors see each other
 });
 ```
 
@@ -80,10 +81,9 @@ the world then keeps the runtime it was built with.
   project's own `requestAnimationFrame` render loop and resize handler, and
   move per-frame logic into `onUpdate: (dt, world) => { ... }`.
 
-**Already running a multiplayer backend** (Nakama, Colyseus, PartyKit,
-Supabase Realtime, Ably, a WebSocket server of its own)? Leave `multiplayer`
-out and pass a `network` adapter for it instead: see "Your own network layer"
-in the full reference (link at the end), with a complete example.
+**Already running multiplayer of its own?** Keep it. WorldMesh does not
+provide multiplayer; read the player's position from `world.getState()` to
+send it.
 
 **React Three Fiber:** create the world inside a component, let R3F keep
 rendering, and step WorldMesh from `useFrame`:
@@ -100,7 +100,7 @@ function WorldMesh({ colliders }) {
     let unmounted = false;
     loadWorldMesh({
       scene, camera, renderer: gl,
-      colliders, spawn: [0, 2, 0], multiplayer: true,
+      colliders, spawn: [0, 2, 0],
       autoStart: false, autoResize: false,
     }).then((created) => {
       if (unmounted) created.dispose();
@@ -171,12 +171,6 @@ Run the dev server and open the world:
 3. The player stands on the floor, does not fall through it, and cannot walk
    through walls. If the player falls forever, the floor is missing from
    `colliders`. Falling off the world respawns at `spawn`.
-4. Open the same page in a second browser window. Each window shows the other
-   visitor as a figure.
-
-Multiplayer needs the page to load from `http://` or `https://`. It does not
-work from a `file://` URL. If the relay cannot be reached, the world keeps
-working single-player.
 
 ## 7. Publish
 
@@ -186,19 +180,7 @@ reviewed before they appear on the hub.
 
 ## Rules
 
-- The hosted relay is free within limits: 16 people per world at once, and
-  240 active minutes per world per day (UTC; only time when someone is moving
-  counts). Past the daily allowance, new visitors are single-player until
-  00:00 UTC and the browser console says why. Creators who need more run
-  their own relay, in one click on their own Cloudflare account:
-  https://deploy.workers.cloudflare.com/?url=https://github.com/eliaswillnat/worldmesh/tree/main/templates/relay
-  (or `npm create cloudflare@latest my-relay -- --template=eliaswillnat/worldmesh/templates/relay`,
-  then `npx wrangler deploy`). It has no daily limit, and `MAX_WORLD_PEERS`
-  sets how many people fit in a world. Then pass
-  `multiplayer: { server: 'wss://worldmesh-relay.<their-subdomain>.workers.dev' }`.
-  Tell the creator about these limits when you turn multiplayer on.
-- Using WorldMesh means agreeing to https://worldmesh.net/terms. The
-  privacy policy at https://worldmesh.net/privacy explains what
-  multiplayer shares between visitors.
+- Using WorldMesh means agreeing to https://worldmesh.net/terms and
+  https://worldmesh.net/privacy.
 
 Full reference: https://github.com/eliaswillnat/worldmesh/blob/main/docs/compatibility.md
