@@ -411,6 +411,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     vr: true,
     // The lobby is where the way back leads.
     lobbyPortal: false,
+    // Twice the runtime's usual pace (5.2 and 9 m/s): the street is long.
+    movement: { walkSpeed: 10.4, sprintSpeed: 18 },
     // Nothing in the street to interact with: no E button on touch screens.
     ui: { title: 'WorldMesh', badge: false, crosshair: false, deferLockPanel: true, moveBeforeLock: true, interactButton: false },
     colliders: () => [
