@@ -77,7 +77,7 @@ exports (`Presence`, `createNameTag`, …) is the installed version.
 | `multiplayer` | off | `true` shows everyone else in your world through the relay WorldMesh hosts; `{ server: 'wss://…' }` uses your own. See below. |
 | `network` | — | Your own multiplayer backend instead of the relay; replaces `multiplayer`. See [Your own network layer](#your-own-network-layer). |
 | `vr` | on | Shows **Enter VR** and calls `navigator.xr.requestSession('immersive-vr')` when the headset browser supports it. `false` hides the control. |
-| `ui` | all on | `title`, `hubUrl`, `crosshair`, `badge`, `controlsHint`. |
+| `ui` | all on | `title`, `hubUrl`, `crosshair`, `badge`, `controlsHint`, `interactButton` (the E button on touch screens; `false` hides it). |
 | `autoStart` | `true` | `false` if you drive your own loop. |
 | `autoResize` | `true` | `false` if the canvas is not full-window. |
 | `onUpdate` | — | `(dt, world) => void`, after movement, before render. |

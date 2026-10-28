@@ -411,9 +411,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     vr: true,
     // The lobby is where the way back leads.
     lobbyPortal: false,
-    // Minecraft-style flight: double-tap Space.
-    abilities: { flying: true },
-    ui: { title: 'WorldMesh', badge: false, crosshair: false, deferLockPanel: true, moveBeforeLock: true },
+    // Nothing in the street to interact with: no E button on touch screens.
+    ui: { title: 'WorldMesh', badge: false, crosshair: false, deferLockPanel: true, moveBeforeLock: true, interactButton: false },
     colliders: () => [
       ground,
       ...(exitDoor ? [exitDoor.face] : []),
