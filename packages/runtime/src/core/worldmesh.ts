@@ -13,7 +13,8 @@ import { CollisionWorld } from '../movement/collision.js';
 import { MovementController } from '../movement/controller.js';
 import { expressionForDigit, isAvatarExpression, setAvatarColor } from '../player/avatar.js';
 import { Player } from '../player/player.js';
-import { PortalManager, buildTravelUrl, type ResolvedPortal } from '../portals/portals.js';
+import { LobbyPortal } from '../portals/lobbyPortal.js';
+import { PortalManager, buildTravelUrl, getReferringWorld, type ResolvedPortal } from '../portals/portals.js';
 import type {
   PlayerState,
   Vec3Tuple,
@@ -52,6 +53,8 @@ export const DOORWAY_VIEW_PARAM = 'doorway-view';
 const VIEW_SPAWN_BEHIND = 0.6;
 /** Seconds a live view waits for the player to land at spawn before saying it is ready. */
 const VIEW_SETTLE = 2;
+/** The lobby portal's default place: this far behind the spawn point, facing it. */
+const LOBBY_PORTAL_BEHIND = 2.5;
 /** The pre-Doorway names, still understood: `worldmesh:*` messages. */
 const isDoorwayMessage = (data: unknown, name: string): boolean => {
   const type = (data as { type?: unknown } | null)?.type;
@@ -128,6 +131,8 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   });
 
   const cameraRig = new CameraRig({ ...options.view, mode: rememberedView ?? options.view?.mode, camera, collision });
+  /** The way the visitor faces on arrival, before anything turns them. */
+  const spawnYaw = cameraRig.yaw;
   const landingMarker = new LandingMarker();
   scene.add(landingMarker.root);
   const player = new Player({ ...options.player, height, radius });
@@ -144,6 +149,9 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   });
 
   const portals = new PortalManager(scene, options.portals);
+  /** The way back to the lobby, once it is open (openLobbyPortal). */
+  let lobbyPortal: LobbyPortal | null = null;
+  let leftForLobby = false;
 
   let running = false;
   let lastTime = 0;
@@ -245,6 +253,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   } else goOnline();
 
   if (!viewing) startAvatar();
+  if (!viewing) openLobbyPortal();
   if (vrEnabled && !viewing) void offerVr();
 
   return handle;
@@ -252,9 +261,16 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
   /**
    * Live doorway view: watch the room, so the people in it show through the
    * doorway, without joining it. Walked into, goOnline joins on the same
-   * connection. A world's own network adapter waits for the walk-in.
+   * connection. A world's own network adapter waits for the walk-in, unless
+   * it is a relay client made only to watch (the hub's lobby, drawn in a
+   * world's lobby portal).
    */
   function watchOnline(): void {
+    if (options.network instanceof Presence && options.network.watching) {
+      network = options.network;
+      network.attach(handle);
+      return;
+    }
     if (options.network) return;
     network = createMultiplayer(true);
     network?.attach(handle);
@@ -322,6 +338,8 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     if (disposed) return;
     takePose(poseFromDoor(message.pose));
     viewing = false;
+    // The address names the lobby they came from now.
+    openLobbyPortal();
     pendingView = null;
     document.documentElement.classList.remove(DOORWAY_VIEW_CLASS);
     handleResize();
@@ -598,8 +616,63 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
       scene.updateMatrixWorld();
       stepDoorwayView();
     } else {
+      if (lobbyPortal?.update(dt, camera, controller.position, !renderer.xr.isPresenting)) goToLobby();
       renderer.render(scene, camera);
     }
+  }
+
+  /**
+   * The way back to the lobby (`lobbyPortal`): for visitors who came from a
+   * WorldMesh lobby, back to that one, or for everyone if the world set it up.
+   */
+  function openLobbyPortal(): void {
+    const setting = options.lobbyPortal;
+    if (setting === false || lobbyPortal || disposed) return;
+    const hubs = [
+      setting?.url,
+      options.ui?.hubUrl,
+      options.avatar?.source === 'worldmesh' ? options.avatar.hubUrl : undefined,
+      DEFAULT_HUB,
+    ].filter((hub): hub is string => !!hub);
+    const from = getReferringWorld();
+    const fromLobby = from !== null && hubs.some((hub) => sameOrigin(hub, from));
+    if (!fromLobby && !setting) return;
+    // Behind the spawn point, on the ground, facing it. Nothing has been drawn yet to place the ground.
+    const position = new Vector3(Math.sin(spawnYaw), 0, Math.cos(spawnYaw)).multiplyScalar(LOBBY_PORTAL_BEHIND).add(spawn);
+    scene.updateMatrixWorld();
+    const ground = collision.sampleGround(position, 1, 50).y;
+    if (Number.isFinite(ground)) position.y = ground;
+    if (setting && setting.position) position.set(...setting.position);
+    lobbyPortal = new LobbyPortal({
+      scene,
+      renderer,
+      url: fromLobby ? from : hubs[0],
+      mesh: setting ? setting.mesh : undefined,
+      position,
+      yaw: setting && typeof setting.yaw === 'number' ? setting.yaw : spawnYaw + Math.PI,
+      width: (setting && setting.width) || 2,
+      height: (setting && setting.height) || 3,
+      color: (setting && setting.color) ?? 0x6cf0ff,
+    });
+  }
+
+  /** Walked through the lobby portal: back to the lobby, which brings them out of this world's door. */
+  function goToLobby(): void {
+    const portal = lobbyPortal;
+    if (!portal || leftForLobby) return;
+    const url = buildTravelUrl(portal.url);
+    let cancelled = false;
+    events.emit('portal:activate', {
+      portal: { url: portal.url, label: 'WorldMesh lobby', position: portal.mesh.getWorldPosition(new Vector3()).toArray() as Vec3Tuple },
+      url,
+      preventDefault: () => {
+        cancelled = true;
+      },
+    });
+    if (cancelled) return;
+    leftForLobby = true;
+    input.release();
+    leaveFor(url);
   }
 
   async function offerVr(): Promise<void> {
@@ -921,11 +994,20 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     input.dispose();
     overlay.dispose();
     portals.dispose();
+    lobbyPortal?.dispose();
     landingMarker.dispose();
     player.dispose();
     footsteps?.dispose();
     if (vrEnabled) scene.remove(xrOrigin);
     events.clear();
+  }
+}
+
+function sameOrigin(a: string, b: string): boolean {
+  try {
+    return new URL(a, window.location.href).origin === new URL(b, window.location.href).origin;
+  } catch {
+    return false;
   }
 }
 

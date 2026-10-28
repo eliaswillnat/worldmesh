@@ -1062,6 +1062,8 @@
       .walk-root .door-live iframe { display: block; width: 100%; height: 100%; border: 0; }
       .walk-root .door-live.entered { z-index: 2; pointer-events: auto; }
       html.world-entered body > :not(.walk-root), html.world-entered .walk-root > :not(.door-live) { display: none !important; }
+      /* Drawn in a world's lobby portal (?doorway-view): the lobby's canvas and nothing else. */
+      html.doorway-view body > :not(.walk-root), html.doorway-view .walk-root > :not(canvas) { display: none !important; }
       /* Through a portal: the view softens and saturates as the lens pulls wide, and clears coming out. */
       .walk-root canvas.lensing { filter: blur(3px) saturate(1.5); transition: filter .45s ease-in; }
       .walk-flash {
