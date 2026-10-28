@@ -10,6 +10,8 @@ export interface InputOptions {
   keymap?: Partial<Keymap>;
   /** Keyboard and joysticks work before the cursor is captured. */
   moveBeforeLock?: boolean;
+  /** Show the E button among the touch controls (default true). */
+  interactButton?: boolean;
   onPointerLockChange?: (locked: boolean) => void;
   /**
    * Escape toggles the pause screen. Return true when this press captures
@@ -96,6 +98,7 @@ export class Input {
     if (typeof window !== 'undefined') {
       this.touch = new TouchControls({
         element: this.element,
+        interactButton: options.interactButton,
         onExit: () => this.exitPointerLock(),
       });
     }

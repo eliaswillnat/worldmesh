@@ -1,5 +1,10 @@
 # Buildings: a world's own front in the hub city
 
+> **Not used by the hub (October 2026).** The lobby is now one street of
+> default buildings, and worlds can no longer put up a building of their own:
+> My buildings, the review page and the build-a-building guide are gone.
+> Kept as a reference for the draft format.
+
 **Status:** Draft 0.5, October 2026. Every step (§9) is built: demo
 buildings stand on the city's first lots with `?buildings=demo`, accounts
 have My buildings, a building linked to a world and approved stands in place

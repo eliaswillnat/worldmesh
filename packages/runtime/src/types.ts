@@ -200,6 +200,11 @@ export interface UiOptions {
    * them until Continue. The first click captures the cursor for unlimited turning.
    */
   moveBeforeLock?: boolean;
+  /**
+   * The E button among the touch controls. On by default; turn it off in a
+   * world where E does nothing. The E key on a keyboard is unaffected.
+   */
+  interactButton?: boolean;
 }
 
 /** Everything another peer would need to draw this player. Serializable on purpose. */

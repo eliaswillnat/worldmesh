@@ -6,12 +6,7 @@
  *
  * Visitors who have never signed in cost nothing: /api/account/me is only
  * asked when this browser has signed in before.
- *
- * Signed in, the dialog also offers "Choose your character" (./avatars.ts).
  */
-
-import { characterSummary, initAvatarWallet, setSignedIn, walletView } from './avatars';
-import { buildingsSummary, buildingsView, initBuildings, setBuildingsSignedIn } from './myBuildings';
 
 interface AccountUser {
   id: string;
@@ -53,12 +48,6 @@ let view: View = 'sign-in';
 let resetToken: string | null = null;
 /** Kept across re-renders so a failed attempt doesn't wipe what was typed. */
 let draft = { name: '', email: '', password: '' };
-/** Which page of the signed-in dialog is showing. */
-let signedInView: 'account' | 'wallet' | 'buildings' = 'account';
-/** Came back from connecting an avatar platform: open the wallet once signed in. */
-let openWallet = false;
-/** Came back from a platform's page opened in My buildings: open that once signed in. */
-let openBuildings = false;
 /** "Continue with Bluesky" was picked: ask for the handle in its place. */
 let atprotoOpen = false;
 
@@ -80,12 +69,11 @@ export function beforeAccountDialogOpens(listener: () => void): void {
 }
 
 /**
- * Whether the dialog is open, or about to open once the account is known
- * (back from a platform's page opened in My characters or My buildings).
- * The page starts in the gallery then, not in walk mode.
+ * Whether the dialog is open. The page starts in the gallery then, not in
+ * walk mode.
  */
 export function accountDialogPending(): boolean {
-  return dialog.open || openWallet || openBuildings;
+  return dialog.open;
 }
 
 function showDialog(): void {
@@ -96,7 +84,6 @@ function showDialog(): void {
 export function openAccountDialog(): void {
   message = null;
   atprotoOpen = false;
-  signedInView = 'account';
   if (view === 'forgot' || (view === 'reset' && !resetToken)) view = 'sign-in';
   renderDialog();
   showDialog();
@@ -138,13 +125,6 @@ function safeReturnPath(value: string | null): string | null {
 }
 
 export function initAccount(): void {
-  // First: a trip begun in My buildings comes back with the same parameters as the wallet's.
-  openBuildings = initBuildings(() => {
-    if (dialog.open) renderDialog();
-  }) !== null;
-  openWallet = initAvatarWallet(() => {
-    if (dialog.open) renderDialog();
-  }) !== null;
   button.addEventListener('click', openAccountDialog);
   dialog.addEventListener('click', (event) => {
     // A click on the backdrop (the dialog element itself) closes it.
@@ -200,18 +180,9 @@ async function refresh(openIfNoUsername: boolean): Promise<void> {
     if (!response.ok) return;
     user = ((await response.json()) as { user: AccountUser | null }).user;
     setHint(!!user);
-    setSignedIn(!!user);
-    setBuildingsSignedIn(!!user);
     renderButton();
     for (const listener of accountListeners) listener();
     if (dialog.open) renderDialog();
-    if (user && (openWallet || openBuildings)) {
-      signedInView = openBuildings ? 'buildings' : 'wallet';
-      openWallet = false;
-      openBuildings = false;
-      renderDialog();
-      showDialog();
-    }
     if (user && !user.username && openIfNoUsername) {
       renderDialog();
       showDialog();
@@ -360,8 +331,6 @@ async function signOut(): Promise<void> {
     if (!response.ok) throw new Error('Could not log out.');
     user = null;
     setHint(false);
-    setSignedIn(false);
-    setBuildingsSignedIn(false);
     renderButton();
     for (const listener of accountListeners) listener();
     dialog.close();
@@ -431,20 +400,6 @@ function renderDialog(): void {
   body.append(closeButton());
   if (!user) {
     renderSignedOut();
-  } else if (signedInView === 'wallet') {
-    body.append(
-      ...walletView(() => {
-        signedInView = 'account';
-        renderDialog();
-      }),
-    );
-  } else if (signedInView === 'buildings') {
-    body.append(
-      ...buildingsView(() => {
-        signedInView = 'account';
-        renderDialog();
-      }),
-    );
   } else {
     const who = document.createElement('div');
     who.className = 'account-who';
@@ -462,18 +417,6 @@ function renderDialog(): void {
     who.append(avatar(user, 'account-avatar large'), text);
     body.append(who);
     if (!user.username) body.append(usernameForm());
-    body.append(
-      characterSummary(() => {
-        signedInView = 'wallet';
-        message = null;
-        renderDialog();
-      }),
-      buildingsSummary(() => {
-        signedInView = 'buildings';
-        message = null;
-        renderDialog();
-      }),
-    );
     const logout = document.createElement('button');
     logout.type = 'button';
     logout.className = 'account-logout';

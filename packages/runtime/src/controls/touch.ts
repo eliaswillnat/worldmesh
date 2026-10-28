@@ -13,6 +13,14 @@ const TOUCH_STYLE_ID = 'worldmesh-touch-style';
 /** A touch that moves less than this many pixels, and lets go within TAP_TIME ms, is a tap. */
 const TAP_SLOP = 10;
 const TAP_TIME = 350;
+/**
+ * A finger coming down here starts the joystick: the bottom-left of the
+ * screen, as shares of its width (from the left) and height (from the top).
+ * A finger anywhere else turns the camera, so looking around is not limited
+ * to the right half.
+ */
+const STICK_ZONE_RIGHT = 0.45;
+const STICK_ZONE_TOP = 0.45;
 
 const TOUCH_CSS = `
 .wm-touch-root {
@@ -157,6 +165,8 @@ function injectTouchStyles(): void {
 
 export interface TouchControlsOptions {
   element?: HTMLElement;
+  /** Show the E button (default true). */
+  interactButton?: boolean;
   onExit?: () => void;
 }
 
@@ -235,7 +245,7 @@ export class TouchControls {
       this.setSprinting(!this.sprinting);
     });
 
-    buttons.append(viewBtn, interactBtn, this.sprintBtn, jumpBtn);
+    buttons.append(viewBtn, ...(options.interactButton === false ? [] : [interactBtn]), this.sprintBtn, jumpBtn);
     this.root.appendChild(buttons);
 
     // Menu / Pause button (top right)
@@ -329,10 +339,9 @@ export class TouchControls {
       return;
     }
 
-    const halfWidth = window.innerWidth * 0.5;
-
-    // Left half: movement joystick
-    if (this.movePointerId === null && e.clientX < halfWidth) {
+    // Bottom left: movement joystick
+    const inStickZone = e.clientX < window.innerWidth * STICK_ZONE_RIGHT && e.clientY > window.innerHeight * STICK_ZONE_TOP;
+    if (this.movePointerId === null && inStickZone) {
       this.movePointerId = e.pointerId;
       this.moveAxis = { x: 0, z: 0 };
       // Grab the resting stick where it is; anywhere else, the stick comes to the thumb.
@@ -351,8 +360,8 @@ export class TouchControls {
       return;
     }
 
-    // Right half (or secondary touch): camera look
-    if (this.lookPointerId === null && e.clientX >= halfWidth * 0.8) {
+    // Anywhere else (or a second finger while steering): camera look
+    if (this.lookPointerId === null) {
       this.lookPointerId = e.pointerId;
       this.lookPrev = { x: e.clientX, y: e.clientY };
     }

@@ -13,10 +13,9 @@
       } catch {}
       try {
         // Before the gallery can paint. The module does the same check once it loads.
-        // Back from a platform's page (?avatar=…) or to sign in (?login=1): the
-        // account dialog opens, and it lives in the gallery.
+        // To sign in (?login=1): the account dialog opens, and it lives in the gallery.
         const back = sessionStorage.getItem('worldmesh.walkReturn');
-        const dialog = /[?&](avatar|login)=/.test(location.search);
+        const dialog = /[?&]login=/.test(location.search);
         if ((location.hash !== '#list' || back) && !dialog) document.documentElement.classList.add('walking');
       } catch {}
       // The lobby is slow to appear (a slow connection or device): offer the
@@ -808,56 +807,6 @@
       .account-logout { color: var(--muted); }
       .account-message { font-size: 13px; color: var(--muted); }
       .account-message[data-error="true"] { color: #ff9a8a; }
-      /* Avatar Wallet (src/avatars.ts) */
-      .wallet-summary {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        padding: 10px 12px;
-        border: 1px solid var(--border);
-        border-radius: 14px;
-      }
-      .wallet-summary-text { flex: 1; min-width: 0; }
-      .wallet-summary-label { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--subtle); }
-      .wallet-summary-name { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
-      .wallet-summary-thumb { width: 40px; height: 40px; border-radius: 10px; object-fit: cover; flex: none; }
-      .wallet-thumb-blank { display: block; background: var(--border); }
-      .wallet-provider { display: flex; flex-direction: column; gap: 8px; padding-top: 6px; }
-      .wallet-provider-header { display: flex; align-items: baseline; gap: 8px; }
-      .wallet-provider-header h3 { margin: 0; font-size: 14px; font-weight: 600; }
-      .wallet-provider-account { flex: 1; min-width: 0; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .wallet-link { margin-left: auto; padding: 0; border: 0; background: none; font-size: 12px; color: var(--muted); text-decoration: underline; }
-      .wallet-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; max-height: 260px; overflow-y: auto; }
-      .wallet-tile {
-        display: flex;
-        flex-direction: column;
-        align-items: stretch;
-        gap: 4px;
-        padding: 4px;
-        border-radius: 12px;
-        font-size: 11px;
-        min-width: 0;
-      }
-      .wallet-tile span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .wallet-item { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-      .wallet-item-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px 8px; }
-      .wallet-item-action { margin: 0; font-size: 11px; }
-      .wallet-upload { display: flex; flex-direction: column; gap: 8px; }
-      .building-worlds { display: flex; flex-direction: column; gap: 6px; }
-      .building-worlds h3, .wallet-upload h3 { margin: 0; font-size: 14px; font-weight: 600; }
-      .building-world { display: flex; align-items: baseline; gap: 8px; font-size: 12px; min-width: 0; }
-      .building-world-url { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .building-world-status { color: var(--muted); white-space: nowrap; }
-      .building-world-status[data-status="rejected"], .building-world-status[data-status="hidden"] { color: #ff9a8a; }
-      .building-world .wallet-link { margin: 0; }
-      .building-pick { width: 100%; padding: 12px 16px; border-radius: 25px; border: 1px solid var(--border); background: var(--input-bg); color: var(--text); font: inherit; font-size: 15px; }
-      .building-line { display: flex; align-items: center; gap: 8px; }
-      .building-line code { flex: 1; min-width: 0; overflow-x: auto; padding: 6px 8px; border-radius: 8px; background: var(--border); font-size: 12px; white-space: nowrap; user-select: all; }
-      .building-line .wallet-link { margin: 0; }
-      .wallet-upload .wallet-link { margin: 0; align-self: flex-start; }
-      .wallet-tile-thumb { width: 100%; aspect-ratio: 1; border-radius: 8px; object-fit: cover; }
-      .wallet-tile[data-selected="true"], .wallet-none[data-selected="true"] { border-color: var(--text); box-shadow: 0 0 0 1px var(--text); }
-      .wallet-none { margin-top: 6px; }
       button:disabled { opacity: 0.6; cursor: default; }
       .account-icon { display: none; width: 18px; height: 18px; }
       @media (max-width: 600px) {
@@ -930,9 +879,8 @@
       html.walking .walk-toggle:hover { border-color: #fff; }
       html.walking .walk-toggle .icon-walk { display: none; }
       html.walking .walk-toggle .icon-list { display: block; }
-      /* Gallery, private, theme, and colors live on the pause screen. */
+      /* Gallery, theme, and colors live on the pause screen. */
       html.walking body > .walk-toggle,
-      html.walking body > .walk-private,
       html.walking body > .walk-theme,
       html.walking body > .walk-colors { display: none; }
       html.walking, html.walking body {
@@ -1014,10 +962,6 @@
         border-color: rgba(0, 0, 0, 0.14);
       }
       @media (pointer: coarse) {
-        /* The gear takes the corner; the online count sits beside it, level with the WorldMesh mark. */
-        html.walking .walk-online {
-          right: calc(max(16px, env(safe-area-inset-right)) + 58px);
-        }
         /* "Tap ⏸ to open the menu" no longer matches the gear. */
         html.walking .wm-hint { display: none; }
       }
@@ -1031,9 +975,7 @@
         background: rgba(255, 255, 255, 0.6);
         border-color: rgba(0, 0, 0, 0.14);
       }
-      html.walking[data-walk-theme="light"] .walk-online { color: rgba(0, 0, 0, 0.55); }
       html.walking[data-walk-theme="light"] .walk-toggle:hover { border-color: #111; }
-      html.walking[data-walk-theme="light"] .walk-online::before { background: currentColor; }
       html.walking[data-walk-theme="light"] .walk-flash { background: #000; }
       html.walking[data-walk-theme="light"] .wm-overlay { color: #111; }
       html.walking[data-walk-theme="light"] .wm-lock { background: rgba(242, 242, 242, 0.82); }
@@ -1075,74 +1017,6 @@
         transition: opacity .45s ease-in;
       }
       .walk-flash.active { opacity: 1; }
-      /* Offered while standing at an empty door. Hidden while the lobby is paused. */
-      .walk-add-prompt {
-        position: fixed;
-        left: 50%;
-        bottom: calc(max(24px, env(safe-area-inset-bottom)) + 18%);
-        z-index: 2147483001;
-        transform: translateX(-50%) translateY(8px);
-        padding: 12px 20px;
-        border-radius: 999px;
-        font: 600 15px/1 "Urbanist", ui-sans-serif, system-ui, sans-serif;
-        white-space: nowrap;
-        color: #fff;
-        background: rgba(0, 0, 0, 0.6);
-        border: 1px solid rgba(255, 255, 255, 0.3);
-        -webkit-backdrop-filter: blur(8px);
-        backdrop-filter: blur(8px);
-        cursor: pointer;
-        opacity: 0;
-        pointer-events: none;
-        transition: opacity .2s ease, transform .2s ease;
-      }
-      .walk-add-prompt.visible { opacity: 1; pointer-events: auto; transform: translateX(-50%); }
-      /* While the character picked in the Avatar Wallet loads. Shown on the pause screen too. */
-      .walk-loading {
-        position: fixed;
-        left: 50%;
-        top: calc(max(16px, env(safe-area-inset-top)) + 64px);
-        z-index: 2147483002;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        margin: 0;
-        padding: 10px 16px;
-        border-radius: 999px;
-        font: 600 13px/1 "Urbanist", ui-sans-serif, system-ui, sans-serif;
-        white-space: nowrap;
-        color: #fff;
-        background: rgba(0, 0, 0, 0.6);
-        border: 1px solid rgba(255, 255, 255, 0.3);
-        -webkit-backdrop-filter: blur(8px);
-        backdrop-filter: blur(8px);
-        pointer-events: none;
-        opacity: 0;
-        transform: translateX(-50%) translateY(-6px);
-        transition: opacity .2s ease, transform .2s ease;
-      }
-      .walk-loading::before {
-        content: "";
-        width: 12px;
-        height: 12px;
-        flex: none;
-        box-sizing: border-box;
-        border-radius: 50%;
-        border: 2px solid currentColor;
-        border-right-color: transparent;
-        animation: walk-loading-spin .8s linear infinite;
-      }
-      /* Shown after a beat, so a quick check that changes nothing never flashes it. */
-      .walk-loading.visible { opacity: 1; transform: translateX(-50%); transition-delay: .15s; }
-      @keyframes walk-loading-spin { to { transform: rotate(360deg); } }
-      @media (prefers-reduced-motion: reduce) {
-        .walk-loading::before { animation-duration: 2.4s; }
-      }
-      html.walking[data-walk-theme="light"] .walk-loading {
-        color: #111;
-        background: rgba(255, 255, 255, 0.75);
-        border-color: rgba(0, 0, 0, 0.14);
-      }
       /* The lobby is taking too long to appear: the way to the gallery, in the middle. */
       .walk-stalled-gallery { display: none; }
       html.walking.walk-stalled .walk-stalled-gallery {
@@ -1179,479 +1053,7 @@
       }
       html.walking[data-walk-theme="light"].walk-stalled .walk-stalled-gallery:hover,
       html.walking[data-walk-theme="light"].walk-stalled .walk-stalled-gallery:focus-visible { border-color: #111; }
-      /* Inside a lift: the floors, as buttons in one pill. */
-      .walk-lift-prompt {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        padding: 6px 6px 6px 16px;
-        cursor: default;
-      }
-      .walk-lift-prompt span { opacity: 0.7; margin-right: 6px; font-size: 13px; }
-      .walk-lift-prompt button {
-        height: 32px;
-        padding: 0 14px;
-        border-radius: 999px;
-        border: 1px solid rgba(255, 255, 255, 0.3);
-        background: transparent;
-        color: inherit;
-        font: 600 13px/1 "Urbanist", ui-sans-serif, system-ui, sans-serif;
-        cursor: pointer;
-      }
-      .walk-lift-prompt button[aria-pressed="true"] { background: #fff; color: #111; border-color: #fff; }
-      .walk-lift-prompt button.walk-lift-step { width: 40px; padding: 0; font-size: 14px; }
-      .walk-lift-prompt button:disabled { opacity: 0.3; cursor: default; }
-      /* On a phone, bigger targets for a thumb. */
-      @media (pointer: coarse) {
-        .walk-lift-prompt { padding: 6px; }
-        .walk-lift-prompt button { height: 40px; }
-        .walk-lift-prompt button.walk-lift-step { width: 48px; font-size: 16px; }
-      }
-      html.walking[data-walk-theme="light"] .walk-lift-prompt button { border-color: rgba(0, 0, 0, 0.2); }
-      html.walking[data-walk-theme="light"] .walk-lift-prompt button[aria-pressed="true"] { background: #111; color: #fff; border-color: #111; }
-      html.walking:has(.wm-overlay[data-locked="false"]) .walk-add-prompt { display: none; }
-      /* A speech bubble pinned over your head. Not a chat bar. */
-      .walk-bubble {
-        position: absolute;
-        z-index: 3;
-        margin: 0;
-        transform: translate(-50%, -100%);
-        max-width: min(280px, 70vw);
-        padding: 8px 12px;
-        border-radius: 16px;
-        color: #111;
-        background: #fff;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
-        pointer-events: none;
-        opacity: 0;
-      }
-      .walk-bubble.visible { opacity: 1; }
-      .walk-bubble.saying { pointer-events: auto; display: flex; flex-direction: row; align-items: center; }
-      .walk-bubble input, .walk-bubble p {
-        margin: 0;
-        width: 100%;
-        border: 0;
-        padding: 0;
-        color: #111;
-        background: transparent;
-        font: 600 15px/1.3 "Urbanist", ui-sans-serif, system-ui, sans-serif;
-      }
-      .walk-bubble input { outline: none; min-width: 120px; }
-      .walk-bubble.saying input { width: auto; flex: 1; }
-      .walk-bubble:not(.saying) input { display: none; }
-      .walk-bubble:not(.saying) .walk-bubble-close { display: none; }
-      .walk-bubble.saying p { display: none; }
-      .walk-bubble p { word-break: break-word; }
-      .walk-bubble-close {
-        display: none;
-        border: 0; background: transparent; color: #999;
-        font: 600 18px/1 sans-serif;
-        padding: 0 0 0 6px; margin: 0;
-        cursor: pointer; flex-shrink: 0;
-        -webkit-tap-highlight-color: transparent;
-      }
-      .walk-bubble-close:active { color: #333; }
-      /* Typing on touch: fixed just above the keyboard (top is the visual viewport's bottom). */
-      .walk-bubble.docked {
-        position: fixed;
-        z-index: 5;
-        width: min(480px, calc(100vw - 32px));
-        max-width: none;
-        box-sizing: border-box;
-        padding: 12px 16px;
-      }
-      @media (pointer: coarse) {
-        .walk-bubble.saying .walk-bubble-close { display: block; }
-        /* iOS Safari zooms into any focused field under 16px. */
-        .walk-bubble input { font-size: 16px; }
-      }
-      /* Touch chat button: bottom-left, above the joystick area. */
-      .walk-chat-btn {
-        display: none;
-        position: fixed;
-        bottom: calc(max(16px, env(safe-area-inset-bottom)) + 144px);
-        left: max(16px, env(safe-area-inset-left));
-        width: 48px; height: 48px;
-        border-radius: 50%;
-        border: 1.5px solid rgba(255, 255, 255, 0.32);
-        background: rgba(0, 0, 0, 0.35);
-        color: #fff; font-size: 20px;
-        cursor: pointer;
-        z-index: 4;
-        -webkit-tap-highlight-color: transparent;
-        backdrop-filter: blur(6px);
-        -webkit-backdrop-filter: blur(6px);
-      }
-      .walk-chat-btn:active { background: rgba(255, 255, 255, 0.22); transform: scale(0.92); }
-      .walk-chat-btn svg { width: 22px; height: 22px; flex: none; display: block; }
-      @media (pointer: coarse) {
-        html.walking .walk-chat-btn { display: flex; align-items: center; justify-content: center; }
-        html.chatting .walk-chat-btn { display: none; }
-      }
-      /* Push-to-talk on touch: hold it, above the chat button. Red while your voice goes out. */
-      .walk-talk-btn {
-        display: none;
-        position: fixed;
-        bottom: calc(max(16px, env(safe-area-inset-bottom)) + 200px);
-        left: max(16px, env(safe-area-inset-left));
-        width: 48px; height: 48px;
-        border-radius: 50%;
-        border: 1.5px solid rgba(255, 255, 255, 0.32);
-        background: rgba(0, 0, 0, 0.35);
-        color: #fff;
-        cursor: pointer;
-        z-index: 4;
-        touch-action: none;
-        user-select: none;
-        -webkit-user-select: none;
-        -webkit-touch-callout: none;
-        -webkit-tap-highlight-color: transparent;
-        backdrop-filter: blur(6px);
-        -webkit-backdrop-filter: blur(6px);
-      }
-      .walk-talk-btn svg { width: 22px; height: 22px; flex: none; display: block; }
-      .walk-talk-btn.held { background: rgba(255, 255, 255, 0.22); transform: scale(0.92); }
-      .walk-talk-btn.held[data-mic="live"] { background: #e5484d; border-color: #e5484d; }
-      @media (pointer: coarse) {
-        html.walking .walk-talk-btn { display: flex; align-items: center; justify-content: center; }
-        html.chatting .walk-talk-btn { display: none; }
-      }
-      /* From the bird's-eye view the screen is for pointing at the ground: no talk or chat buttons. */
-      html.birds-eye .walk-talk-btn, html.birds-eye .walk-chat-btn { display: none !important; }
-      html.walking[data-walk-theme="light"] .walk-talk-btn:not(.held) { background: rgba(8, 11, 16, 0.65); }
-      /* Over your own head while you talk: sound bars, or a short note when the microphone cannot. */
-      .walk-talk {
-        position: absolute;
-        z-index: 3;
-        transform: translate(-50%, -100%);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 4px;
-        min-width: 36px;
-        height: 36px;
-        box-sizing: border-box;
-        padding: 0 12px;
-        border-radius: 18px;
-        color: #fff;
-        background: rgba(0, 0, 0, 0.55);
-        font: 600 14px/1 "Urbanist", ui-sans-serif, system-ui, sans-serif;
-        white-space: nowrap;
-        pointer-events: none;
-        opacity: 0;
-      }
-      .walk-talk.visible { opacity: 1; }
-      .walk-talk[data-mic="live"] { padding: 0 11px; }
-      .walk-talk span { width: 4px; height: 14px; border-radius: 2px; background: #fff; }
-      .walk-talk span:nth-child(2) { height: 20px; }
-      /* The bars move only while the microphone hears you, not for as long as the key is held. */
-      .walk-talk.speaking span { animation: walk-talk-bar 0.9s ease-in-out infinite; }
-      .walk-talk.speaking span:nth-child(2) { animation-delay: -0.3s; }
-      .walk-talk.speaking span:nth-child(3) { animation-delay: -0.6s; }
-      @keyframes walk-talk-bar { 50% { transform: scaleY(0.45); } }
-      @media (prefers-reduced-motion: reduce) { .walk-talk span { animation: none; } }
-      /* Typing must not count as pausing, so the click-to-enter panel stays hidden. */
-      html.chatting .wm-lock { display: none !important; }
-      html.walking[data-walk-theme="light"] .walk-add-prompt {
-        color: #111;
-        background: rgba(255, 255, 255, 0.75);
-        border-color: rgba(0, 0, 0, 0.14);
-      }
-      /* Stays dark like the jump and sprint buttons, which the light lobby leaves as they are. */
-      html.walking[data-walk-theme="light"] .walk-chat-btn { background: rgba(8, 11, 16, 0.65); }
-      /* Same fields as the gallery form, in a window over the lobby. */
-      .world-claim {
-        position: fixed;
-        inset: 0;
-        margin: auto;
-        box-sizing: border-box;
-        height: fit-content;
-        width: min(560px, calc(100vw - 32px));
-        max-height: min(88vh, 760px);
-        padding: 28px 24px 22px;
-        border: 1px solid var(--border);
-        border-radius: 18px;
-        color: var(--text);
-        background: var(--bg);
-        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
-      }
-      .world-claim::backdrop { background: rgba(0, 0, 0, 0.55); }
-      .world-claim h2 {
-        margin: 0 40px 8px 0;
-        font-size: 22px;
-        font-weight: 600;
-        letter-spacing: 0;
-        text-transform: none;
-        color: var(--text);
-      }
-      .world-claim p {
-        margin: 0 0 14px;
-        font-size: 15px;
-        font-weight: 400;
-        line-height: 1.5;
-        letter-spacing: 0;
-        text-transform: none;
-        color: var(--muted);
-      }
-      .world-claim input[type="text"],
-      .world-claim input[type="email"],
-      .world-claim input[type="url"] {
-        display: block;
-        width: 100%;
-        margin: 0 0 10px;
-      }
-      .world-claim-status { min-height: 20px; font-size: 13px; color: #ff9a8a; }
-      .world-claim-frame {
-        display: block;
-        width: 100%;
-        height: 280px;
-        margin: 0 0 14px;
-        border: 0;
-        border-radius: 16px;
-        background: #000;
-      }
-      .world-claim-frame[hidden] { display: none; }
-      .world-claim-actions { display: flex; gap: 10px; justify-content: flex-end; }
-      .building-report-reasons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; margin: 0 0 12px; padding: 0; border: 0; }
-      .building-report-reasons legend { padding: 0; margin: 0 0 8px; font-size: 13px; color: var(--muted); }
-      .building-report-reasons label { display: flex; align-items: center; gap: 8px; font-size: 15px; color: var(--text); cursor: pointer; }
-      @media (max-width: 480px) { .building-report-reasons { grid-template-columns: minmax(0, 1fr); } }
-      .building-report-note { display: block; box-sizing: border-box; width: 100%; margin: 0 0 6px; padding: 12px 16px; resize: vertical; border-radius: 16px; border: 1px solid var(--border); background: var(--input-bg); color: var(--text); font: inherit; font-size: 14px; }
-      .building-report-note:focus { outline: none; border-color: var(--accent); }
-      .world-claim-close {
-        position: absolute;
-        top: 12px;
-        right: 12px;
-        width: 36px;
-        height: 36px;
-        padding: 0;
-      }
-      /* Drawing a building's door (src/doorPicker.ts) */
-      .door-picker {
-        width: min(960px, calc(100vw - 16px));
-        height: min(760px, calc(100dvh - 16px));
-        max-height: none;
-        padding: 20px 16px 16px;
-      }
-      .door-picker[open] { display: flex; flex-direction: column; }
-      .door-picker p { margin: 0 40px 10px 0; font-size: 14px; }
-      .door-picker-stage { position: relative; flex: 1; min-height: 0; border-radius: 14px; overflow: hidden; background: var(--input-bg); }
-      .door-picker-stage canvas { display: block; width: 100%; height: 100%; touch-action: none; }
-      .door-picker-stage[data-mode="draw"] canvas { cursor: crosshair; }
-      .door-picker .door-picker-status { min-height: 21px; margin: 10px 0; font-size: 13px; color: var(--muted); }
-      .door-picker .door-picker-status[data-error="true"] { color: #ff9a8a; }
-      .door-picker-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-      .door-picker-mode { display: flex; padding: 3px; border: 1px solid var(--border); border-radius: 25px; }
-      .door-picker-mode button { padding: 10px 18px; border: 0; background: none; }
-      .door-picker-mode button[aria-pressed="true"],
-      .door-picker-mode button[aria-pressed="true"]:hover { background: var(--text); color: var(--bg); }
-      .door-picker-bar .world-claim-primary { margin-left: auto; }
-      /* ── Tower city ────────────────────────────────────────────── */
-      /* Flat and solid: no blur, no gradients. The prompt reuses .walk-add-prompt. */
-      .city-prompt { max-width: calc(100vw - 32px); overflow: hidden; text-overflow: ellipsis; }
-      .city-chip {
-        position: fixed;
-        top: max(16px, env(safe-area-inset-top));
-        left: max(16px, env(safe-area-inset-left));
-        z-index: 2147483001;
-        max-width: calc(100vw - 180px);
-        padding: 9px 14px;
-        border-radius: 999px;
-        font: 600 13px/1.2 "Urbanist", ui-sans-serif, system-ui, sans-serif;
-        letter-spacing: 0.02em;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        color: #f4f1ea;
-        background: #16171b;
-        border: 1px solid #2c2e34;
-        opacity: 0;
-        pointer-events: none;
-        transition: opacity .2s ease;
-      }
-      .city-chip.visible { opacity: 1; }
-      .city-ride {
-        position: fixed;
-        right: max(16px, env(safe-area-inset-right));
-        top: 50%;
-        z-index: 2147483001;
-        transform: translateY(-50%);
-        display: none;
-        flex-direction: column;
-        align-items: flex-end;
-        gap: 8px;
-      }
-      .city-ride.visible { display: flex; }
-      .city-ride-button {
-        width: 52px;
-        height: 52px;
-        border-radius: 14px;
-        font: 700 18px/1 "Urbanist", ui-sans-serif, system-ui, sans-serif;
-        color: #f4f1ea;
-        background: #16171b;
-        border: 1px solid #2c2e34;
-        cursor: pointer;
-      }
-      .city-ride-button:active { background: #24262c; }
-      .city-ride-label {
-        padding: 6px 10px;
-        border-radius: 8px;
-        font: 600 12px/1.2 "Urbanist", ui-sans-serif, system-ui, sans-serif;
-        white-space: nowrap;
-        color: #f4f1ea;
-        background: #16171b;
-      }
-      .city-travel {
-        position: fixed;
-        inset: 0;
-        z-index: 2147483000;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: #0e0f12;
-        opacity: 0;
-        pointer-events: none;
-        transition: opacity .25s ease;
-      }
-      .city-travel.active { opacity: 1; pointer-events: auto; }
-      .city-travel-label {
-        font: 700 22px/1 "Urbanist", ui-sans-serif, system-ui, sans-serif;
-        letter-spacing: 0.18em;
-        color: #f4f1ea;
-      }
-      html.walking:has(.wm-overlay[data-locked="false"]) .city-ride { display: none; }
-      .city-dialog {
-        margin: auto;
-        width: min(440px, calc(100vw - 24px));
-        max-height: calc(100dvh - 24px);
-        padding: 0;
-        border-radius: 18px;
-        border: 1px solid #2c2e34;
-        background: #16171b;
-        color: #f4f1ea;
-        font-family: "Urbanist", ui-sans-serif, system-ui, sans-serif;
-        overflow: auto;
-        overscroll-behavior: contain;
-      }
-      .city-dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
-      .city-dialog-header {
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 12px;
-        padding: 18px 20px 8px;
-      }
-      .city-dialog-header h2 { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: normal; text-transform: none; }
-      .city-dialog-header p { margin: 4px 0 0; font-size: 13px; color: #a3a39c; }
-      .city-dialog-close {
-        width: 34px;
-        height: 34px;
-        flex: none;
-        display: grid;
-        place-items: center;
-        padding: 0;
-        border-radius: 50%;
-        border: 1px solid #2c2e34;
-        background: transparent;
-        color: inherit;
-        font-size: 20px;
-        line-height: 1;
-        cursor: pointer;
-      }
-      .city-dialog-body { display: flex; flex-direction: column; gap: 10px; padding: 8px 20px 20px; }
-      .city-destinations { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-      .city-destination, .city-result {
-        display: flex;
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 3px;
-        padding: 11px 12px;
-        border-radius: 12px;
-        border: 1px solid #2c2e34;
-        background: #1d1e23;
-        color: inherit;
-        font: 600 14px/1.2 inherit;
-        text-align: left;
-        cursor: pointer;
-      }
-      .city-destination:hover, .city-result:hover { border-color: #6a6c73; }
-      .city-destination:disabled { cursor: default; opacity: 0.55; }
-      .city-destination small, .city-result small { font-size: 12px; font-weight: 500; color: #a3a39c; }
-      .city-result { width: 100%; }
-      .city-result em { font-style: normal; font-size: 12px; color: #8fd3c7; }
-      .city-row { display: flex; gap: 8px; }
-      .city-row input, .city-search {
-        flex: 1;
-        min-width: 0;
-        padding: 11px 12px;
-        border-radius: 12px;
-        border: 1px solid #2c2e34;
-        background: #0e0f12;
-        color: inherit;
-        font: 500 15px/1.2 inherit;
-      }
-      .city-row button {
-        padding: 0 18px;
-        border-radius: 12px;
-        border: 1px solid #2c2e34;
-        background: #f4f1ea;
-        color: #111;
-        font: 700 14px/1 inherit;
-        cursor: pointer;
-      }
-      .city-results { display: flex; flex-direction: column; gap: 6px; }
-      .city-empty { margin: 0; font-size: 13px; color: #a3a39c; }
-      html.walking[data-walk-theme="light"] .city-chip,
-      html.walking[data-walk-theme="light"] .city-ride-button,
-      html.walking[data-walk-theme="light"] .city-ride-label,
-      html.walking[data-walk-theme="light"] .city-dialog {
-        color: #16171b;
-        background: #f7f5f0;
-        border-color: #d6d3cb;
-      }
-      html.walking[data-walk-theme="light"] .city-ride-button:active { background: #e9e6df; }
-      html.walking[data-walk-theme="light"] .city-travel { background: #eceae4; }
-      html.walking[data-walk-theme="light"] .city-travel-label { color: #16171b; }
-      html.walking[data-walk-theme="light"] .city-destination,
-      html.walking[data-walk-theme="light"] .city-result { background: #ffffff; border-color: #d6d3cb; }
-      html.walking[data-walk-theme="light"] .city-row input,
-      html.walking[data-walk-theme="light"] .city-search { background: #ffffff; border-color: #d6d3cb; }
-      html.walking[data-walk-theme="light"] .city-row button { background: #16171b; color: #f7f5f0; }
-      html.walking[data-walk-theme="light"] .city-dialog-header p,
-      html.walking[data-walk-theme="light"] .city-destination small,
-      html.walking[data-walk-theme="light"] .city-result small,
-      html.walking[data-walk-theme="light"] .city-empty { color: #6b6962; }
-      html.walking[data-walk-theme="light"] .city-result em { color: #2f7d70; }
-      html.walking[data-walk-theme="light"] .city-dialog-close { border-color: #d6d3cb; }
-      /* Development only (towers/debug.ts). */
-      .city-debug {
-        position: fixed;
-        left: max(16px, env(safe-area-inset-left));
-        top: calc(max(16px, env(safe-area-inset-top)) + 44px);
-        z-index: 2147483001;
-        max-width: min(420px, calc(100vw - 32px));
-        padding: 8px 10px;
-        border-radius: 10px;
-        background: rgba(10, 11, 13, 0.85);
-        color: #d9f2ea;
-        font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
-      }
-      .city-debug pre { margin: 6px 0 0; white-space: pre-wrap; }
-      .city-debug button {
-        margin: 0 4px 0 0;
-        padding: 3px 8px;
-        border-radius: 6px;
-        border: 1px solid #3a3d44;
-        background: #1d1e23;
-        color: inherit;
-        font: inherit;
-        cursor: pointer;
-      }
-      .city-debug.collapsed pre, .city-debug.collapsed button:not(:last-child) { display: none; }
-
       /* ── Billboard ads ─────────────────────────────────────────── */
-      /* The walk-mode prompt reuses .walk-add-prompt; ads get a little more room. */
-      .walk-ad-prompt, .walk-peer-prompt { max-width: calc(100vw - 32px); overflow: hidden; text-overflow: ellipsis; }
       .ad-dialog {
         margin: auto;
         width: min(480px, calc(100vw - 24px));
@@ -1820,80 +1222,6 @@
         color: #000;
       }
       .ad-done { margin: 0; text-align: center; font-size: 15px; line-height: 1.6; }
-      .walk-online {
-        position: fixed;
-        top: max(18px, env(safe-area-inset-top));
-        right: max(16px, env(safe-area-inset-right));
-        z-index: 2147483002;
-        display: none;
-        align-items: center;
-        gap: 6px;
-        margin: 0;
-        padding: 0;
-        border: 0;
-        background: none;
-        font: 600 10px/1 "Urbanist", ui-sans-serif, system-ui, sans-serif;
-        letter-spacing: 0.22em;
-        text-transform: uppercase;
-        color: rgba(255, 255, 255, 0.72);
-        pointer-events: none;
-      }
-      .walk-online::before {
-        content: "";
-        width: 5px;
-        height: 5px;
-        border-radius: 50%;
-        background: currentColor;
-      }
-      html.walking .walk-online[data-count] { display: flex; }
-      @keyframes online-glow {
-        0% { color: rgba(130, 255, 180, 1); text-shadow: 0 0 6px rgba(130, 255, 180, 0.8); }
-        100% { color: rgba(255, 255, 255, 0.72); text-shadow: none; }
-      }
-      .walk-online.glow { animation: online-glow 1.2s ease-out forwards; }
-      html.walking[data-walk-theme="light"] .walk-online.glow {
-        animation-name: online-glow-light;
-      }
-      @keyframes online-glow-light {
-        0% { color: rgba(0, 180, 80, 1); text-shadow: 0 0 6px rgba(0, 180, 80, 0.6); }
-        100% { color: rgba(0, 0, 0, 0.55); text-shadow: none; }
-      }
-      /* Private mode: under the walk toggle. Shows the made-up name while on. */
-      .walk-private {
-        position: fixed;
-        top: calc(max(16px, env(safe-area-inset-top)) + 54px);
-        right: max(16px, env(safe-area-inset-right));
-        z-index: 2147483001;
-        height: 44px;
-        padding: 0 16px 0 12px;
-        border-radius: 22px;
-        display: none;
-        align-items: center;
-        gap: 8px;
-        font: 600 13px/1 "Urbanist", ui-sans-serif, system-ui, sans-serif;
-        letter-spacing: 0.02em;
-        white-space: nowrap;
-        color: #fff;
-        background: rgba(0, 0, 0, 0.45);
-        border: 1px solid rgba(255, 255, 255, 0.18);
-        -webkit-backdrop-filter: blur(10px);
-        backdrop-filter: blur(10px);
-        cursor: pointer;
-      }
-      .walk-private svg { width: 20px; height: 20px; flex: none; }
-      .walk-private:hover { border-color: #fff; }
-      html.walking .walk-private { display: flex; }
-      .walk-private[aria-pressed="true"] {
-        color: #bfe9ff;
-        border-color: rgba(92, 200, 255, 0.7);
-        box-shadow: 0 0 14px rgba(92, 200, 255, 0.35);
-      }
-      html.walking[data-walk-theme="light"] .walk-private {
-        color: #111;
-        background: rgba(255, 255, 255, 0.6);
-        border-color: rgba(0, 0, 0, 0.14);
-      }
-      html.walking[data-walk-theme="light"] .walk-private:hover { border-color: #111; }
       .walk-theme {
         position: fixed;
         top: calc(max(16px, env(safe-area-inset-top)) + 108px);
@@ -1953,10 +1281,6 @@
         border-color: rgba(0, 0, 0, 0.12);
       }
       html.walking[data-walk-theme="light"] .walk-colors button[aria-pressed="true"] { border-color: #111; }
-      html.walking[data-walk-theme="light"] .walk-private[aria-pressed="true"] {
-        color: #0b6a99;
-        border-color: rgba(11, 106, 153, 0.6);
-      }
       /* The same controls, inside the pause screen. */
       .walk-pause-actions {
         display: flex;
@@ -1966,7 +1290,6 @@
         width: 100%;
         margin-top: 4px;
       }
-      .walk-pause-actions .walk-private,
       .walk-pause-actions .walk-theme,
       .walk-pause-actions .walk-gallery,
       .walk-pause-actions .walk-discord {
@@ -2020,9 +1343,7 @@
       html.walking .wm-lock .wm-lock-cta,
       html.walking .wm-lock .walk-pause-actions .walk-gallery,
       html.walking .wm-lock .walk-pause-actions .walk-discord,
-      html.walking .wm-lock .walk-pause-actions .walk-private,
-      html.walking .wm-lock .walk-pause-actions .walk-music,
-      html.walking .wm-lock .walk-pause-actions .walk-report {
+      html.walking .wm-lock .walk-pause-actions .walk-music {
         box-sizing: border-box;
         width: var(--pause-w);
         height: var(--pause-h);
@@ -2048,9 +1369,7 @@
       }
       html.walking .wm-lock .walk-pause-actions .walk-gallery:hover,
       html.walking .wm-lock .walk-pause-actions .walk-discord:hover,
-      html.walking .wm-lock .walk-pause-actions .walk-private:hover,
-      html.walking .wm-lock .walk-pause-actions .walk-music:hover,
-      html.walking .wm-lock .walk-pause-actions .walk-report:hover {
+      html.walking .wm-lock .walk-pause-actions .walk-music:hover {
         background: var(--pause-hover);
         border-color: var(--pause-fg);
       }
@@ -2086,16 +1405,6 @@
       }
       html.walking .wm-lock .walk-pause-actions .walk-now-playing:hover,
       html.walking .wm-lock .walk-pause-actions .walk-now-playing:focus-visible { opacity: 1; text-decoration: underline; }
-      html.walking .wm-lock .walk-pause-actions .walk-private svg { width: 18px; height: 18px; }
-      html.walking .wm-lock .walk-pause-actions .walk-report[hidden] { display: none; }
-      html.walking .wm-lock .walk-pause-actions .walk-private[aria-pressed="true"] {
-        color: #bfe9ff;
-        border-color: rgba(92, 200, 255, 0.7);
-      }
-      html.walking[data-walk-theme="light"] .wm-lock .walk-pause-actions .walk-private[aria-pressed="true"] {
-        color: #0b6a99;
-        border-color: rgba(11, 106, 153, 0.6);
-      }
       /* Light / Dark / Device: one pill split into three equal parts. */
       html.walking .wm-lock .walk-pause-actions .walk-theme {
         box-sizing: border-box;
@@ -2266,15 +1575,6 @@
       </div>
     </div>
     <p class="walk-mark">WorldMesh</p>
-    <div class="walk-online" id="walk-online" aria-live="polite"></div>
-    <button type="button" class="walk-private" id="walk-private" aria-pressed="false" title="Private mode (P)">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true">
-        <path d="M5 21V10a7 7 0 0 1 14 0v11l-2.33-1.75L14.33 21 12 19.25 9.67 21l-2.34-1.75z"/>
-        <circle cx="9.5" cy="10.5" r="1.1" fill="currentColor" stroke="none"/>
-        <circle cx="14.5" cy="10.5" r="1.1" fill="currentColor" stroke="none"/>
-      </svg>
-      <span class="walk-private-label" id="walk-private-label">Go private</span>
-    </button>
     <div class="walk-theme" role="group" aria-label="Light, dark, or this device">
       <button type="button" data-theme-choice="light">Light</button>
       <button type="button" data-theme-choice="dark">Dark</button>

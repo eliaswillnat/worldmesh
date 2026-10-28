@@ -1,5 +1,10 @@
 # Avatar Wallet
 
+> **Not offered by the hub (October 2026).** Everyone walks the lobby and the
+> demo worlds as the default character, and the account dialog no longer has
+> My characters. The runtime's `avatar` option still works for worlds that
+> set it up themselves.
+
 Visitors can bring a character from an avatar platform into compatible worlds.
 **WorldMesh stores the pointer, never the character**: no VRM, GLB, glTF,
 texture or other avatar file is ever uploaded to, proxied through, mirrored by

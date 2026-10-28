@@ -1,89 +1,41 @@
 import {
-  AVATAR_TICKET_PARAM,
   buildTravelUrl,
   createWorldMesh,
-  downloadAvatarModel,
-  resolveWorldMeshAvatar,
-  type AvatarDescriptor,
-  isStrokeMaterial,
-  Presence,
-  SharedAvatarLink,
-  createShareVerifier,
   setAvatarAppear,
   setAvatarColor,
   setStrokeOpacity,
-  type MicState,
-  type PeerPick,
-  type Said,
   type Vec3Tuple,
 } from '@worldmesh/runtime';
 import {
-  BoxGeometry,
   BufferGeometry,
-  CircleGeometry,
   Color,
-  CylinderGeometry,
-  Float32BufferAttribute,
   DirectionalLight,
   DoubleSide,
-  Matrix4,
-  Material,
+  Fog,
+  HemisphereLight,
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
-  Fog,
-  Group,
-  HemisphereLight,
   PerspectiveCamera,
   PlaneGeometry,
   Raycaster,
-  RingGeometry,
   Scene,
   ShaderMaterial,
-  Sprite,
-  Vector2,
   Vector3,
   WebGLRenderer,
   type Object3D,
 } from 'three';
 import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { CITY_GLOW_WHITE, applyCityTheme, applySkyTheme, createCityMaterials, createSky, createSpawnPads, flipInside, skyHorizon, updateSky, type BillboardSlot } from './city';
-import { DOOR_HALF_SPAN, DOOR_HEIGHT, DOOR_TOP, DOOR_WIDTH, FRAME, Door, worldIsFull, type DoorWorld } from './door';
+import { CITY_GLOW_WHITE, applyCityTheme, applySkyTheme, createCityMaterials, createSky, skyHorizon, updateSky } from './city';
+import { Door, type DoorWorld } from './door';
 import { LiveDoors } from './liveDoors';
 import { WalkThrough } from './walkThrough';
-import { doorFrameGeometry, frameOuterCorner, openingCorner } from './doorShape';
-import { describeBillboard } from './layout';
-import { planAvenues, type CityPlan } from './avenuePlan';
-import { buildAvenues, dressHall } from './avenues';
-import { assignDoors } from './doorOrder';
-import { Buildings, DEMO_BUILDINGS, type BuildingDirectory, type BuildingLot, type BuildingSource } from './buildings';
-import { LOT_FORECOURT, LOT_HEIGHT, STOREFRONT_WIDTH } from './facade';
-import { playSendSound, playWarpSound, silence } from './sounds';
-import { chatRejection } from '../../../../templates/relay/src/chatFilter';
-import { deviceLanguage, isForeign, translate } from './translate';
-import { fetchOccupancy } from './occupancy';
+import { buildAvenues } from './avenues';
+import { planStreet, type StreetPlan } from './streetPlan';
+import { playWarpSound, silence } from './sounds';
 import { Arrival } from './arrival';
-import { FLOOR_NAMES, Lifts, buildShafts, createColliderMaterial, mergeInto, planLifts } from './elevators';
-import {
-  DRUM_HEIGHT,
-  GALLERY_LEVELS,
-  MEDIA_BOTTOM,
-  MEDIA_MAX_HEIGHT,
-  buildBoardHanging,
-  buildDome,
-  buildGalleries,
-  createAvenueSign,
-  createDepartureBoard,
-  type Flight,
-} from './rotunda';
-import { fetchBillboards } from '../ads/api';
-import { AdBillboards, type BillboardHit } from '../ads/billboards';
-import { AD_CONFIG, normalizeDestinationUrl } from '../ads/config';
-import { openAdModal } from '../ads/modal';
-import type { SignalSource } from '../discovery/ranking';
-import { canonicalUrl, type WorldRecordInput } from '../worlds/listing';
-import { CHARACTER_CHANGE_EVENT, characterTicket } from '../avatars';
+import { canonicalUrl } from '../worlds/listing';
 
 /** A place in the lobby and the way to face there. */
 export interface WalkSpot {
@@ -91,12 +43,12 @@ export interface WalkSpot {
   yaw: number;
 }
 
-/** A listed world: what its door needs, plus what the tower city files it under. */
-export type LobbyWorld = DoorWorld & WorldRecordInput;
+/** A listed world: what its door needs. */
+export type LobbyWorld = DoorWorld;
 
 export interface LobbyOptions {
   worlds: LobbyWorld[];
-  /** Walk out of the door behind this spot instead of starting in the middle of the hall. */
+  /** Walk out of the door behind this spot instead of starting at the top of the street. */
   start?: WalkSpot | null;
   /**
    * The world a visitor came back from through its lobby portal (`from` in
@@ -106,326 +58,83 @@ export interface LobbyOptions {
   from?: string | null;
   /**
    * Drawn live in a world's lobby portal (Doorway §3.1, `?doorway-view`):
-   * the runtime draws the views the world sends. The lobby only watches its
-   * room, makes no sound, opens no live doors of its own and never travels.
+   * the runtime draws the views the world sends. The lobby makes no sound,
+   * opens no live doors of its own and never travels.
    */
   doorwayView?: boolean;
-  /** Draw the lobby white with dark lines instead of black with light ones. */
+  /** Draw the lobby white instead of black. */
   light?: boolean;
-  /** WebSocket base URL of the lobby's relay (workers/lobby). Leave empty for single-player. */
-  presenceEndpoint?: string;
-  /**
-   * WebSocket base URL of the relay the worlds behind the doors use
-   * (workers/presence), asked how full each one is. Defaults to presenceEndpoint.
-   */
-  worldRelayEndpoint?: string;
-  /** Name shown above this visitor for everyone else; null shows them as a guest. */
-  playerName?: () => string | null;
-  /** Start in private mode (see `Lobby.setPrivate`). */
-  private?: boolean;
   /** Default-character tint. Forgotten on refresh; only a return from a world restores it. */
   color?: string | null;
-  /** Called with how many people are in the lobby, or null while offline. */
-  onPresenceCount?: (count: number | null) => void;
-  /** Called every frame with where this visitor stands (feet) and the hall's radius; the hall's centre is the origin. */
-  onListener?: (x: number, y: number, z: number, hallRadius: number) => void;
+  /**
+   * Called every frame with where this visitor stands (feet), measured from
+   * the middle of the street, and how far the street reaches from there.
+   */
+  onListener?: (x: number, y: number, z: number, reach: number) => void;
   /**
    * Called right before the page navigates into a world, with where to put
-   * the visitor if they come back: just outside that door, facing the room.
+   * the visitor if they come back: just outside that door, facing the street.
    */
   onEnterWorld?: (world: DoorWorld, returnTo: WalkSpot) => void;
-  /** Called when someone picks an empty door to add their own world. */
-  onAddWorld?: () => void;
-  /**
-   * Someone claimed an empty door from inside the lobby. The door already
-   * shows their world here; this asks the gallery to list it as well.
-   */
-  onClaimWorld?: (world: ClaimedWorld) => void;
-  /**
-   * Mount the billboard ads UI (outlines, +, prompts, modal, live ads).
-   * Off by default; pass true only when ads are deliberately enabled
-   * (`AD_CONFIG.enabled` / `VITE_ADS_ENABLED`).
-   */
-  ads?: boolean;
-  /** Visit counts and the like, for ranking worlds in the towers. */
-  signals?: SignalSource;
   /** How many times people have entered a world, by URL; shown beside its doors. */
   entries?: (url: string) => number | undefined;
-  /**
-   * Worlds' own buildings (docs/specs/buildings.md): where approved ones are
-   * downloaded from, each standing in place of its world's block. 'demo'
-   * puts the demo buildings on the city's first lots instead, to see how
-   * buildings look. Without either, every world keeps its block.
-   */
-  buildings?: BuildingDirectory | 'demo';
 }
 
 export interface Lobby {
-  /** Add doors (and tower listings) for worlds that were not listed yet. */
+  /** Add doors for worlds that were not listed yet. */
   setWorlds(worlds: LobbyWorld[]): void;
   /** Entry counts changed: update the numbers beside every door. */
   refreshEntries(): void;
   /**
-   * Switch between the dark and light lobby. Purely local: other visitors
-   * keep whatever their own device prefers.
+   * Switch between the dark and light lobby. Purely local: it only changes
+   * how this browser draws the street.
    */
   setTheme(light: boolean): void;
-  /**
-   * Private mode: this visitor becomes a see-through ghost (to themselves;
-   * everyone else just sees the plain default figure), goes by a made-up
-   * name instead of their username, and carries no avatar into worlds.
-   * Switching either way sends them back to the spawn point as a new
-   * arrival, so nobody can follow them from one identity to the other.
-   * Returns the made-up name while private, or null.
-   */
-  setPrivate(on: boolean): string | null;
-  /** Tint the default character. Has no effect once a custom avatar is on. */
+  /** Tint the default character. */
   setColor(color: string): void;
-  /** The made-up name while private, or null while public. */
-  readonly alias: string | null;
-  /**
-   * The world's building standing nearest this visitor, close enough to be
-   * the one they mean (docs/specs/buildings.md §8: reporting it), or null.
-   */
-  nearbyBuilding(): { world: string; name: string } | null;
   dispose(): void;
 }
 
-/** How often walk-mode doors ask presence how full each world room is. */
-const OCCUPANCY_MS = 15_000;
-/** A building this close (metres, to its door) is the one a visitor would report. */
-const REPORT_REACH = 30;
-
-/** Presence WebSocket base → HTTP base for the public occupancy read. */
-function presenceHttpBase(endpoint: string): string {
-  return endpoint.replace(/\/$/, '').replace(/^ws/i, 'http');
-}
-
-/** Origin of a world URL, lower-cased, or null if it is not http(s). */
-function worldRoomOrigin(url: string): string | null {
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null;
-    return parsed.origin.toLowerCase();
-  } catch {
-    return null;
-  }
-}
-const FLOOR_LAYER = 1;
 const FLOOR_SIZE = 600;
-/** Radius of the hall, inside the citadel's wall. */
-const HALL_RADIUS = 59;
-/** How far the walkable plaza reaches around the lobby. */
-const PLAZA_RADIUS = 120;
-/** From the bird's-eye view, buildings this far round where it looks are loaded (metres): it sees a wide stretch of the city. */
-const AERIAL_BUILDING_REACH = 150;
-const DOOR_SPACING = 4.2;
-/** A tall drum under a glass dome, with the doors around the inside of its base. */
-const CITADEL_HEIGHT = DRUM_HEIGHT;
-const WALL_THICKNESS = 1.2;
-
-/**
- * The wall above a doorway. Its lower edge is the frame's outer top:
- * straight across, with the same rounded corners, then up to the drum.
- * `span` is half the frame's outer width, in metres. It faces the hall,
- * or the city when `inward` is false.
- */
-function roundedWallHead(
-  radius: number,
-  angle: number,
-  span: number,
-  holeTop: number,
-  wallTop: number,
-  cornerX: number,
-  cornerY: number,
-  inward = true,
-): BufferGeometry {
-  const rx = Math.min(cornerX, span);
-  const ry = Math.min(cornerY, holeTop);
-  const left = -span + rx;
-  const right = span - rx;
-  const arcBase = holeTop - ry;
-  const arc = 16;
-  const edge: { s: number; y: number }[] = [];
-  for (let i = 0; i <= arc; i++) {
-    const t = Math.PI - (i / arc) * (Math.PI / 2);
-    edge.push({ s: left + Math.cos(t) * rx, y: arcBase + Math.sin(t) * ry });
-  }
-  const middle = Math.max(1, Math.ceil((right - left) / 0.5));
-  for (let i = 1; i < middle; i++) edge.push({ s: left + ((right - left) * i) / middle, y: holeTop });
-  for (let i = 0; i <= arc; i++) {
-    const t = Math.PI / 2 - (i / arc) * (Math.PI / 2);
-    edge.push({ s: right + Math.cos(t) * rx, y: arcBase + Math.sin(t) * ry });
-  }
-
-  const columns = edge.length;
-  const positions: number[] = [];
-  const point = (s: number, y: number) => {
-    const theta = angle + s / radius;
-    positions.push(Math.sin(theta) * radius, y, Math.cos(theta) * radius);
-  };
-  for (const sample of edge) point(sample.s, sample.y);
-  for (const sample of edge) point(sample.s, wallTop);
-  const indices: number[] = [];
-  for (let i = 0; i < columns - 1; i++) {
-    const a = i;
-    const b = i + 1;
-    const c = columns + i;
-    const d = columns + i + 1;
-    indices.push(a, b, d, a, d, c);
-  }
-  const geometry = new BufferGeometry();
-  geometry.setAttribute('position', new Float32BufferAttribute(positions, 3));
-  geometry.setIndex(indices);
-  geometry.computeVertexNormals();
-  return inward ? flipInside(geometry) : geometry;
-}
-/** Ways out to the plaza, evenly around the drum, open. Angle 0 faces +Z, behind you on arrival. */
-const GATE_COUNT = 8;
-/** Doors on each stretch of wall between two exits, inside the hall, for multiplayer worlds. */
-const DOORS_PER_BAY = 1;
-/** The clear opening of each exit, in metres: the same as a door's. */
-const GATE_WIDTH = DOOR_WIDTH;
-const GATE_HEIGHT = DOOR_HEIGHT;
-/** The frame round each exit's mouth on the outside. */
-const GATE_MOUTH_FRAME = 0.6;
-/** The reveal lining the passage through the wall: hidden behind the hall's face, so the exit has no frame inside. */
-const GATE_REVEAL = 0.1;
-/** Half the room each exit takes along the hall's wall: doors and piers keep this far from its centre. */
-const GATE_HALF_SPAN = GATE_WIDTH / 2 + FRAME;
-
-/** Gate angles around the hall, starting at +Z. */
-function gateAngles(): number[] {
-  return Array.from({ length: GATE_COUNT }, (_, i) => (i / GATE_COUNT) * Math.PI * 2);
-}
-
-/**
- * Door angles around the drum. Each stretch of wall between two gates is a
- * bay, and every bay gets the same number of doors. Within a bay the doors
- * are spaced so the clear gap beside each gate equals the clear gap between
- * neighbouring doors — both sides of an exit match.
- */
-function doorAngles(total: number, radius: number): number[] {
-  const gates = gateAngles();
-  const bay = (Math.PI * 2) / GATE_COUNT;
-  const count = Math.floor(total / GATE_COUNT);
-  if (count <= 0) return [];
-  const bayMetres = bay * radius;
-  // Centre-to-centre pitch. The +1 counts the gap on each side of the bay as
-  // one more interval, so those gaps come out equal to the ones between doors.
-  const pitch = (bayMetres - 2 * GATE_HALF_SPAN + 2 * DOOR_HALF_SPAN) / (count + 1);
-  const first = GATE_HALF_SPAN + pitch - DOOR_HALF_SPAN;
-  const angles: number[] = [];
-  for (const gate of gates) {
-    for (let i = 0; i < count; i++) angles.push(gate + (first + i * pitch) / radius);
-  }
-  return angles.map((angle) => (angle + Math.PI * 2) % (Math.PI * 2)).sort((a, b) => a - b);
-}
-/** Stand this close in front of an empty door to be offered it. */
-const EMPTY_DOOR_REACH = 4.8;
-/** A tap on an empty door this far away still counts. */
+/** Seconds from stepping into a door to the page going to its world. */
 const WARP_MS = 450;
-/** How much wider the lens pulls, in degrees, by the time the flash covers the view. */
+/** How much wider the lens pulls going through a door, in degrees. */
 const LENS_FOV = 55;
-/** Seconds the lens takes to settle back after coming out of a world. */
+/** Seconds the lens takes to settle back coming out of a door. */
 const LENS_OUT_S = 0.7;
-/** Seconds to keep trying to tell others about coming out, while presence connects. */
-const WARP_SHARE_S = 6;
-/** Seconds the figure takes to warp away when leaving through a door: as quick as it arrives. */
+/** Seconds the warp out of the lobby takes to play. */
 const LEAVE_TIME = 0.12;
-/**
- * Someone else stepping through a portal fades slower than our own figure,
- * so it reads from across the hall. Their page leaves the room sooner than
- * this; the figure is kept until the warp has played out.
- */
-const OTHER_LEAVE_TIME = 0.9;
-/** How far their figure is carried on through the doorway as it warps out, in metres. */
-const OTHER_LEAVE_DRIFT = 1.4;
-/** Someone closing the page warps out up and down, where they stand. */
-const UP_AXIS = new Vector3(0, 1, 0);
-/** A portal or figure this close to where someone went through is the one they used. */
-const WARP_MATCH = 3;
-/** Seconds after which a figure that warped out but never left is shown again. */
-const WARP_GIVE_UP = 8;
-/** Someone back from a world ends up this far out in front of the door they took. */
+/** How far out of a door someone comes back, in metres. */
 const RETURN_STEP = 2.4;
-/**
- * In a world's lobby portal, the view is from this far in front of that
- * world's door: the runtime draws a live view from this far behind where
- * the visitor stands, so the portal is the door's own opening.
- */
+/** In a world's lobby portal: how far in front of that world's door the lobby is seen from. */
 const VIEW_STEP = 0.6;
-/**
- * Coming back, they appear this far behind the doorway's face, hidden by it,
- * and walk out through it for WALK_OUT_S seconds.
- */
+/** Coming back out, the walk starts this far inside the doorway and takes this long. */
 const WALK_OUT_FROM = -0.6;
 const WALK_OUT_S = 1.5;
-/** The flash holds this long before fading, so there is a frame to fade from. */
+/** The white flash stays up this long before the lens starts to settle. */
 const FLASH_HOLD_S = 0.1;
-/**
- * In third person the camera starts in the hall looking at the door, then
- * swings round behind them as they finish walking out.
- */
+/** The third-person camera turns round from the door to behind the visitor, from this long into the walk, over this long. */
 const TURN_FROM_S = 1.1;
 const TURN_S = 0.8;
-/**
- * The door just walked out of stays shut until they are this far from it.
- * Otherwise the camera, swung round behind them, backs out through the
- * open doorway and ends up looking at the back of the door.
- */
+/** Walk this far from the door just come out of and it opens again. */
 const EXIT_CLEAR = 4;
-/** How long the screen stays white while switching in or out of private mode. */
-const PRIVATE_FADE_MS = 260;
-/** The ghost's opacity, and how far its shimmer swings either side of it. */
-const GHOST_OPACITY = 0.38;
-const GHOST_SHIMMER = 0.08;
-const GHOST_GLOW = 0x5cc8ff;
-/**
- * Someone else first seen this close to a spawn pad's centre has just entered,
- * so the beam lights on that pad for us too. The pads sit 6 m out, inside the
- * nearest door's return spot (8.6 m), so visitors walking back out of a world
- * do not set it off.
- */
-const ARRIVE_RADIUS = 1.5;
-/**
- * A pad is taken while someone else stands this close to its centre: the
- * dais is about a metre out from it, and a body beside it would still clip.
- */
-const PAD_CLEAR = 1.4;
-/** Still this close to the pad's centre: not walked off it yet, so can still be moved to a free one. */
-const PAD_SETTLE = 0.4;
-/** Billboards further than this are not picked by the crosshair or a tap. */
-const BILLBOARD_RANGE = 95;
-/** How often the billboard under the crosshair is looked up, in seconds. */
-const FOCUS_INTERVAL = 0.1;
-/** Billboard bookings are refreshed this often while walking. */
-const BILLBOARD_REFRESH_MS = 60_000;
-
-/** The ring of light that runs across the floor on each arrival: metres per second, and seconds it lasts. */
-
 /** How rough the floor is: 0 is a perfect mirror, 1 a softly blurred, uneven stone. */
 const FLOOR_ROUGHNESS = 1;
 
 /**
- * The floor is one mirror plane whose shader also draws the rotunda's inlay.
- * Drawing it as a second plane just above the mirror depth-fights on GPUs with low
- * depth precision, and costs an extra full-screen pass. Outside the rotunda the
- * streets are plain stone, with only a line along the building.
+ * The street's floor: one plain mirror plane, slightly rough, with no lines
+ * on it.
  */
 const floorShader = {
-  name: 'WorldMeshFloor',
+  name: 'WorldMeshStreet',
   uniforms: {
     color: { value: null },
     tDiffuse: { value: null },
     textureMatrix: { value: null },
-    uPlayer: { value: new Vector2() },
     uLight: { value: 0 },
     uBackground: { value: new Color() },
     uHaze: { value: new Color() },
     uRough: { value: FLOOR_ROUGHNESS },
-    uHall: { value: 0 },
-    uWall: { value: 0 },
   },
   vertexShader: /* glsl */ `
     uniform mat4 textureMatrix;
@@ -444,29 +153,14 @@ const floorShader = {
   `,
   fragmentShader: /* glsl */ `
     uniform sampler2D tDiffuse;
-    uniform vec2 uPlayer;
     uniform float uLight;
     uniform vec3 uBackground;
     uniform vec3 uHaze;
     uniform float uRough;
-    uniform float uHall;
-    uniform float uWall;
     varying vec4 vUv;
     varying vec3 vWorld;
 
     #include <logdepthbuf_pars_fragment>
-
-    float line1(float coord, float width) {
-      return 1.0 - min(abs(fract(coord - 0.5) - 0.5) / max(width, 1e-4), 1.0);
-    }
-
-    // Spokes round the hall's centre. atan jumps at -x, so take the width
-    // from whichever of two half-turned angles is smooth there.
-    float spokes(vec2 p, float count) {
-      float a = atan(p.y, p.x) / 6.2831853 * count;
-      float b = atan(-p.y, -p.x) / 6.2831853 * count;
-      return line1(a, min(fwidth(a), fwidth(b)));
-    }
 
     float hash(vec2 p) {
       vec3 q = fract(vec3(p.xyx) * 0.1031);
@@ -523,43 +217,18 @@ const floorShader = {
       float grain = (valueNoise(grainCoord) - 0.5) * grainVisible;
       float rough = ((patches - 0.5) * 0.9 + grain * 1.2) * uRough;
 
-      // Fade out well before the horizon, where dense lines would add up to a bright band.
       float dist = distance(vWorld.xz, cameraPosition.xz);
-      float fade = 1.0 - smoothstep(12.0, 75.0, dist);
-      float minorFade = 1.0 - smoothstep(8.0, 40.0, dist);
-      // Lines light up a little around the player.
-      float glow = 1.0 - smoothstep(0.0, 14.0, distance(vWorld.xz, uPlayer));
-      // Inside the rotunda, an inlay round the centre: rings every 3 m,
-      // spokes, and a border band inside the wall. Outside it, one line along
-      // the outer face of the wall marks where the building ends.
-      float rr = length(vWorld.xz);
-      float inside = 1.0 - smoothstep(uHall - 0.6, uHall, rr);
-      float ringMinor = line1(rr / 3.0, fwidth(rr / 3.0));
-      float ringWidth = max(fwidth(rr), 1e-4);
-      float ringMajor = 1.0 - min(min(abs(rr - 6.0), min(abs(rr - uHall + 1.2), abs(rr - uHall + 0.9))) / ringWidth, 1.0);
-      float spokeMinor = spokes(vWorld.xz, 32.0) * smoothstep(4.0, 8.0, rr);
-      float spokeMajor = spokes(vWorld.xz, 8.0) * smoothstep(2.4, 3.0, rr);
-      float radial = max(max(ringMinor, spokeMinor) * 0.08 * minorFade, max(ringMajor, spokeMajor) * 0.2);
-      // Outside, the streets are plain polished stone, but for one line along
-      // the building's outer wall. 4 cm wide, but never less than a solid two pixels, so it does not
-      // thin and pale with distance; kept on out to the haze so it reads as
-      // one unbroken ring round the building. The pixel size is measured
-      // across the line (fwidth overstates it on diagonals and blurs them).
-      float edgePixel = max(length(vec2(dFdx(rr), dFdy(rr))), 1e-4);
-      float edgeHalf = max(0.02, edgePixel);
-      float edge = 1.0 - smoothstep(edgeHalf, edgeHalf + edgePixel, abs(rr - uWall));
-      float lines = max(radial * inside * fade * (1.0 + glow * 1.6), edge * 0.45 * step(1.0, uWall));
 
       // A mirror under a tinted glaze: glossier at grazing angles, faint
       // looking straight down. The rough patches take some of the shine off.
       vec3 toCamera = normalize(cameraPosition - vWorld);
       float glaze = clamp(mix(0.78, 0.96, abs(toCamera.y)) + rough * 0.12, 0.0, 1.0);
 
-      // Dark: black stone with light lines. Light: white stone with ink lines.
+      // Dark: black stone. Light: white stone.
       // A faint speckle keeps the black from reading as a flat void.
-      vec3 darkFloor = reflection * (1.0 - glaze) * (1.0 - lines) + vec3(lines) + vec3(max(rough, 0.0) * 0.006);
+      vec3 darkFloor = reflection * (1.0 - glaze) + vec3(max(rough, 0.0) * 0.006);
       darkFloor *= 0.5;
-      vec3 lightFloor = mix(reflection, uBackground * (1.0 - rough * 0.035), glaze) * (1.0 - min(lines * 1.4, 1.0));
+      vec3 lightFloor = mix(reflection, uBackground * (1.0 - rough * 0.035), glaze);
       lightFloor *= 0.8;
 
       // Melt into the fog at the horizon, like everything else.
@@ -572,32 +241,14 @@ const floorShader = {
   `,
 };
 
-/** People further than this are not picked for muting: their voice has faded out anyway. */
-const PEER_PICK_RANGE = 45;
-/** How long "muted" stays up after a click or tap. */
-const PEER_NOTE_MS = 2500;
-
-/** What the badge over your head says while the microphone is not carrying your voice. */
-const TALK_NOTES: Record<MicState, string> = {
-  off: '',
-  live: '',
-  starting: 'opening microphone',
-  denied: 'microphone blocked',
-  unavailable: 'voice is not available',
-};
-/** Microphone level (presence.micLevel) above which you count as speaking, not just holding the key. */
-const SPEAKING_LEVEL = 0.08;
-/** The bars keep moving this long after the last loud moment. */
-const SPEAKING_HOLD_MS = 250;
-
 /**
- * Walk mode: the directory as a place. You arrive inside the citadel, a tall
- * round hall whose wall is lined with a door per listed world; walking into
- * one travels to that world. It stands in a square plaza, and its gates open
- * onto a grid of avenues and streets, with more worlds' doors along them
- * (avenuePlan). Movement,
- * camera, touch controls and portal triggers all come from the same runtime
- * the worlds themselves use.
+ * Walk mode: the directory as a place. One street, lined on both sides with
+ * buildings standing wall to wall, a building per listed world with its door
+ * in the middle of its front. You arrive at the top of the street; walking
+ * into a door travels to that world. A door whose world can draw itself
+ * live shows it through the doorway, and can be walked straight into.
+ * Movement, camera, touch controls and portal triggers all come from the
+ * same runtime the worlds themselves use.
  */
 export function createLobby(container: HTMLElement, options: LobbyOptions): Lobby {
   const viewOnly = options.doorwayView === true;
@@ -619,7 +270,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   let light = options.light ?? false;
 
   const camera = new PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 420);
-  camera.layers.enable(FLOOR_LAYER);
 
   const hemisphere = new HemisphereLight(0xffffff, 0x202020, 1.6);
   scene.add(hemisphere);
@@ -628,88 +278,15 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const sun = new DirectionalLight(0xffffff, 1.8);
   sun.position.set(4, 10, 6);
   scene.add(sun);
-  const spawnPads = createSpawnPads(FLOOR_LAYER);
-  scene.add(spawnPads.object);
-  // Placed now, not at the first render: the first steps already stand on a pad.
-  spawnPads.object.updateMatrixWorld(true);
-  // Every visitor arrives on one of the pads round the middle of the hall, chosen at
-  // random among those nobody stands on, facing the middle, which is left clear for
-  // the hologram. Nobody is known yet on the first one: settleOnPad moves off it if
-  // the room turns out to have someone there.
-  let spawnPad = Math.floor(Math.random() * spawnPads.pads.length);
-  const padSpawn = (): Vec3Tuple => [spawnPads.pads[spawnPad].x, 0, spawnPads.pads[spawnPad].z];
-  const padYaw = () => Math.atan2(spawnPads.pads[spawnPad].x, spawnPads.pads[spawnPad].z);
-  /** How far the nearest other visitor stands from pad `index`'s centre. */
-  const padRoom = (index: number): number => {
-    const { x, z } = spawnPads.pads[index];
-    return Math.min(Infinity, ...(presence?.bodies() ?? []).map((body) => Math.hypot(body.x - x, body.z - z)));
-  };
-  /** A pad nobody else stands on, at random; with every one taken, the one with the most room. */
-  const pickPad = (): number => {
-    const room = spawnPads.pads.map((_, index) => padRoom(index));
-    const free = room.flatMap((space, index) => (space >= PAD_CLEAR ? [index] : []));
-    return free.length ? free[Math.floor(Math.random() * free.length)] : room.indexOf(Math.max(...room));
-  };
-  /** Just arrived on a pad and not yet checked against who else is in the room. */
-  let settling = false;
   // The local figure warping in on arrival.
   const arrival = new Arrival();
-  /** Other visitors' figures warping in as they arrive. */
-  const arrivals: Array<{ arrival: Arrival; root: Object3D }> = [];
-  let newestFigure: Object3D | null = null;
-  // Everyone else's figures, so one stepping through a portal can be warped out.
-  const figures = new Set<Object3D>();
-  const departing: Array<{ root: Object3D; time: number; axis: Vector3; from: Vector3; left: boolean; drift: number; duration: number }> = [];
-  const throughAxis = new Vector3();
-  // Coming out of a world happens as the page loads, often before presence
-  // has connected: hold the warp until it can be shared.
-  let pendingWarp: { x: number; y: number; z: number; o: number; at: number } | null = null;
 
   const wallMaterial = new MeshStandardMaterial({ side: DoubleSide, roughness: 0.7, metalness: 0 });
-  const innerWallMaterial = new MeshBasicMaterial({ side: DoubleSide });
-  // The city's storefronts: piers, beams, fascias and panels, a shade off the walls.
+  // The storefronts: piers, beams, fascias and panels, a shade off the walls.
   const facadeMaterial = new MeshStandardMaterial({ side: DoubleSide, roughness: 0.7, metalness: 0 });
-  const gateFrameMaterial = new MeshStandardMaterial({ roughness: 0.4, metalness: 0.05 });
-  // The dome's glazing and the gallery rails.
-  const glassMaterial = new MeshStandardMaterial({
-    transparent: true,
-    depthWrite: false,
-    side: DoubleSide,
-    roughness: 0.08,
-    metalness: 0.4,
-  });
-  // The dome: light glass, so the sky shows through and the hall shows from on top.
-  const domeGlassMaterial = new MeshStandardMaterial({
-    transparent: true,
-    depthWrite: false,
-    side: DoubleSide,
-    roughness: 0.05,
-    metalness: 0.2,
-  });
-  // The gallery floors: thicker glass than the rails, so the deck still reads as a floor.
-  const deckGlassMaterial = new MeshStandardMaterial({
-    transparent: true,
-    depthWrite: false,
-    side: DoubleSide,
-    roughness: 0.15,
-    metalness: 0.3,
-  });
-  // Over the middle of the hall: every world and the gate to find it at.
-  // Glass lifts up to the galleries, and the walkable galleries they reach.
-  const liftTrim = new MeshBasicMaterial({ color: 0xffffff, toneMapped: false });
-  const lifts = new Lifts({ glass: glassMaterial, trim: liftTrim, body: wallMaterial, floor: gateFrameMaterial });
-  scene.add(lifts.group);
-  const liftPoint = new Vector3();
-  const colliderMaterial = createColliderMaterial();
-  /** Gallery decks, rails and landings. Rebuilt with the hall. */
-  const upper: Mesh[] = [];
-  const departures = createDepartureBoard();
-  scene.add(departures.group);
-  // Never drawn, so kept out of the scene; the board sits at the origin.
-  const boardColliders = departures.colliders.map((geometry) => new Mesh(geometry, colliderMaterial));
-  let flights: Flight[] = [];
-  const cityMaterials = createCityMaterials(renderer.capabilities.getMaxAnisotropy());
-  let disposed = false;
+  // Colliders are never drawn.
+  const colliderMaterial = new MeshBasicMaterial({ side: DoubleSide, visible: false });
+  const cityMaterials = createCityMaterials();
   const mirror = new Reflector(new PlaneGeometry(FLOOR_SIZE, FLOOR_SIZE), {
     shader: floorShader,
     ...mirrorResolution(),
@@ -717,152 +294,23 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   mirror.rotation.x = -Math.PI / 2;
   scene.add(mirror);
   const floorUniforms = (mirror.material as ShaderMaterial).uniforms;
-  const isTouch = window.matchMedia?.('(pointer: coarse)').matches ?? false;
-
-  // Billboard ads: only mount when deliberately enabled (off by default) and the plaza has screens for them.
-  // Nothing outside the lobby carries a screen right now.
-  const billboardSlots: BillboardSlot[] = [];
-  const adsEnabled = options.ads === true && billboardSlots.length > 0;
-  const billboards = adsEnabled
-    ? new AdBillboards({
-        light,
-        touch: isTouch,
-        maxTextureSize: renderer.capabilities.maxTextureSize,
-        anisotropy: Math.min(4, renderer.capabilities.getMaxAnisotropy()),
-      })
-    : null;
-  if (billboards) scene.add(billboards.group);
-  applyTheme();
-
-  // The name presence sends right now. It only changes together with a
-  // rejoin, so the old connection never carries the new name.
-  let alias: string | null = options.private ? randomAlias() : null;
-  // Where a switch in progress is heading; equal to alias otherwise.
-  let pendingAlias = alias;
-  let ghost: Ghost | null = null;
-  let privateTimer = 0;
-  // Body colour picked in settings; presence sends it so everyone else sees it too.
+  // Body colour picked in settings.
   let color: string | null = null;
-  // The character everyone else sees this visitor wearing (set by loadCharacter).
-  const sharedCharacter = new SharedAvatarLink(() => {
-    const ticket = characterTicket();
-    return ticket ? resolveWorldMeshAvatar(window.location.origin, ticket) : Promise.resolve(null);
-  });
-  const presence = options.presenceEndpoint
-    ? new Presence({
-        url: `${options.presenceEndpoint.replace(/\/$/, '')}/room/lobby`,
-        // In a world's lobby portal: everyone shows through it, and nobody sees the visitor.
-        watch: viewOnly,
-        scene,
-        onCount: (count) => {
-          options.onPresenceCount?.(count);
-          // In the room now, with everyone in it: step off a pad someone already stands on.
-          if (count !== null && settling) settleOnPad();
-        },
-        getName: () => (alias ? null : options.playerName?.() ?? null),
-        getAlias: () => alias,
-        // Private mode keeps the default colour, so nothing ties the alias back to this visitor.
-        getColor: () => (alias ? null : color),
-        // Private mode wears the default body, so the character cannot give the visitor away either.
-        getAvatar: () => (alias || !world.avatarDescriptor ? null : sharedCharacter.get()),
-        // Everyone else's character is shown only from a link this hub signed.
-        verifyAvatar: createShareVerifier(window.location.origin),
-        // Someone else arriving on a pad warps in for everyone watching.
-        // Visitors coming back out of a world appear at a door, not here.
-        // Each new figure is handed over just before its arrival is reported.
-        onFigure: (root) => {
-          newestFigure = root;
-          figures.add(root);
-        },
-        // The lifts are shared: everyone sees the same cab at the same floor,
-        // and anyone riding one is drawn standing on its floor.
-        onShared: (key, value, { age, self }) => {
-          const match = /^lift:(\d)$/.exec(key);
-          if (match) lifts.applyShared(Number(match[1]), { f: value.f, y: value.y, v: value.v }, age);
-          // Someone else stepped through a portal just now (not a stale one from before we came).
-          if (key === 'warp' && !self && age < 2) seeWarp(value.x, value.y, value.z, value.o === 1);
-        },
-        place: (position, grounded) => lifts.ground(position, grounded),
-        // Push-to-talk (hold T, or the mic button on touch): heard by everyone nearby.
-        voice: !viewOnly,
-        onMic: (state) => showMic(state),
-        // On touch there is no aiming prompt: say once how muting works.
-        onVoice: () => {
-          if (!isTouch || muteHintShown) return;
-          muteHintShown = true;
-          notePeer('Tap someone talking to mute them');
-        },
-        // Lines in another language get a 文A mark: click or tap the bubble to translate it.
-        language: deviceLanguage(),
-        isForeign: async (text, language) => {
-          const foreign = await isForeign(text, language);
-          if (foreign && isTouch && !translateHintShown) {
-            translateHintShown = true;
-            notePeer('Tap a 文A bubble to translate it');
-          }
-          return foreign;
-        },
-        // Someone arriving warps in as we do.
-        onArrive: (x, z) => {
-          if (!spawnPads.pads.some((spot) => Math.hypot(x - spot.x, z - spot.z) < ARRIVE_RADIUS)) return;
-          if (newestFigure) startArrival(newestFigure);
-          newestFigure = null;
-          // Heard as their warp starts, quieter the further away they are.
-          playWarpSound(true, 0.2, loudnessAt(x, z));
-        },
-        // Everyone else's footsteps, jumps and landings, heard from where we stand.
-        listener: viewOnly ? undefined : () => listenerPoint.fromArray(world.getState().position),
-        // Someone leaving, by a door or by closing the page: the same sound as our own leaving.
-        // One warping out through a door is kept until the warp has played out; one
-        // closing the page warps out where they stand, up and down and as quick as an arrival.
-        onDepart: (x, z, root) => {
-          playWarpSound(false, 0, loudnessAt(x, z));
-          const entry = departing.find((candidate) => candidate.root === root);
-          if (entry) {
-            entry.left = true;
-            return true;
-          }
-          // Gone before their own arrival had shown them: nothing to warp out.
-          const arriving = arrivals.findIndex((candidate) => candidate.root === root);
-          if (arriving >= 0) {
-            arrivals.splice(arriving, 1);
-            return false;
-          }
-          if (!root.visible) return false;
-          departing.push({ root, time: 0, axis: UP_AXIS, from: root.position.clone(), left: true, drift: 0, duration: LEAVE_TIME });
-          return true;
-        },
-      })
-    : undefined;
-  const listenerPoint = new Vector3();
-  /** How loud someone else's sound is here: full beside us, fading with distance. */
-  function loudnessAt(x: number, z: number): number {
-    const [px, , pz] = world.getState().position;
-    return 1 / (1 + Math.hypot(x - px, z - pz) / 8);
-  }
-  lifts.onSend = (index, state) => {
-    presence?.share(`lift:${index}`, { f: state.f, y: Math.round(state.y * 100) / 100, v: Math.round(state.v * 100) / 100 });
-  };
 
-  // The citadel's walls (solid) and trim (just for looks). Rebuilt whenever
-  // the door count changes.
-  const wall: Mesh[] = [];
-  const trim: Mesh[] = [];
-  const gateMouths: Group[] = [];
-  const gateLabelDraw: Array<(isLight: boolean) => void> = [];
-  let interiorBannerRing: Group | null = null;
-  let interiorBannerAngle = 0;
   // Standing on something is required once there are walls to bump into.
   const ground = new Mesh(
-    new CircleGeometry(1, 48),
+    new PlaneGeometry(FLOOR_SIZE, FLOOR_SIZE),
     new MeshStandardMaterial({ opacity: 0, transparent: true, depthWrite: false }),
   );
   ground.rotation.x = -Math.PI / 2;
-  // Wide from the start: visitors arrive on the pads 6 m out, before the hall
-  // is built and sizes the ground to the plaza.
-  ground.scale.setScalar(PLAZA_RADIUS);
   ground.updateMatrixWorld(true);
   scene.add(ground);
+
+  /** The street, laid out for the worlds there are. */
+  let street: StreetPlan = planStreet(options.worlds.length);
+  /** The street's buildings (just for looks) and one collider per building. */
+  const streetMeshes: Mesh[] = [];
+  const streetColliders: Mesh[] = [];
 
   const known = new Map<string, DoorWorld>();
   const doors = new Map<string, Door>();
@@ -871,18 +319,18 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const walkThrough = new WalkThrough({
     live: liveDoors,
     state: () => world.getState(),
-    travelUrl: (url) => travelUrl(url),
+    travelUrl: (url) => buildTravelUrl(url),
     viewMode: () => world.getViewMode(),
-    color: () => (alias ? null : color),
-    character: () => (alias ? null : character),
-    characterTicket: () => characterTicket(),
+    color: () => color,
+    // Everyone walks as the default character.
+    character: () => null,
+    characterTicket: () => null,
     cameraDistance: { get: () => world.getCameraDistance(), set: (distance) => world.setCameraDistance(distance) },
     freeze: () => {
       warping = true;
       world.stop();
     },
     entered: (door) => {
-      presence?.detach();
       const out = door.inFront(RETURN_STEP * door.group.scale.x);
       returnTo = { position: [out.x, door.group.position.y, out.z], yaw: out.yaw };
       if (door.world) options.onEnterWorld?.(door.world, returnTo);
@@ -893,14 +341,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   const cameraEye = new Vector3();
   const cameraBack = new Vector3();
   const faceNormal = new Vector3();
-  const aerialLook = new Vector3();
-  /** Where the bird's-eye camera looks on the ground, and how far round it buildings are loaded. */
-  function aerialFocus(): { x: number; z: number; reach: number } {
-    camera.getWorldDirection(aerialLook);
-    // Looking down: where the view meets the street. Level or up (it never is): straight under the camera.
-    const along = aerialLook.y < -0.05 ? -camera.position.y / aerialLook.y : 0;
-    return { x: camera.position.x + aerialLook.x * along, z: camera.position.z + aerialLook.z * along, reach: AERIAL_BUILDING_REACH };
-  }
   /**
    * A world's doorway is open (walk in and you go through), so it is no
    * collider and the camera's boom would pass it, stopping only at the
@@ -921,7 +361,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     cameraRay.set(cameraEye, cameraBack);
     cameraRay.far = boom + 0.3;
     for (const hit of cameraRay.intersectObjects(faces, false)) {
-      // Only from the hall side: a face seen from behind is past the wall anyway.
+      // Only from the street side: a face seen from behind is past the wall anyway.
       if (!hit.face || faceNormal.copy(hit.face.normal).transformDirection(hit.object.matrixWorld).dot(cameraBack) > 0) continue;
       // Like the camera rig: 0.3 short of the surface, but never past it, however close they stand.
       const pulled = Math.max(hit.distance - 0.3, hit.distance * 0.5);
@@ -929,106 +369,14 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       return;
     }
   }
-  /**
-   * The visitor's character (Avatar Wallet), shown in the lobby as well, so
-   * the figure walking through a door is already the one the world shows.
-   * Its model file is downloaded once here and handed on to worlds that can
-   * be walked into (walkThrough).
-   */
-  let character: { descriptor: AvatarDescriptor; data: ArrayBuffer } | null = null;
-  let characterTurn = 0;
-  /** A new body went on: it warps in, as on arrival, once nothing covers the lobby. */
-  let characterWarp = false;
-  const characterNote = document.createElement('p');
-  characterNote.className = 'walk-loading';
-  characterNote.setAttribute('role', 'status');
-  characterNote.textContent = 'Loading character…';
-  container.appendChild(characterNote);
-  async function loadCharacter(): Promise<void> {
-    // In a world's lobby portal the visitor has no body here.
-    if (viewOnly) return;
-    const turn = ++characterTurn;
-    const ticket = alias ? null : characterTicket();
-    characterNote.classList.toggle('visible', !!ticket);
-    try {
-      const descriptor = ticket ? await resolveWorldMeshAvatar(window.location.origin, ticket).catch(() => null) : null;
-      if (turn !== characterTurn || disposed) return;
-      // Already wearing it (only the ticket was renewed): nothing to swap or warp.
-      const worn = character?.descriptor;
-      if (descriptor && worn && !alias && descriptor.avatarId && descriptor.provider === worn.provider && descriptor.avatarId === worn.avatarId) {
-        // Its link may be new, though: that is the one others download.
-        sharedCharacter.set(descriptor);
-        return;
-      }
-      const data = descriptor ? await downloadAvatarModel(descriptor).catch(() => null) : null;
-      if (turn !== characterTurn || disposed) return;
-      if (!descriptor || !data || alias) {
-        // Private mode already went back to the default body.
-        if (character && !alias) {
-          world.clearAvatar();
-          warpCharacterIn();
-        }
-        character = null;
-        sharedCharacter.set(null);
-        return;
-      }
-      if ((await world.loadAvatar(descriptor, data)) && turn === characterTurn && !alias) {
-        character = { descriptor, data };
-        sharedCharacter.set(descriptor);
-        warpCharacterIn();
-      }
-    } finally {
-      if (turn === characterTurn) characterNote.classList.remove('visible');
-    }
-  }
-  /** Hide the body that just went on until its warp can be seen (see stepCharacterWarp). */
-  function warpCharacterIn(): void {
-    if (ghost || warping || leavingAt >= 0) return;
-    characterWarp = true;
-    // Hidden from the very first frame, so it never pops in before warping.
-    arrival.start(() => null);
-    setLocalAppear(world.avatar, 0);
-  }
-  /** The swapped-in body warps in once the pause screen or a dialog is off the lobby, with the arrival sound. */
-  function stepCharacterWarp(): void {
-    if (!characterWarp || lobbyCovered()) return;
-    characterWarp = false;
-    arrival.start(() => world.avatar);
-    playWarpSound(true, 0.2);
-  }
-  const onCharacterChange = () => void loadCharacter();
-  window.addEventListener(CHARACTER_CHANGE_EVENT, onCharacterChange);
-  // Doors with no world behind them yet. Re-laid out with every list change.
-  const emptyDoors: Door[] = [];
-  // Empty doors round the galleries. Rebuilt with the hall.
-  const galleryDoors: Door[] = [];
-  /** The grid of avenues and streets round the citadel, and how many of its door places hold a world. */
-  let city: CityPlan = planAvenues(HALL_RADIUS + WALL_THICKNESS, 0, STOREFRONT_WIDTH);
-  /** The door at each place round the hall (world, claimed or empty): each gets a storefront and a sign. */
-  let hallPlaces: Door[] = [];
-  /** The doors out in the city, in the order of the plan's slots: each gets its storefront's sign. */
-  let cityDoors: Door[] = [];
-  /** The city's blocks (just for looks) and their walls, one collider per block. */
-  const cityMeshes: Mesh[] = [];
-  const cityColliders: Mesh[] = [];
-  /** Each world's block that a building can replace, solid until the building stands there. */
-  const lotColliders: Mesh[] = [];
-  const directory = options.buildings && options.buildings !== 'demo' ? options.buildings : null;
-  // Collision snapshots its colliders: a block giving way to its building has to be looked at again.
-  const buildings = new Buildings(scene, renderer, camera, !alias, directory, () => world.refreshColliders());
-  /** World (canonical URL) → the hash of its approved building, once the directory answered. */
-  let approvedBuildings = new Map<string, string | null>();
-  /** How far out the city starts, once it is built, to build it again when buildings arrive. */
-  let cityOuter: number | null = null;
-  /** The list the doors were last laid out from, and where that put them. */
-  let lastWorlds: LobbyWorld[] = options.worlds;
+
+  /** The list the doors were last laid out from, as the order of their URLs. */
   let laidOut = '';
-  let nearEmpty: Door | null = null;
   let time = 0;
   let warping = false;
   /** Lobby clock when this visitor started warping out through a door; negative = not leaving. */
   let leavingAt = -1;
-  // The lobby door being walked through, if it was one (not a tower door).
+  // The door being walked through.
   let warpDoor: Door | null = null;
   let warpTimer = 0;
   // Outside the door the visitor last went through, for when they come back.
@@ -1042,541 +390,91 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   if (options.start) flash.classList.add('active');
   container.appendChild(flash);
 
-  const addPrompt = document.createElement('button');
-  addPrompt.type = 'button';
-  addPrompt.className = 'walk-add-prompt';
-  addPrompt.textContent = isTouch ? 'Tap to add your world' : 'Press E or click to add your world';
-  addPrompt.addEventListener('click', (event) => {
-    event.stopPropagation();
-    addWorld();
-  });
-  container.appendChild(addPrompt);
-
-  // Inside a lift: up and down buttons (E and Q on a keyboard).
-  const liftPrompt = document.createElement('div');
-  liftPrompt.className = 'walk-add-prompt walk-lift-prompt';
-  if (!isTouch) {
-    const liftHint = document.createElement('span');
-    liftHint.textContent = 'E up · Q down';
-    liftPrompt.append(liftHint);
-  }
-  for (const [label, step, name] of [['▲', 1, 'Up'], ['▼', -1, 'Down']] as const) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'walk-lift-step';
-    button.dataset.step = String(step);
-    button.textContent = label;
-    button.setAttribute('aria-label', name);
-    // On press rather than click: the touch controls can swallow the click that would follow.
-    button.addEventListener('pointerdown', (event) => {
-      event.stopPropagation();
-      event.preventDefault();
-      lifts.move(liftPoint.fromArray(world.getState().position), step);
-    });
-    liftPrompt.append(button);
-  }
-  for (const type of ['pointerdown', 'pointerup']) liftPrompt.addEventListener(type, (event) => event.stopPropagation());
-  container.appendChild(liftPrompt);
-
-  // At a lift's door when the cab is elsewhere: call it (E on a keyboard).
-  const callPrompt = document.createElement('button');
-  callPrompt.type = 'button';
-  callPrompt.className = 'walk-add-prompt walk-call-prompt';
-  callPrompt.addEventListener('pointerdown', (event) => {
-    event.stopPropagation();
-    event.preventDefault();
-    callLift();
-  });
-  callPrompt.addEventListener('pointerup', (event) => event.stopPropagation());
-  container.appendChild(callPrompt);
-
-  // Offered while a billboard is under the crosshair (or centred on a phone).
-  const adPrompt = document.createElement('button');
-  adPrompt.type = 'button';
-  adPrompt.className = 'walk-add-prompt walk-ad-prompt';
-  adPrompt.addEventListener('click', (event) => {
-    event.stopPropagation();
-    if (focused) activateBillboard(focused);
-  });
-  if (adsEnabled) container.appendChild(adPrompt);
-  // Muting someone's voice: the prompt while aiming at them, and the note after.
-  const peerPrompt = document.createElement('button');
-  peerPrompt.type = 'button';
-  peerPrompt.className = 'walk-add-prompt walk-peer-prompt';
-  peerPrompt.addEventListener('click', (event) => {
-    event.stopPropagation();
-    if (peerFocus) actOn(peerFocus);
-  });
-  if (presence) container.appendChild(peerPrompt);
-  let peerFocus: PeerPick | null = null;
-  let sincePeerFocus = 0;
-  let peerNoteUntil = 0;
-  let muteHintShown = false;
-  let translateHintShown = false;
-  /** Lines on their way to a translation, so they are not asked for twice. */
-  const translating = new WeakSet<Said>();
-  let focused: BillboardHit | null = null;
-  let sinceFocus = 0;
-  let adModal: { close(): void } | null = null;
-  let claimModal: { close(): void } | null = null;
-  let billboardFetch: AbortController | null = null;
-  let occupancyTimer = 0;
-  let occupancyFetch: AbortController | null = null;
-  /** Last count/cap by world origin, so newly laid doors can show full immediately. */
-  const occupancyByOrigin = new Map<string, { count: number; cap: number }>();
+  const spawn = (): Vec3Tuple => [street.spawn.x, 0, street.spawn.z];
 
   const world = createWorldMesh({
     footsteps: !viewOnly,
     scene,
     camera,
     renderer,
-    spawn: padSpawn(),
-    // Held upright, look further down so the floor fills the tall screen instead of the sky.
-    // The lobby is big enough to want the bird's-eye view (M); it opens 80 m over the floor, as high as it goes.
+    spawn: spawn(),
+    // Held upright, look further down so the street fills the tall screen instead of the sky.
     view: {
       mode: 'third',
-      yaw: padYaw(),
+      yaw: street.spawn.yaw,
       distance: 5.5,
       pitch: window.innerWidth < window.innerHeight ? -0.32 : -0.15,
       aerial: true,
-      aerialMaxHeight: 80,
-      aerialDistance: 200,
+      aerialMaxHeight: 60,
+      aerialDistance: 150,
     },
     vr: true,
     // The lobby is where the way back leads.
     lobbyPortal: false,
-    // Minecraft-style flight: double-tap Space.
-    abilities: { flying: true },
-    ui: { title: 'WorldMesh', badge: false, crosshair: false, deferLockPanel: true, moveBeforeLock: true },
-    network: presence,
-    // Empty doors are closed: their faces stop you like the wall does.
+    // Twice the runtime's usual pace (5.2 and 9 m/s): the street is long.
+    movement: { walkSpeed: 10.4, sprintSpeed: 18 },
+    // Nothing in the street to interact with: no E button on touch screens.
+    ui: { title: 'WorldMesh', badge: false, crosshair: false, deferLockPanel: true, moveBeforeLock: true, interactButton: false },
     colliders: () => [
       ground,
-      ...wall,
-      ...emptyDoors.map((door) => door.face),
-      ...galleryDoors.map((door) => door.face),
       ...(exitDoor ? [exitDoor.face] : []),
       // Every doorway's frame and backstop, so nobody slips past one into the wall.
-      ...[...doors.values(), ...emptyDoors, ...galleryDoors, ...(exitDoor ? [exitDoor] : [])].flatMap((door) => door.blockers),
-      ...spawnPads.colliders,
-      ...cityColliders,
-      ...buildings.colliders(),
-      ...upper,
-      ...lifts.colliders,
-      ...boardColliders,
+      ...[...doors.values()].flatMap((door) => door.blockers),
+      ...streetColliders,
     ],
     onUpdate: (dt, handle) => {
       time += dt;
       if (viewOnly) placeViewer();
       else if (cameBack && cameBack.layout !== laidOut) followComeBack(handle.getState().position);
       if (emerging) stepEmerging(dt);
-      updateDepartures(dt);
-      if (pendingWarp) {
-        const { at, ...warp } = pendingWarp;
-        if (presence?.share('warp', warp) || !presence || time - at > WARP_SHARE_S) pendingWarp = null;
-      }
-      departures.update(dt);
-      if (interiorBannerRing) {
-        interiorBannerAngle += dt * ((Math.PI * 2) / 360);
-        interiorBannerRing.rotation.y = interiorBannerAngle;
-      }
-      // In a lift: carried with the cab, and kept inside its glass.
-      if (!emerging && !warping) {
-        const held = lifts.update(dt, liftPoint.fromArray(handle.getState().position), presence?.bodies() ?? []);
-        if (held) world.setState({ position: held.toArray() });
-        updateLiftPrompt();
-      } else {
-        callPrompt.classList.remove('visible');
-      }
       const [x, y, z] = handle.getState().position;
-      options.onListener?.(x, y, z, HALL_RADIUS);
-      // Only doors on the floor they are standing on.
-      const level = (door: Door) => Math.abs(y - door.group.position.y) < 1;
+      // Heard from the middle of the street.
+      const middle = -street.length / 2;
+      options.onListener?.(x, y, z - middle, street.length / 2 + street.halfWidth);
       if (exitDoor && !emerging) {
         const { x: doorX, z: doorZ } = exitDoor.inFront(0);
         if (Math.hypot(x - doorX, z - doorZ) > EXIT_CLEAR) setExitDoor(null);
       }
       for (const door of doors.values()) {
         door.update(time);
-        if (!level(door)) continue;
+        if (Math.abs(y - door.group.position.y) > 1) continue;
         if (!warping && !emerging && !viewOnly && door.contains(x, z)) enter(door);
       }
-      buildings.update(dt, x, z, world.getViewMode() === 'aerial' ? aerialFocus() : null);
       walkThrough.update();
       if (world.getViewMode() === 'third' && !renderer.xr.isPresenting) keepCameraOutOfDoorways(feet.set(x, y, z));
-      let near: Door | null = null;
-      let nearest = EMPTY_DOOR_REACH;
-      // From the bird's-eye view the screen is for picking where to land: no door, billboard or person prompts.
-      const aerial = world.getViewMode() === 'aerial';
-      for (const door of [...emptyDoors, ...galleryDoors]) {
-        door.update(time);
-        const distance = level(door) && !aerial ? door.distanceInFront(x, z) : null;
-        if (distance !== null && distance < nearest) {
-          nearest = distance;
-          near = door;
-        }
-      }
-      if (near !== nearEmpty) {
-        nearEmpty?.setHover(false);
-        near?.setHover(true);
-        nearEmpty = near;
-        addPrompt.classList.toggle('visible', near !== null);
-      }
-      updateBillboardFocus(dt, near !== null || aerial);
-      updatePeerFocus(dt, near !== null || aerial);
-      billboards?.update(dt, camera);
-      floorUniforms.uPlayer.value.set(x, z);
-      // The sky is centred on the camera, so it stays around it however high the towers take them.
+      // The sky is centred on the camera, so it stays around it however high they fly.
       sky.position.copy(camera.position);
       updateSky(sky, time);
-      spawnPads.update(time);
-      // Arriving: the figure warps in, and again whenever a character goes on.
-      updateArrivals(dt);
-      stepCharacterWarp();
       let appear = arrival.update(dt);
       // Leaving: the arrival's warp in reverse, from solid back to nothing.
       if (leavingAt >= 0) appear = 1 - Math.min(1, (time - leavingAt) / LEAVE_TIME);
       if (leavingAt >= 0) updateLens(time - leavingAt);
-      if (appear !== null) {
-        if (ghost) ghost.shimmer(time, appear);
-        // Into a portal, the figure smears through it, not up and down.
-        else setLocalAppear(world.avatar, appear, leavingAt >= 0 && warpDoor ? warpDoor.through(throughAxis) : undefined);
-      } else if (ghost) {
-        ghost.shimmer(time);
-      }
-      // Keep the finite floor under the player. The inlay is drawn in world
-      // space, so moving the plane does not move the lines.
+      // Into a portal, the figure smears through it, not up and down.
+      if (appear !== null) setLocalAppear(world.avatar, appear, leavingAt >= 0 && warpDoor ? warpDoor.through(new Vector3()) : undefined);
+      // Keep the finite floor under the player. Its roughness is drawn in
+      // world space, so moving the plane does not move it.
       mirror.position.set(Math.round(x / 10) * 10, 0, Math.round(z / 10) * 10);
-      placeChatBubble();
-      placeTalkBadge();
       // Last, with the camera where it will be drawn from: the worlds seen live through their doors.
       walkThrough.step(camera, feet.set(x, y, z));
       // Never another world's live view inside a world's lobby portal.
       liveDoors.update(doors.values(), camera, feet, !renderer.xr.isPresenting && !viewOnly);
     },
   });
-  // The page's own buttons (talk, chat) stand aside in the bird's-eye view, like the runtime's.
+  // The page's own buttons stand aside in the bird's-eye view, like the runtime's.
   world.on('view:change', ({ mode }) => document.documentElement.classList.toggle('birds-eye', mode === 'aerial'));
-  if (alias) ghost = makeGhost(world.avatar);
-  void loadCharacter();
 
-  // Chat is a bubble over your head. Enter opens it, Enter sends it, then it
-  // follows you around until it fades. There is no transcript.
-  const chatBubble = document.createElement('form');
-  chatBubble.className = 'walk-bubble';
-  const chatField = document.createElement('input');
-  chatField.type = 'text';
-  chatField.maxLength = 80;
-  chatField.autocomplete = 'off';
-  chatField.placeholder = 'say something';
-  chatField.setAttribute('aria-label', 'Say something');
-  chatField.enterKeyHint = 'send';
-  const chatClose = document.createElement('button');
-  chatClose.type = 'button';
-  chatClose.className = 'walk-bubble-close';
-  chatClose.textContent = '×';
-  chatClose.setAttribute('aria-label', 'Close chat');
-  const chatSaid = document.createElement('p');
-  chatBubble.append(chatField, chatClose, chatSaid);
-  container.appendChild(chatBubble);
-  for (const type of ['pointerdown', 'pointermove', 'pointerup', 'keydown', 'keyup']) {
-    chatBubble.addEventListener(type, (event) => event.stopPropagation());
-  }
-  let chatting = false;
-  let chatUntil = 0;
-  let chatOpenedAt = 0;
-  let chatOpenHeight = 0;
-  const chatPoint = new Vector3();
-
-  chatField.addEventListener('keydown', (event) => {
-    if (event.key !== 'Escape') return;
-    // Do not preventDefault: that cancels the browser leaving pointer lock.
-    closeChat();
-  });
-
-  chatClose.addEventListener('click', () => closeChat());
-
-  chatBubble.addEventListener('submit', (event) => {
-    event.preventDefault();
-    const line = chatField.value.trim();
-    const rejection = line ? chatRejection(line) : null;
-    if (rejection) {
-      chatField.value = '';
-      chatField.placeholder = rejection === 'link' ? 'links are not allowed' : 'that word is not allowed';
-      return;
-    }
-    chatField.placeholder = 'say something';
-    chatting = false;
-    chatField.blur();
-    chatField.value = '';
-    endChat();
-    if (!line) {
-      chatUntil = 0;
-      chatBubble.classList.remove('visible', 'saying');
-      return;
-    }
-    chatSaid.textContent = line;
-    chatUntil = performance.now() + 7000;
-    chatBubble.classList.remove('saying');
-    presence?.say(line);
-    playSendSound();
-  });
-
-  function openChat(): void {
-    if (chatting) return;
-    if (claimModal || adModal || warping) return;
-    if (document.querySelector('.wm-overlay')?.getAttribute('data-locked') !== 'true') return;
-    talk(false);
-    chatting = true;
-    chatSaid.textContent = '';
-    chatBubble.classList.add('saying');
-    document.documentElement.classList.add('chatting');
-    if (isTouch) {
-      // iOS scrolls the whole page to keep a focused field clear of the keyboard.
-      // Focus it high up, where the keyboard never reaches, hidden until it docks.
-      chatOpenedAt = performance.now();
-      chatOpenHeight = window.visualViewport?.height ?? window.innerHeight;
-      chatBubble.classList.add('docked');
-      chatBubble.classList.remove('visible');
-      chatBubble.style.left = '50%';
-      chatBubble.style.top = '30%';
-    }
-    chatField.focus({ preventScroll: true });
-  }
-
-  const handleChatKey = (event: KeyboardEvent) => {
-    if (event.key !== 'Enter' || event.repeat || chatting) return;
-    const target = event.target as HTMLElement | null;
-    if (target?.closest('input, textarea, select, [contenteditable="true"]')) return;
-    event.preventDefault();
-    openChat();
-  };
-  window.addEventListener('keydown', handleChatKey);
-
-  // Q inside a lift takes it down a floor (E, the interact key, takes it up).
-  const handleLiftKey = (event: KeyboardEvent) => {
-    if (event.code !== 'KeyQ' || event.repeat || chatting) return;
-    const target = event.target;
-    if (target instanceof Element && target.closest('input, textarea, select, [contenteditable="true"]')) return;
-    lifts.move(liftPoint.fromArray(world.getState().position), -1);
-  };
-  window.addEventListener('keydown', handleLiftKey);
-
-  // On touch devices, a chat button replaces the Enter key for opening chat,
-  // and tapping outside the bubble dismisses it (replaces Escape).
-  let chatBtn: HTMLButtonElement | null = null;
-  if (isTouch) {
-    chatBtn = document.createElement('button');
-    chatBtn.type = 'button';
-    chatBtn.className = 'walk-chat-btn';
-    // Lucide's message-circle (ISC licence, https://lucide.dev).
-    chatBtn.innerHTML =
-      '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
-      'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-      '<path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg>';
-    chatBtn.title = 'Chat';
-    chatBtn.setAttribute('aria-label', 'Open chat');
-    chatBtn.addEventListener('pointerdown', (e) => {
-      e.stopPropagation();
-      e.preventDefault();
-      openChat();
-    });
-    container.appendChild(chatBtn);
-
-    container.addEventListener('pointerdown', (e) => {
-      if (!chatting) return;
-      if ((e.target as HTMLElement)?.closest('.walk-bubble, .walk-chat-btn')) return;
-      closeChat();
-    });
-  }
-
-  /** Mouse look stays put while the bubble is open, without unlocking the cursor. */
-  const holdLook = (event: Event) => {
-    if (chatting) event.stopPropagation();
-  };
-  document.addEventListener('mousemove', holdLook, true);
-  document.addEventListener('wheel', holdLook, true);
-
-  function closeChat(): void {
-    chatting = false;
-    chatField.value = '';
-    chatField.blur();
-    chatBubble.classList.remove('saying');
-    endChat();
-  }
-
-  function endChat(): void {
-    document.documentElement.classList.remove('chatting');
-  }
-
-  /** Pin the local bubble to the head. Everyone else's is glued to their figure. */
-  function placeChatBubble(): void {
-    const show = chatting || performance.now() < chatUntil;
-    if (!show) {
-      chatBubble.classList.remove('visible');
-      return;
-    }
-    // Typing on a phone, the field sits just above the keyboard, not over the head
-    // where the keyboard would push it around. Once sent, the line goes back overhead.
-    const docked = chatting && isTouch;
-    chatBubble.classList.toggle('docked', docked);
-    if (docked) {
-      const view = window.visualViewport;
-      // Moving the field to the bottom before the keyboard is up puts it under the
-      // keyboard, and iOS scrolls the page to follow it. A hardware keyboard never
-      // shrinks the view, so give up waiting after a moment.
-      const height = view?.height ?? window.innerHeight;
-      if (height > chatOpenHeight - 120 && performance.now() - chatOpenedAt < 800) return;
-      // Undo any scroll iOS did anyway: the world stays put and the field moves.
-      if (window.scrollY || (view && view.offsetTop)) window.scrollTo(0, 0);
-      const bottom = view ? view.offsetTop + view.height : window.innerHeight;
-      chatBubble.style.left = `${view ? view.offsetLeft + view.width / 2 : window.innerWidth / 2}px`;
-      chatBubble.style.top = `${bottom - 12}px`;
-      chatBubble.classList.add('visible');
-      return;
-    }
-    const [x, y, z] = world.getState().position;
-    chatPoint.set(x, y + 2.45, z).project(camera);
-    if (chatPoint.z > 1) {
-      chatBubble.classList.remove('visible');
-      return;
-    }
-    const rect = renderer.domElement.getBoundingClientRect();
-    chatBubble.style.left = `${(chatPoint.x * 0.5 + 0.5) * rect.width}px`;
-    chatBubble.style.top = `${(-chatPoint.y * 0.5 + 0.5) * rect.height}px`;
-    chatBubble.classList.add('visible');
-  }
-  // Push-to-talk: hold T (the mic button on touch) and everyone nearby hears
-  // you, from where you stand, until you let go. A badge over your head says
-  // you are on air, like the sound bars over anyone else who is talking.
-  const talkBadge = document.createElement('div');
-  talkBadge.className = 'walk-talk';
-  talkBadge.setAttribute('role', 'status');
-  container.appendChild(talkBadge);
-  let talkHeld = false;
-  let micState: MicState = 'off';
-  let talkNoteUntil = 0;
-  /** Until when the bars keep moving: a short pause between words does not stop them. */
-  let speakingUntil = 0;
-  const talkPoint = new Vector3();
-
-  function talk(held: boolean): void {
-    if (!presence || held === talkHeld) return;
-    if (held && (chatting || claimModal || adModal || warping)) return;
-    if (held && document.querySelector('.wm-overlay')?.getAttribute('data-locked') !== 'true') return;
-    talkHeld = held;
-    talkBtn?.classList.toggle('held', held);
-    presence.talk(held);
-  }
-
-  function showMic(state: MicState): void {
-    micState = state;
-    talkBadge.dataset.mic = state;
-    talkBtn?.setAttribute('data-mic', state);
-    if (state === 'live') talkBadge.innerHTML = '<span></span><span></span><span></span>';
-    else talkBadge.textContent = TALK_NOTES[state];
-    if (state === 'denied' || state === 'unavailable') talkNoteUntil = performance.now() + 4000;
-  }
-
-  const handleTalkKey = (event: KeyboardEvent) => {
-    if (event.code !== 'KeyT' || event.repeat) return;
-    const down = event.type === 'keydown';
-    const target = event.target;
-    if (down && target instanceof Element && target.closest('input, textarea, select, [contenteditable="true"]')) return;
-    talk(down);
-  };
-  window.addEventListener('keydown', handleTalkKey);
-  window.addEventListener('keyup', handleTalkKey);
-  // The key or finger can come up somewhere this page never hears of.
-  const releaseTalk = () => talk(false);
-  window.addEventListener('blur', releaseTalk);
-
-  let talkBtn: HTMLButtonElement | null = null;
-  let talkKey: HTMLElement | null = null;
-  if (presence && isTouch) {
-    const button = (talkBtn = document.createElement('button'));
-    button.type = 'button';
-    button.className = 'walk-talk-btn';
-    // Lucide's mic (ISC licence, https://lucide.dev).
-    button.innerHTML =
-      '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
-      'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-      '<path d="M12 19v3"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><rect x="9" y="2" width="6" height="13" rx="3"/></svg>';
-    button.title = 'Hold to talk';
-    button.setAttribute('aria-label', 'Hold to talk');
-    button.addEventListener('pointerdown', (event) => {
-      event.stopPropagation();
-      event.preventDefault();
-      button.setPointerCapture(event.pointerId);
-      talk(true);
-    });
-    // A thumb sliding on the held button is not looking around.
-    button.addEventListener('pointermove', (event) => event.stopPropagation());
-    for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
-      button.addEventListener(type, (event) => {
-        event.stopPropagation();
-        talk(false);
-      });
-    }
-    // A long press would otherwise open the browser's own menu.
-    button.addEventListener('contextmenu', (event) => event.preventDefault());
-    container.appendChild(button);
-  } else if (presence) {
-    // On the pause screen's key list, with the runtime's own keys.
-    const keys = document.querySelector('.wm-keys');
-    if (keys) {
-      talkKey = document.createElement('div');
-      talkKey.className = 'wm-keys-item';
-      const badge = document.createElement('span');
-      badge.className = 'wm-key';
-      badge.textContent = 'T';
-      const text = document.createElement('span');
-      text.className = 'wm-key-desc';
-      text.textContent = 'Hold to talk';
-      talkKey.append(badge, text);
-      keys.appendChild(talkKey);
-    }
-  }
-
-  /** Over your own head while you talk, above your chat bubble if that is showing. */
-  function placeTalkBadge(): void {
-    // Paused (Esc) mid-sentence: the T key's release may never come.
-    if (talkHeld && document.querySelector('.wm-overlay')?.getAttribute('data-locked') !== 'true') talk(false);
-    const now = performance.now();
-    const show = (talkHeld && (micState === 'live' || micState === 'starting')) || now < talkNoteUntil;
-    if (!show) {
-      talkBadge.classList.remove('visible');
-      return;
-    }
-    if (micState === 'live' && (presence?.micLevel ?? 0) > SPEAKING_LEVEL) speakingUntil = now + SPEAKING_HOLD_MS;
-    talkBadge.classList.toggle('speaking', now < speakingUntil);
-    const [x, y, z] = world.getState().position;
-    talkPoint.set(x, y + 2.45, z).project(camera);
-    if (talkPoint.z > 1) {
-      talkBadge.classList.remove('visible');
-      return;
-    }
-    const rect = renderer.domElement.getBoundingClientRect();
-    const above = chatBubble.classList.contains('visible') && !chatBubble.classList.contains('docked') ? chatBubble.offsetHeight + 8 : 0;
-    talkBadge.style.left = `${(talkPoint.x * 0.5 + 0.5) * rect.width}px`;
-    talkBadge.style.top = `${(-talkPoint.y * 0.5 + 0.5) * rect.height - above}px`;
-    talkBadge.classList.add('visible');
-  }
-
-  // Warp in as soon as the world is running, before doors and towers finish building.
+  // Warp in as soon as the world is running, before the street finishes building.
   // Back through a world's lobby portal, its door is looked up once the doors are up.
   if (!options.start && !options.from && !viewOnly) triggerSpawnFx();
 
-  /** Walking through a lobby door: flash, then travel to the world's own URL. */
+  /** Walking through a door: flash, then travel to the world's own URL. */
   function enter(door: Door): void {
     // A door whose live world can be walked into: walk on through instead.
     if (walkThrough.enter(door)) return;
     const target = door.world;
     if (!target) return;
     door.surge();
-    const [x, y, z] = world.getState().position;
     door.warp();
-    presence?.share('warp', { x, y, z });
     const out = door.inFront(RETURN_STEP * door.group.scale.x);
     travel(target, { position: [out.x, door.group.position.y, out.z], yaw: out.yaw }, door);
   }
@@ -1600,85 +498,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     if (t > 0) renderer.domElement.classList.remove('lensing');
   }
 
-  /**
-   * Someone else went through a portal at (x, y, z): send rings across that door and
-   * warp their figure out, as we see our own go. Coming `out`, only the rings.
-   */
-  function seeWarp(x: number, y: number, z: number, out: boolean): void {
-    if (![x, y, z].every(Number.isFinite)) return;
-    let door: Door | null = null;
-    let nearest = WARP_MATCH;
-    for (const candidate of doors.values()) {
-      if (Math.abs(y - candidate.group.position.y) > 1) continue;
-      const { x: doorX, z: doorZ } = candidate.inFront(0);
-      const distance = Math.hypot(x - doorX, z - doorZ);
-      if (distance < nearest) {
-        nearest = distance;
-        door = candidate;
-      }
-    }
-    if (!door) return;
-    door.warp();
-    if (out) return;
-    let figure: Object3D | null = null;
-    nearest = WARP_MATCH;
-    for (const root of figures) {
-      if (!root.parent) {
-        figures.delete(root);
-        continue;
-      }
-      const distance = Math.hypot(root.position.x - x, root.position.z - z);
-      if (distance < nearest) {
-        nearest = distance;
-        figure = root;
-      }
-    }
-    if (figure && !departing.some((entry) => entry.root === figure)) {
-      departing.push({ root: figure, time: 0, axis: door.through(new Vector3()), from: figure.position.clone(), left: false, drift: OTHER_LEAVE_DRIFT, duration: OTHER_LEAVE_TIME });
-    }
-  }
-
-  /** Figures of people who went through a portal, warping out. */
-  function updateDepartures(dt: number): void {
-    for (let i = departing.length - 1; i >= 0; i--) {
-      const entry = departing[i];
-      entry.time += dt;
-      if (!entry.root.parent) {
-        departing.splice(i, 1);
-        continue;
-      }
-      const t = Math.min(1, entry.time / entry.duration);
-      const amount = 1 - t * t * (3 - 2 * t);
-      // Carried on into the portal as they smear through it, quickening as they go.
-      // (`axis` points out of the door into the hall, so in is against it.)
-      entry.root.position.copy(entry.from).addScaledVector(entry.axis, -entry.drift * t * t);
-      setLocalAppear(entry.root, amount, entry.axis);
-      for (const child of entry.root.children) {
-        if (child instanceof Sprite) child.material.opacity = amount;
-      }
-      entry.root.visible = t < 1;
-      if (t >= 1 && entry.left) {
-        presence?.dropFigure(entry.root);
-        departing.splice(i, 1);
-        continue;
-      }
-      // Still here long after: they never left (a failed load), so show them again.
-      if (entry.time > WARP_GIVE_UP) {
-        entry.root.visible = true;
-        setLocalAppear(entry.root, 1);
-        for (const child of entry.root.children) {
-          if (child instanceof Sprite) child.material.opacity = 1;
-        }
-        departing.splice(i, 1);
-      }
-    }
-  }
-
-  /**
-   * Into a world, from a lobby door or a tower door: flash, then go to its
-   * own URL. `spot` is where to come back out.
-   */
-  function travel(target: DoorWorld, spot: WalkSpot, door: Door | null): void {
+  /** Into a world: flash, then go to its own URL. `spot` is where to come back out. */
+  function travel(target: DoorWorld, spot: WalkSpot, door: Door): void {
     if (warping) return;
     warping = true;
     leavingAt = time;
@@ -1688,303 +509,17 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     options.onEnterWorld?.(target, returnTo);
     world.releasePointer();
     flash.classList.add('active');
-    const url = travelUrl(target.url);
+    const url = buildTravelUrl(target.url);
     warpTimer = window.setTimeout(() => {
       window.location.href = url;
     }, WARP_MS);
   }
 
-  /** A world's URL with `from` added, and the avatar ticket unless private. */
-  function travelUrl(target: string): string {
-    const url = buildTravelUrl(target);
-    if (!alias) return url;
-    try {
-      const parsed = new URL(url);
-      const params = new URLSearchParams(parsed.hash.slice(1));
-      if (!params.has(AVATAR_TICKET_PARAM)) return url;
-      params.delete(AVATAR_TICKET_PARAM);
-      parsed.hash = params.toString();
-      return parsed.toString();
-    } catch {
-      return url;
-    }
-  }
-
-  /** True when this URL already opens a door in the hall or in any tower. */
-  function doorTaken(url: string): boolean {
-    const key = canonicalUrl(url);
-    for (const knownUrl of known.keys()) if (canonicalUrl(knownUrl) === key) return true;
-    for (const claim of loadClaims()) if (canonicalUrl(claim.url) === key) return true;
-    return false;
-  }
-
-  /** An empty door was picked, in the hall or in a tower: claim it from inside the lobby. */
-  function addWorld(): void {
-    if (warping || claimModal || !nearEmpty) return;
-    document.exitPointerLock?.();
-    claimModal = openClaimModal(light, {
-      taken: doorTaken,
-      onClose: () => {
-        claimModal = null;
-      },
-      onClaim: (world) => {
-        if (doorTaken(world.url)) return;
-        options.onClaimWorld?.(world);
-      },
-    });
-  }
-
-  // Keyboard: E at a tower door, lift or elevator, or next to an empty door.
-  // The runtime reports E as a plain interaction when no portal of its own is in reach.
+  // Fell off the edge of the world: back to the top of the street.
   world.on('respawn', () => {
-    // The runtime puts us back on the first pad: take a free one instead.
-    spawnPad = pickPad();
-    world.teleport(padSpawn(), padYaw());
+    world.teleport(spawn(), street.spawn.yaw);
     aimSpawn();
   });
-  world.on('interact', () => {
-    if (lifts.move(liftPoint.fromArray(world.getState().position), 1)) return;
-    if (callLift()) return;
-    if (nearEmpty) addWorld();
-  });
-
-  /** At a lift's door: bring the cab here, or queue for it. False when not at one. */
-  function callLift(): boolean {
-    const call = lifts.callable(liftPoint.fromArray(world.getState().position));
-    if (!call) return false;
-    if (call.state === 'idle') lifts.call(call.index, call.floor, presence?.bodies() ?? []);
-    updateLiftPrompt();
-    return true;
-  }
-
-  /** Inside a standing lift: which floor to go to. */
-  function updateLiftPrompt(): void {
-    const inside = lifts.aboard(liftPoint.fromArray(world.getState().position));
-    const show = !!inside && !inside.moving;
-    liftPrompt.classList.toggle('visible', show);
-    updateCallPrompt();
-    if (!inside) return;
-    liftPrompt.dataset.lift = String(inside.index);
-    // No going up from the top or down from the bottom.
-    for (const button of liftPrompt.querySelectorAll<HTMLButtonElement>('button[data-step]')) {
-      const next = inside.floor + Number(button.dataset.step);
-      button.disabled = next < 0 || next >= FLOOR_NAMES.length;
-    }
-  }
-
-  /** At a lift's door: the call button, or how the call is going. */
-  function updateCallPrompt(): void {
-    const call = lifts.callable(liftPoint.fromArray(world.getState().position));
-    callPrompt.classList.toggle('visible', !!call);
-    if (!call) return;
-    const text =
-      call.state === 'coming'
-        ? 'Lift on its way…'
-        : call.state === 'waiting'
-          ? 'Lift in use · it comes next'
-          : isTouch
-            ? 'Tap to call the lift'
-            : 'Press E or click to call the lift';
-    if (callPrompt.textContent !== text) callPrompt.textContent = text;
-    callPrompt.dataset.state = call.state;
-  }
-
-  // Pointer: clicking or tapping a tower door or a billboard. While the mouse
-  // is captured there is no cursor, so a click aims where the camera looks.
-  const raycaster = new Raycaster();
-  const pointer = new Vector2();
-  let pressAt: { x: number; y: number; time: number } | null = null;
-  const handlePointerDown = (event: PointerEvent) => {
-    pressAt = { x: event.clientX, y: event.clientY, time: performance.now() };
-    if (document.pointerLockElement !== renderer.domElement || adModal || claimModal || event.button !== 0) return;
-    // From the bird's-eye view a click lands the visitor where the camera looks (the runtime's).
-    if (world.getViewMode() === 'aerial') return;
-    // Someone where the camera looks: translate their line, or mute or unmute them.
-    if (peerFocus) {
-      actOn(peerFocus);
-      return;
-    }
-    // A click aims where the camera looks: a tower door there, or a billboard.
-    const hit = billboardAt(0, 0);
-    if (hit) activateBillboard(hit);
-  };
-  const handlePointerUp = (event: PointerEvent) => {
-    const press = pressAt;
-    pressAt = null;
-    if (!press || document.pointerLockElement === renderer.domElement || adModal || claimModal) return;
-    // A mouse click while the cursor is free captures it for looking. It is not a tap on a door.
-    if (event.pointerType === 'mouse' || world.getViewMode() === 'aerial') return;
-    // A tap, not a drag to look around or a push on the joystick.
-    const moved = Math.hypot(event.clientX - press.x, event.clientY - press.y);
-    if (moved > 10 || performance.now() - press.time > 400) return;
-    const rect = renderer.domElement.getBoundingClientRect();
-    const ndcX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-    const ndcY = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-    const peer = peerAt(ndcX, ndcY);
-    if (peer) {
-      actOn(peer);
-      return;
-    }
-    const hit = billboardAt(ndcX, ndcY);
-    if (hit) activateBillboard(hit);
-  };
-
-  /**
-   * Someone at a point on screen with something to do about them: a line
-   * to translate, or a voice to mute. Not through a wall.
-   */
-  function peerAt(ndcX: number, ndcY: number): PeerPick | null {
-    if (!presence) return null;
-    raycaster.setFromCamera(pointer.set(ndcX, ndcY), camera);
-    raycaster.far = PEER_PICK_RANGE;
-    const peer = presence.pickPeer(raycaster, PEER_PICK_RANGE);
-    if (!peer || (!peer.talked && !translatable(peer))) return null;
-    const wallAt = raycaster.intersectObjects([...wall, ...trim], false)[0]?.distance ?? Infinity;
-    return peer.distance < wallAt ? peer : null;
-  }
-
-  /** Their bubble is marked 文A and not translated (or being translated) yet: picked on the bubble, or on them when there is no voice to mute. */
-  function translatable(peer: PeerPick): boolean {
-    const said = peer.said;
-    return !!said?.foreign && said.translation === null && !translating.has(said) && (peer.onBubble || !peer.talked);
-  }
-
-  /** Clicked or tapped someone: translate their line, or mute or unmute them. */
-  function actOn(peer: PeerPick): void {
-    if (translatable(peer)) translateLine(peer);
-    else if (peer.talked) toggleMute(peer);
-  }
-
-  function translateLine(peer: PeerPick): void {
-    const said = peer.said;
-    if (!said || !presence) return;
-    peerFocus = null;
-    translating.add(said);
-    // Up until the translation is in: a phone downloading its own translator can take a few seconds.
-    notePeer('translating…', Infinity);
-    translate(said.text, said.language).then(
-      (translation) => {
-        translating.delete(said);
-        presence.showTranslation(peer.id, said.text, translation);
-        peerNoteUntil = 0;
-      },
-      () => {
-        translating.delete(said);
-        notePeer('could not translate this');
-      },
-    );
-  }
-
-  function toggleMute(peer: PeerPick): void {
-    presence?.setMuted(peer.id, !peer.muted);
-    peerFocus = null;
-    notePeer(peer.muted ? `${peer.label} unmuted` : `${peer.label} muted · ${isTouch ? 'tap' : 'click'} again to unmute`);
-  }
-
-  /** A short line in the peer prompt, kept up a moment (or until cleared) over the aiming prompt. */
-  function notePeer(text: string, ms = PEER_NOTE_MS): void {
-    peerPrompt.textContent = text;
-    peerPrompt.classList.add('visible');
-    peerNoteUntil = performance.now() + ms;
-  }
-
-  /** Follow where the camera looks a few times a second: "Click to translate" or "Click to mute" over someone. */
-  function updatePeerFocus(dt: number, doorPrompt: boolean): void {
-    sincePeerFocus += dt;
-    if (sincePeerFocus < FOCUS_INTERVAL) return;
-    sincePeerFocus = 0;
-    const active = !isTouch && !adModal && !claimModal && !warping && !chatting && !doorPrompt && !focused && document.pointerLockElement === renderer.domElement;
-    peerFocus = active ? peerAt(0, 0) : null;
-    if (performance.now() < peerNoteUntil) return;
-    peerPrompt.classList.toggle('visible', !!peerFocus);
-    if (!peerFocus) return;
-    peerPrompt.textContent = translatable(peerFocus)
-      ? `Click to translate what ${peerFocus.label} said`
-      : `Click to ${peerFocus.muted ? 'unmute' : 'mute'} ${peerFocus.label}`;
-  }
-
-  /** The billboard at a point on screen, unless a wall or tower is in front of it. */
-  function billboardAt(ndcX: number, ndcY: number): BillboardHit | null {
-    if (!adsEnabled || !billboards) return null;
-    raycaster.setFromCamera(pointer.set(ndcX, ndcY), camera);
-    raycaster.far = BILLBOARD_RANGE;
-    return billboards.pick(raycaster, [...wall, ...trim]);
-  }
-
-  /** Follow the crosshair (the middle of the screen on phones) a few times a second. */
-  function updateBillboardFocus(dt: number, doorPrompt: boolean): void {
-    if (!adsEnabled || !billboards) return;
-    sinceFocus += dt;
-    if (sinceFocus < FOCUS_INTERVAL) return;
-    sinceFocus = 0;
-    const active = !adModal && !claimModal && !warping && !doorPrompt && (document.pointerLockElement === renderer.domElement || isTouch);
-    const hit = active ? billboardAt(0, 0) : null;
-    const same = hit?.slot === focused?.slot && hit?.kind === focused?.kind;
-    focused = hit;
-    billboards.setFocus(hit?.slot ?? null);
-    if (same) return;
-    adPrompt.classList.toggle('visible', !!hit);
-    if (!hit) return;
-    const verb = isTouch ? 'Tap' : 'Click';
-    if (hit.kind === 'empty') {
-      adPrompt.textContent = `${verb} to advertise here · ${AD_CONFIG.priceLabel}`;
-    } else if (hit.kind === 'reserved') {
-      adPrompt.textContent = 'Reserved · an ad is in review';
-    } else {
-      const host = hit.ad ? safeHost(hit.ad.url) : null;
-      adPrompt.textContent = host ? `Ad · ${verb} to visit ${host} ↗` : 'Ad';
-    }
-  }
-
-  /** Clicked or tapped: book an empty billboard, or visit an ad's website. */
-  function activateBillboard(hit: BillboardHit): void {
-    if (!adsEnabled || !billboards || adModal || warping) return;
-    if (hit.kind === 'ad' && hit.ad) {
-      // Checked again here, whatever the server said: only plain https links open.
-      const url = normalizeDestinationUrl(hit.ad.url);
-      if (!url) return;
-      document.exitPointerLock?.();
-      window.open(url, '_blank', 'noopener,noreferrer');
-      return;
-    }
-    if (hit.kind !== 'empty') return;
-    const { plan } = hit.slot;
-    // Free the mouse and stop the controls before the form takes over.
-    document.exitPointerLock?.();
-    focused = null;
-    billboards.setFocus(null);
-    adPrompt.classList.remove('visible');
-    adModal = openAdModal({
-      slot: { id: plan.id, width: plan.width, height: plan.height, wide: plan.wide, description: describeBillboard(plan.id) },
-      light,
-      onClose: () => {
-        adModal = null;
-      },
-      onSubmitted: () => void refreshBillboards(),
-    });
-  }
-
-  /** Which billboards carry ads, and which are held for one in review. */
-  async function refreshBillboards(): Promise<void> {
-    if (!adsEnabled || !billboards || disposed) return;
-    billboardFetch?.abort();
-    const controller = new AbortController();
-    billboardFetch = controller;
-    try {
-      billboards.setStates(await fetchBillboards(controller.signal));
-    } catch {
-      // Offline or the ads service is down: screens stay as they were.
-    }
-  }
-  const billboardTimer = adsEnabled
-    ? window.setInterval(() => {
-        if (document.visibilityState === 'visible') void refreshBillboards();
-      }, BILLBOARD_REFRESH_MS)
-    : 0;
-  if (adsEnabled) void refreshBillboards();
-  // Always listening: taps and clicks also enter tower doors.
-  renderer.domElement.addEventListener('pointerdown', handlePointerDown);
-  renderer.domElement.addEventListener('pointerup', handlePointerUp);
 
   // Coming back with the browser's back button can restore this page as it
   // was left: mid-warp and standing in a doorway. Step the visitor back out.
@@ -1996,8 +531,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     warping = false;
     if (leavingAt >= 0) {
       leavingAt = -1;
-      if (ghost) ghost.shimmer(time, 1);
-      else setLocalAppear(world.avatar, 1);
+      setLocalAppear(world.avatar, 1);
     }
     flash.classList.remove('active');
     // Back from the world (the page kept from before): the lens as it was.
@@ -2005,8 +539,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     handleResize();
     if (returnTo) emerge(returnTo);
     else {
-      spawnPad = pickPad();
-      world.teleport(padSpawn(), padYaw());
+      world.teleport(spawn(), street.spawn.yaw);
       triggerSpawnFx();
     }
   };
@@ -2017,7 +550,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     const { textureWidth, textureHeight } = mirrorResolution();
     mirror.getRenderTarget().setSize(textureWidth, textureHeight);
     // A phone held upright sees a narrow slice of the world; widen the lens so
-    // the doors around you stay in view.
+    // the doors either side stay in view.
     const aspect = window.innerWidth / window.innerHeight;
     baseFov = aspect < 1 ? 70 + (1 - aspect) * 30 : 70;
     camera.fov = baseFov;
@@ -2026,6 +559,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   window.addEventListener('resize', handleResize);
   handleResize();
 
+  applyTheme();
   setWorlds(options.worlds);
   if (options.color) setColor(options.color);
   // Stored coordinates rather than a door to look up: community worlds arrive
@@ -2036,120 +570,24 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     if (comeBackFrom(options.from)) flash.classList.add('active');
     else triggerSpawnFx();
   }
-  if (!viewOnly) startOccupancyPolling();
-  // Which worlds have a building of their own. The city is up meanwhile, every world on its block.
-  directory
-    ?.approved()
-    .then((approved) => {
-      if (disposed) return;
-      approvedBuildings = approved;
-      // A world with a building of its own moves out to the city.
-      if (relayoutIfMoved()) return;
-      // Built again only if one of the city's doors has a building now.
-      if (cityOuter === null || !cityDoors.some((door) => door.world && approved.has(canonicalUrl(door.world.url)))) return;
-      buildCity(cityOuter);
-      world.refreshColliders();
-    })
-    .catch((error: unknown) => console.warn('[buildings] could not read which worlds have buildings:', error instanceof Error ? error.message : error));
 
   if (import.meta.env.DEV) Object.assign(window, { lobby: world, spawnFx: () => triggerSpawnFx() });
 
-  return {
-    setWorlds,
-    refreshEntries,
-    setTheme,
-    setPrivate,
-    setColor,
-    get alias() {
-      return pendingAlias;
-    },
-    nearbyBuilding() {
-      const [x, , z] = world.getState().position;
-      const near = buildings.shownNear(x, z, REPORT_REACH);
-      return near && { world: near.world, name: near.door.world?.name ?? near.world };
-    },
-    dispose,
-  };
+  return { setWorlds, refreshEntries, setTheme, setColor, dispose };
 
-  /** The pause screen or a dialog (account, characters) is over the lobby. */
-  function lobbyCovered(): boolean {
-    const overlay = document.querySelector<HTMLElement>('.wm-overlay');
-    if (overlay?.dataset.lockReady === 'true' && overlay.dataset.locked !== 'true') return true;
-    try {
-      return !!document.querySelector('dialog:modal');
-    } catch {
-      // No :modal selector in this browser.
-      return !!document.querySelector('dialog[open]');
-    }
-  }
-
-  /** Another visitor arrived: hide their figure and warp it in, as ours is. */
-  function startArrival(root: Object3D): void {
-    const arrival = new Arrival();
-    arrival.start(() => (root.parent ? root : null));
-    root.visible = false;
-    arrivals.push({ arrival, root });
-  }
-
-  function updateArrivals(dt: number): void {
-    for (let i = arrivals.length - 1; i >= 0; i--) {
-      const { arrival, root } = arrivals[i];
-      // They left before it finished.
-      const gone = !root.parent;
-      const appear = gone ? null : arrival.update(dt);
-      if (appear === null) {
-        if (!gone) {
-          root.visible = true;
-          setLocalAppear(root, 1);
-        }
-        arrivals.splice(i, 1);
-        continue;
-      }
-      // Hidden until its warp starts.
-      root.visible = appear > 0;
-      if (appear > 0) setLocalAppear(root, appear);
-    }
-  }
-
-  /** The local figure warping in on its pad. */
+  /** The local figure warping in at the top of the street. */
   function triggerSpawnFx(): void {
-    characterWarp = false;
     arrival.start(() => world.avatar);
     // In time with the warp, which waits a moment before it starts.
     playWarpSound(true, 0.2);
-    if (ghost) ghost.shimmer(time, 0);
-    else setLocalAppear(world.avatar, 0);
+    setLocalAppear(world.avatar, 0);
     aimSpawn();
-    settling = true;
   }
 
-  /**
-   * Arrived where someone else already stands (the room's welcome came after
-   * the pad was picked): warp in again on a free pad, unless already walked off.
-   */
-  function settleOnPad(): void {
-    settling = false;
-    const [x, , z] = world.getState().position;
-    const pad = spawnPads.pads[spawnPad];
-    if (Math.hypot(x - pad.x, z - pad.z) > PAD_SETTLE || padRoom(spawnPad) >= PAD_CLEAR) return;
-    const next = pickPad();
-    if (next === spawnPad) return;
-    spawnPad = next;
-    world.teleport(padSpawn(), padYaw());
-    // Still warping in: start the warp over on the new pad, its sound already playing.
-    if (arrival.running) {
-      arrival.start(() => world.avatar);
-      aimSpawn();
-    } else {
-      triggerSpawnFx();
-      settling = false;
-    }
-  }
-
-  /** Look across the pad towards the middle of the hall, and turn the body toward the camera. */
+  /** Look down the street, the body facing the same way, its back to the camera. */
   function aimSpawn(): void {
-    const yaw = padYaw();
-    world.setState({ yaw, facing: yaw + Math.PI });
+    const yaw = street.spawn.yaw;
+    world.setState({ yaw, facing: yaw });
   }
 
   /** The door of the world at `url` (address and path; any query or fragment aside), or null if it has none here. */
@@ -2176,9 +614,9 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   }
 
   /**
-   * The doors were laid out again (the full list, visit counts and buildings
-   * arrive after the lobby is up). Not walked off yet: out of the door where
-   * it is now. Otherwise they are left where they are.
+   * The doors were laid out again (the full list arrives after the lobby is
+   * up). Not walked off yet: out of the door where it is now. Otherwise they
+   * are left where they are.
    */
   function followComeBack([x, , z]: Vec3Tuple): void {
     const { url, spot } = cameBack!;
@@ -2188,10 +626,10 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
   /**
    * In a world's lobby portal: stand just in front of that world's door,
-   * facing into the lobby, so the portal opens where the door does (and
-   * follow it as the doors are laid out again); without one, on a pad.
-   * The door's own face is taken down: the view is clipped at the doorway,
-   * but not the face's shader, which would cover everything.
+   * facing into the street, so the portal opens where the door does (and
+   * follow it as the doors are laid out again); without one, at the top of
+   * the street. The door's own face is taken down: the view is clipped at
+   * the doorway, but not the face's shader, which would cover everything.
    */
   function placeViewer(): void {
     if (viewLayout !== laidOut) {
@@ -2203,14 +641,14 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     }
     const door = viewDoor;
     const out = door?.inFront(VIEW_STEP);
-    const position: Vec3Tuple = out && door ? [out.x, door.group.position.y, out.z] : padSpawn();
-    const yaw = out ? out.yaw : padYaw();
+    const position: Vec3Tuple = out && door ? [out.x, door.group.position.y, out.z] : spawn();
+    const yaw = out ? out.yaw : street.spawn.yaw;
     const [x, , z] = world.getState().position;
     if (Math.hypot(position[0] - x, position[2] - z) < 0.01 && angleDelta(world.getState().yaw, yaw) < 0.001) return;
     world.teleport(position, yaw);
   }
 
-  /** Come back out of the door behind `spot`, walking a few steps into the hall. */
+  /** Come back out of the door behind `spot`, walking a few steps into the street. */
   function emerge(spot: WalkSpot): void {
     const [x, , z] = spot.position;
     // Light up the door they come out of, if it is there yet: community
@@ -2220,11 +658,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       return Math.hypot(out.x - x, out.z - z) < 0.5;
     }) ?? null;
     door?.surge();
-    // Out through the same warp as going in: rings on the door for everyone,
-    // and the lens easing back from wide.
+    // Out through the same warp as going in: rings on the door, and the lens easing back from wide.
     door?.warp();
-    const mouth = door?.inFront(0) ?? { x, z };
-    pendingWarp = { x: mouth.x, y: spot.position[1], z: mouth.z, o: 1, at: time };
     // Blurred straight away (no fade in), then clearing as the lens settles.
     const canvas = renderer.domElement;
     canvas.style.transition = 'none';
@@ -2251,7 +686,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     const length = RETURN_STEP - WALK_OUT_FROM;
     const along = WALK_OUT_FROM + length * Math.sin((walk * Math.PI) / 2) - RETURN_STEP;
     const speed = walk < 1 ? ((length * Math.PI) / 2 / WALK_OUT_S) * Math.cos((walk * Math.PI) / 2) : 0;
-    // Looking along spot.yaw faces out of the door, into the hall.
+    // Looking along spot.yaw faces out of the door, into the street.
     const forwardX = -Math.sin(spot.yaw);
     const forwardZ = -Math.cos(spot.yaw);
     const turn = orbit ? Math.min(Math.max((t - TURN_FROM_S) / TURN_S, 0), 1) : 1;
@@ -2282,41 +717,16 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     if (world.avatar) setAvatarColor(world.avatar, next);
   }
 
-  function setPrivate(on: boolean): string | null {
-    if (on === !!pendingAlias || warping || emerging) return pendingAlias;
-    const next = on ? randomAlias() : null;
-    pendingAlias = next;
-    // A quick white-out hides the jump back to the start.
-    window.clearTimeout(privateTimer);
-    flash.classList.add('active');
-    privateTimer = window.setTimeout(() => {
-      alias = next;
-      buildings.setEnabled(!alias);
-      world.clearAvatar();
-      ghost?.restore();
-      ghost = alias ? makeGhost(world.avatar) : null;
-      void loadCharacter();
-      spawnPad = pickPad();
-      world.teleport(padSpawn(), padYaw());
-      triggerSpawnFx();
-      presence?.rejoin();
-      flash.classList.remove('active');
-    }, PRIVATE_FADE_MS);
-    return next;
-  }
-
   function setTheme(isLight: boolean): void {
     if (isLight === light) return;
     light = isLight;
     applyTheme();
-    for (const door of [...doors.values(), ...emptyDoors, ...galleryDoors]) door.setTheme(light);
-    for (const draw of gateLabelDraw) draw(light);
+    for (const door of doors.values()) door.setTheme(light);
   }
 
   function applyTheme(): void {
-    // Light: a blue sky over pale towers. Dark: a faint grey horizon deepening to black
-    // overhead, the towers lit by their windows and doors. Faint auroras hang in both. The fog
-    // matches the horizon, reaches past the towers so they read across the plaza, and swallows their tops.
+    // Light: a blue sky over pale buildings. Dark: a faint grey horizon deepening to black
+    // overhead. The fog matches the horizon and swallows the far end of a long street.
     background.set(skyHorizon(light));
     renderer.setClearColor(background);
     applySkyTheme(sky, light);
@@ -2325,143 +735,37 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     fog.far = light ? 300 : 230;
     hemisphere.groundColor.set(light ? 0xdde5f2 : 0x202020);
     hemisphere.intensity = light ? 2 : 1.6;
-    spawnPads.setTheme(light);
     floorUniforms.uBackground.value.set(light ? 0xf1f4fa : 0x000000);
     floorUniforms.uHaze.value.copy(background);
     floorUniforms.uLight.value = light ? 1 : 0;
     wallMaterial.color.set(light ? 0xf5f6fa : 0x141418);
-    // Unlit: the sky lights would otherwise wash a highlight around the drum.
-    innerWallMaterial.color.set(light ? 0xc8ceda : 0x07070a);
-    gateFrameMaterial.color.set(light ? 0x1c1c1c : 0xf2f2f2);
-    // Clear by day with the sky behind it; a faint smoked sheen at night.
-    glassMaterial.color.set(light ? 0xe4eef9 : 0x9aa8bf);
-    glassMaterial.opacity = light ? 0.22 : 0.1;
-    domeGlassMaterial.color.set(light ? 0xe4eef9 : 0x9aa8bf);
-    domeGlassMaterial.opacity = light ? 0.15 : 0.07;
-    deckGlassMaterial.color.set(light ? 0xd6e4f2 : 0x8fa4c4);
-    deckGlassMaterial.opacity = light ? 0.38 : 0.2;
-    departures.setTheme(light);
     // Lift the shaded sides so white stays white, not grey.
     wallMaterial.emissive.set(light ? CITY_GLOW_WHITE : 0x000000);
     facadeMaterial.color.set(light ? 0xdde1ea : 0x1f2026);
     facadeMaterial.emissive.set(light ? 0x4f5460 : 0x000000);
     applyCityTheme(cityMaterials, light);
-    billboards?.setTheme(light);
   }
 
   function refreshEntries(): void {
-    // The city keeps its most entered worlds nearest the hall.
-    if (relayoutIfMoved()) return;
     for (const [url, door] of doors) door.setEntries(options.entries?.(url));
   }
 
-  function applyOccupancy(): void {
-    for (const [url, door] of doors) {
-      const origin = worldRoomOrigin(url);
-      const info = origin ? occupancyByOrigin.get(origin) : undefined;
-      door.setFull(info ? worldIsFull(info.count, info.cap) : false);
-    }
-  }
-
-  async function refreshOccupancy(): Promise<void> {
-    const endpoint = options.worldRelayEndpoint || options.presenceEndpoint;
-    // A hidden tab has no doors to look at; it catches up when it is shown again.
-    if (!endpoint || disposed || document.hidden) return;
-    const origins = [...new Set([...doors.keys()].map(worldRoomOrigin).filter((o): o is string => !!o))];
-    if (!origins.length) {
-      occupancyByOrigin.clear();
-      applyOccupancy();
-      return;
-    }
-    occupancyFetch?.abort();
-    const controller = new AbortController();
-    occupancyFetch = controller;
-    try {
-      const base = presenceHttpBase(endpoint);
-      const { occupancy, failed } = await fetchOccupancy(base, origins, controller.signal);
-      // All batches failed — leave the last known full/not-full state.
-      if (failed.length === origins.length) return;
-      // Origins in a failed batch keep their previous reading.
-      for (const origin of failed) {
-        const prev = occupancyByOrigin.get(origin.toLowerCase());
-        if (prev && !occupancy.has(origin.toLowerCase())) occupancy.set(origin.toLowerCase(), prev);
-      }
-      occupancyByOrigin.clear();
-      for (const [origin, info] of occupancy) occupancyByOrigin.set(origin, info);
-      if (!disposed) applyOccupancy();
-    } catch {
-      // Network or abort — leave the last known full/not-full state.
-    } finally {
-      if (occupancyFetch === controller) occupancyFetch = null;
-    }
-  }
-
-  function startOccupancyPolling(): void {
-    if (!(options.worldRelayEndpoint || options.presenceEndpoint)) return;
-    void refreshOccupancy();
-    document.removeEventListener('visibilitychange', handleOccupancyVisibility);
-    document.addEventListener('visibilitychange', handleOccupancyVisibility);
-    if (occupancyTimer) window.clearInterval(occupancyTimer);
-    occupancyTimer = window.setInterval(() => {
-      void refreshOccupancy();
-    }, OCCUPANCY_MS);
-  }
-
-  function handleOccupancyVisibility(): void {
-    if (!document.hidden) void refreshOccupancy();
-  }
-
   /**
-   * Where every listed world's door goes: the claims on the hall's empty
-   * openings, and the worlds in the hall and in the city.
+   * A building for every world, in list order down the street: the first on
+   * the left, the second across from it, and so on.
    */
-  function layout(worlds: LobbyWorld[]) {
-    // Everyone with the same list gets the same ring, so visitors who see
-    // each other also see the same doors around them.
-    // A door claimed inside the lobby stays on the opening it was given.
-    // Once that world is published, it joins the ordinary ring instead.
-    // Gallery claims are put back by hangGalleryDoors.
-    const claims = loadClaims().filter((claim) => !claim.level && !worlds.some((entry) => entry.url === claim.url));
-    const claimUrls = new Set(claims.map((claim) => claim.url));
-    const listed = [...known.entries()].filter(([url]) => !claimUrls.has(url)).map(([, world]) => world as LobbyWorld);
-    // The same number of doors on every stretch, so both sides of every exit match.
-    const assigned = assignDoors(listed, GATE_COUNT * DOORS_PER_BAY, (url) => options.entries?.(url), (url) =>
-      approvedBuildings.has(canonicalUrl(url)),
-    );
-    return { claims, claimUrls, assigned, key: JSON.stringify(assigned) };
-  }
-
-  /** Lay the doors out again if counts or buildings now put them elsewhere. */
-  function relayoutIfMoved(): boolean {
-    if (layout(lastWorlds).key === laidOut) return false;
-    setWorlds(lastWorlds);
-    return true;
-  }
-
   function setWorlds(worlds: LobbyWorld[]): void {
-    // Buildings come down while the doors are laid out again; buildCity puts them back.
-    buildings.setLots([]);
+    const urls: string[] = [];
     for (const entry of worlds) {
-      if (!known.has(entry.url)) known.set(entry.url, entry);
+      if (urls.includes(entry.url)) continue;
+      known.set(entry.url, entry);
+      urls.push(entry.url);
     }
-    lastWorlds = worlds;
-
-    const { claims, claimUrls, assigned, key } = layout(worlds);
+    const key = JSON.stringify(urls);
+    if (key === laidOut) return;
     laidOut = key;
-    const total = GATE_COUNT * DOORS_PER_BAY;
-    const radius = HALL_RADIUS;
-    const angles = doorAngles(total, radius);
-    const urls = assigned.inside;
-    // Worlds sit next to each other; the doors after them stay empty.
-    const slots = urls.map((_, i) => i);
-    hallPlaces = [];
-    const at = (door: Door, slot: number) => {
-      // Set into the wall, facing the middle of the room, under its gate number.
-      door.place(Math.sin(angles[slot]) * radius, Math.cos(angles[slot]) * radius, 0, 0);
-      door.setGate(slot + 1);
-      hallPlaces[slot] = door;
-    };
-    const doorFor = (url: string) => {
+    street = planStreet(urls.length);
+    urls.forEach((url, i) => {
       let door = doors.get(url);
       if (!door) {
         door = new Door(known.get(url)!, light);
@@ -2469,622 +773,69 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
         scene.add(door.group);
         doors.set(url, door);
       }
-      return door;
-    };
-
-    urls.forEach((url, i) => at(doorFor(url), slots[i]));
-    // Out in the city: along the avenues and streets, nearest ring of blocks first,
-    // numbered after the hall's. The city grows a ring when it runs out of doors.
-    const outer = radius + WALL_THICKNESS;
-    city = planAvenues(outer, assigned.city.length, STOREFRONT_WIDTH);
-    const cityUrls = assigned.city.slice(0, city.slots.length);
-    const cityGate = total + 1;
-    cityDoors = cityUrls.map((url, i) => {
-      const slot = city.slots[i];
-      const door = doorFor(url);
+      const slot = street.slots[i];
       door.place(slot.x, slot.z, slot.x + slot.facingX, slot.z + slot.facingZ);
-      door.setGate(cityGate + i);
-      return door;
     });
-    // Every sign is hung afresh once the hall and the city are built (buildWall).
-    for (const door of doors.values()) door.setSign(null);
-    // Worlds that no longer get a door take theirs down.
-    const placed = new Set([...urls, ...cityUrls]);
+    // Worlds that are no longer listed take their doors down.
     for (const [url, door] of doors) {
-      if (placed.has(url) || claimUrls.has(url) || door.group.userData.level) continue;
+      if (urls.includes(url)) continue;
+      if (door === exitDoor) exitDoor = null;
       door.dispose();
       doors.delete(url);
     }
-
-    for (const door of emptyDoors) door.dispose();
-    emptyDoors.length = 0;
-    nearEmpty = null;
-    addPrompt.classList.remove('visible');
-    const taken = new Set(slots);
-    for (const slot of angles.map((_, i) => i).filter((i) => !taken.has(i))) {
-      const angle = angles[slot];
-      const claim = claims.find((entry) => angleDelta(entry.angle, angle) < 0.08);
-      if (claim) {
-        let door = doors.get(claim.url);
-        if (!door) {
-          door = new Door({ name: claim.name, url: claim.url, cover: claim.cover }, light);
-          door.setEntries(options.entries?.(claim.url));
-          scene.add(door.group);
-          known.set(claim.url, { name: claim.name, url: claim.url, cover: claim.cover });
-          doors.set(claim.url, door);
-        }
-        at(door, slot);
-        door.group.userData.angle = angle;
-        continue;
-      }
-      const door = new Door(null, light);
-      scene.add(door.group);
-      at(door, slot);
-      door.group.userData.angle = angle;
-      emptyDoors.push(door);
-    }
-    // Gates are numbered round the hall from the first door after exit A.
-    flights = [];
-    urls.forEach((url, i) => flights.push({ ...pick(known.get(url)!), gate: slots[i] + 1 }));
-    cityUrls.forEach((url, i) => flights.push({ ...pick(known.get(url)!), gate: cityGate + i }));
-    for (const claim of claims) {
-      const slot = angles.findIndex((angle) => angleDelta(claim.angle, angle) < 0.08);
-      if (slot >= 0 && !taken.has(slot)) flights.push({ name: claim.name, cover: claim.cover, gate: slot + 1 });
-    }
-    flights.sort((a, b) => a.gate - b.gate);
-    departures.setFlights(flights);
-    buildWall(radius, angles);
-    applyOccupancy();
-    void refreshOccupancy();
-  }
-
-  /**
-   * The citadel: an inner and an outer drum with the doorways cut into the
-   * inner one and the gate cut through both, then trim, the banner over the
-   * gate, and the city around it.
-   */
-  function buildWall(radius: number, angles: number[]): void {
-    for (const mesh of [...wall, ...trim]) {
-      if (mesh.userData.ownMaterial) {
-        const material = mesh.material as MeshBasicMaterial;
-        material.map?.dispose();
-        material.dispose();
-      }
-      mesh.geometry.dispose();
-      mesh.removeFromParent();
-    }
-    wall.length = 0;
-    trim.length = 0;
-    gateLabelDraw.length = 0;
-    for (const group of gateMouths) group.removeFromParent();
-    gateMouths.length = 0;
-    const outer = radius + WALL_THICKNESS;
-
-    const shell = (r: number, start: number, length: number, bottom: number, inward: boolean) => {
-      if (length <= 0) return;
-      const height = CITADEL_HEIGHT - bottom;
-      const segments = Math.max(2, Math.ceil(length * 24));
-      const geometry = new CylinderGeometry(r, r, height, segments, 1, true, start, length);
-      const section = new Mesh(inward ? flipInside(geometry) : geometry, inward ? innerWallMaterial : wallMaterial);
-      section.position.y = bottom + height / 2;
-      scene.add(section);
-      wall.push(section);
-    };
-
-    // Inner drum: faces the hall, open at each doorway and exit. The cut follows
-    // the frame's rounded top, not a rectangle.
-    // The exits are cut to their clear opening: they have no frame on this side.
-    const doorCorner = frameOuterCorner(DOOR_WIDTH, DOOR_HEIGHT, FRAME);
-    const mouthCorner = openingCorner(GATE_WIDTH, GATE_HEIGHT);
-    const openings = [
-      ...gateAngles().map((angle) => ({ angle, span: GATE_WIDTH / 2, top: GATE_HEIGHT, corner: mouthCorner })),
-      ...angles.map((angle) => ({ angle, span: DOOR_HALF_SPAN, top: DOOR_TOP, corner: doorCorner })),
-    ].sort((a, b) => a.angle - b.angle);
-    openings.forEach((opening, i) => {
-      const next = openings[i + 1] ?? { ...openings[0], angle: openings[0].angle + Math.PI * 2 };
-      const start = opening.angle + opening.span / radius;
-      shell(radius, start, next.angle - next.span / radius - start, 0, true);
-      const head = new Mesh(
-        roundedWallHead(radius, opening.angle, opening.span, opening.top, CITADEL_HEIGHT, opening.corner.rx, opening.corner.ry),
-        innerWallMaterial,
-      );
-      scene.add(head);
-      wall.push(head);
-    });
-
-    // Outer drum: faces the city, open at each gate, cut to the opening of
-    // the gate's frame outside.
-    const gateOuter = GATE_WIDTH / 2 / outer;
-    const gateStep = (Math.PI * 2) / GATE_COUNT;
-    for (const angle of gateAngles()) {
-      shell(outer, angle + gateOuter, gateStep - gateOuter * 2, 0, false);
-      const head = new Mesh(
-        roundedWallHead(outer, angle, GATE_WIDTH / 2, GATE_HEIGHT, CITADEL_HEIGHT, mouthCorner.rx, mouthCorner.ry, false),
-        wallMaterial,
-      );
-      scene.add(head);
-      wall.push(head);
-    }
-
-    // Each exit is lined right through the wall, from just behind the hall's
-    // face to where the gate's frame outside begins (its back is 5 cm inside
-    // the outer face), so the way out is one clean passage. Running on into
-    // that frame would put two surfaces in the same place, and they flicker.
-    // The lining is the wall's own colour, and its front follows the drum's
-    // curve 1 cm behind the face, so from the hall the exit is a plain cut
-    // with no frame. It is solid, so nobody walks into the wall.
-    const liningDepth = WALL_THICKNESS - 0.05;
-    const liningGeometry = doorFrameGeometry(GATE_WIDTH, GATE_HEIGHT, GATE_REVEAL, liningDepth);
-    liningGeometry.translate(0, 0, -liningDepth / 2);
-    const liningPositions = liningGeometry.getAttribute('position');
-    for (let i = 0; i < liningPositions.count; i++) {
-      if (liningPositions.getZ(i) < -liningDepth / 2) continue;
-      const x = liningPositions.getX(i);
-      liningPositions.setZ(i, radius - Math.sqrt(radius * radius - x * x) - 0.01);
-    }
-    for (const angle of gateAngles()) {
-      const mouth = new Group();
-      mouth.position.set(Math.sin(angle) * radius, 0, Math.cos(angle) * radius);
-      mouth.rotation.y = Math.atan2(-Math.sin(angle), -Math.cos(angle));
-      const lining = new Mesh(liningGeometry.clone(), innerWallMaterial);
-      mouth.add(lining);
-      scene.add(mouth);
-      gateMouths.push(mouth);
-      wall.push(lining);
-      // Wayfinding, as in a terminal: on the wall above the exit.
-      const avenue = createAvenueSign(String.fromCharCode(65 + gateMouths.length - 1));
-      avenue.draw(light);
-      avenue.mesh.userData.ownMaterial = true;
-      const signY = GATE_HEIGHT + FRAME + 0.25 + 0.625;
-      avenue.mesh.position.set(0, signY, 0.04);
-      mouth.add(avenue.mesh);
-      trim.push(avenue.mesh);
-      gateLabelDraw.push(avenue.draw);
-    }
-    liningGeometry.dispose();
-
-    floorUniforms.uHall.value = radius;
-    // In front of everything standing on the wall's foot (its ribs reach
-    // outer + 0.4, the gate frames outer + 0.45), so nothing breaks the line
-    // and it runs straight across the gates.
-    floorUniforms.uWall.value = outer + 0.55;
-
-    buildTrim(radius, outer, angles.length);
-    dressHallWall(radius, angles);
-    buildCity(outer);
+    buildStreet(urls);
     world.refreshColliders();
   }
 
   /**
-   * A ring of doors round the wall of each gallery.
-   * They start empty; a world claimed in one stays on that gallery.
+   * The street's buildings, dressed as storefronts round the worlds' doors.
+   * One mesh each for the walls, the storefronts' trim and the light; each
+   * door carries its own sign.
    */
-  function hangGalleryDoors(radius: number, hallDoors: number): void {
-    for (const door of galleryDoors) door.dispose();
-    galleryDoors.length = 0;
-    nearEmpty = null;
-    addPrompt.classList.remove('visible');
-    // A claimed world that has since been published has a door in the hall instead.
-    const claims = loadClaims().filter((claim) => {
-      const existing = doors.get(claim.url);
-      return claim.level && !(existing && !existing.group.userData.level);
-    });
-    const r = radius - 0.12;
-    // Full-size doors, spaced like the hall's: the hall's centre-to-centre
-    // pitch, rounded so a whole number of doors goes round.
-    const bay = ((Math.PI * 2) / GATE_COUNT) * radius;
-    const perBay = Math.floor(hallDoors / GATE_COUNT);
-    const pitch = perBay > 0 ? (bay - 2 * GATE_HALF_SPAN + 2 * DOOR_HALF_SPAN) / (perBay + 1) : DOOR_SPACING;
-    GALLERY_LEVELS.forEach((height, index) => {
-      const level = index + 1;
-      const count = Math.round((Math.PI * 2 * r) / pitch);
-      for (let i = 0; i < count; i++) {
-        const angle = ((i + 0.5) / count) * Math.PI * 2;
-        const claim = claims.find((entry) => entry.level === level && angleDelta(entry.angle, angle) < 0.02);
-        let door = claim ? doors.get(claim.url) : undefined;
-        if (claim && !door) {
-          door = new Door({ name: claim.name, url: claim.url, cover: claim.cover }, light);
-          door.setEntries(options.entries?.(claim.url));
-          scene.add(door.group);
-          known.set(claim.url, { name: claim.name, url: claim.url, cover: claim.cover });
-          doors.set(claim.url, door);
-        }
-        if (!door) {
-          door = new Door(null, light);
-          scene.add(door.group);
-          galleryDoors.push(door);
-        }
-        door.place(Math.sin(angle) * r, Math.cos(angle) * r, 0, 0);
-        door.group.position.y = height;
-        door.group.userData.angle = angle;
-        door.group.userData.level = level;
-      }
-    });
-  }
-
-  /** Ribs, light bands, the crown, the gate's portal frame and the banner. */
-  function buildTrim(radius: number, outer: number, hallDoors: number): void {
-    const solid: BufferGeometry[] = [];
-    const glow: BufferGeometry[] = [];
-    const matrix = new Matrix4();
-    const place = (geometry: BufferGeometry, x: number, y: number, z: number, angle = 0) => {
-      geometry.applyMatrix4(matrix.makeRotationY(angle).setPosition(x, y, z));
-      return geometry.index ? geometry.toNonIndexed() : geometry;
-    };
-
-    // Vertical ribs all round the outside, leaving each gate bare.
-    const gateBare = (GATE_WIDTH / 2 + GATE_MOUTH_FRAME + 0.4) / outer;
-    const ribCount = Math.round((Math.PI * 2 * outer) / 3.2);
-    for (let i = 0; i < ribCount; i++) {
-      const angle = (i / ribCount) * Math.PI * 2;
-      const near = (at: number, bare: number) => {
-        let delta = Math.abs(angle - at);
-        if (delta > Math.PI) delta = Math.PI * 2 - delta;
-        return delta < bare;
-      };
-      if (gateAngles().some((gate) => near(gate, gateBare))) continue;
-      const r = outer + 0.2;
-      solid.push(place(new BoxGeometry(0.5, CITADEL_HEIGHT, 0.4), Math.sin(angle) * r, CITADEL_HEIGHT / 2, Math.cos(angle) * r, angle));
-    }
-
-    // Crown: a cornice around the top, the drum's rim, and the glass dome
-    // over the hall with the oculus the spawn beam rises through.
-    solid.push(place(new CylinderGeometry(outer + 0.5, outer + 0.5, 1.2, 128, 1, true), 0, CITADEL_HEIGHT - 0.6, 0));
-    const rim = new RingGeometry(radius, outer + 0.5, 128, 1);
-    rim.rotateX(-Math.PI / 2);
-    solid.push(place(rim, 0, CITADEL_HEIGHT, 0));
-    const dome = buildDome(radius);
-    solid.push(...dome.solid);
-    glow.push(...dome.glow);
-
-    // Galleries ringing the drum, one over the other, and the lifts up to them (if any).
-    const hasGalleries = GALLERY_LEVELS.length > 0;
-    const liftPlan = hasGalleries ? planLifts(radius) : { centres: [], gaps: [] };
-    const galleries = buildGalleries(radius, liftPlan.gaps);
-    solid.push(...galleries.solid);
-    glow.push(...galleries.glow);
-    const shafts = buildShafts(liftPlan, radius);
-    solid.push(...shafts.solid);
-    glow.push(...shafts.glow);
-    galleries.glass.push(...shafts.glass);
-    for (const mesh of upper) mesh.geometry.dispose();
-    upper.length = 0;
-    const upperColliders = [...galleries.colliders.map((g) => (g.index ? g.toNonIndexed() : g)), ...shafts.colliders];
-    if (upperColliders.length) upper.push(mergeInto(upperColliders, colliderMaterial));
-    // The drum's top and the dome's glass, to land on when flying. Not from
-    // the bird's-eye view, which sees through the glass to the hall below.
-    const roof = [new Mesh(rim.clone(), colliderMaterial), new Mesh(dome.collider, colliderMaterial)];
-    for (const mesh of roof) mesh.userData.noLanding = true;
-    upper.push(...roof);
-    lifts.setLifts(liftPlan);
-    // Drawn after the opaque hall, so the rails and the dome stay see-through.
-    const domeGlass = new Mesh(dome.glass, domeGlassMaterial);
-    domeGlass.renderOrder = 3;
-    scene.add(domeGlass);
-    trim.push(domeGlass);
-    if (galleries.glass.length) {
-      const glazing = new Mesh(mergeGeometries(galleries.glass.map((g) => (g.index ? g.toNonIndexed() : g))), glassMaterial);
-      for (const geometry of galleries.glass) geometry.dispose();
-      glazing.renderOrder = 3;
-      scene.add(glazing);
-      trim.push(glazing);
-    }
-    if (galleries.decks.length) {
-      const decks = new Mesh(mergeGeometries(galleries.decks), deckGlassMaterial);
-      for (const geometry of galleries.decks) geometry.dispose();
-      decks.renderOrder = 2;
-      scene.add(decks);
-      trim.push(decks);
-    }
-    hangGalleryDoors(radius, hallDoors);
-
-    // The departures board hangs on straight cords from a ring under the dome, as wide as the board.
-    const hanging = buildBoardHanging(radius, departures.hangers);
-    solid.push(...hanging.solid);
-    glow.push(...hanging.glow);
-
-    // Light bands: outside above the doors and under the crown, inside above
-    // the doors (one unbroken line under the banners) and near the top.
-    const band = (r: number, y: number, start = 0, length = Math.PI * 2) =>
-      glow.push(place(new CylinderGeometry(r, r, 0.07, 128, 1, true, start, length), 0, y, 0));
-    band(outer + 0.03, DOOR_TOP + 2.8);
-    band(outer + 0.52, CITADEL_HEIGHT - 1.3);
-    band(radius - 0.03, CITADEL_HEIGHT - 1);
-
-    // The exit's mouth on the outside: the same rounded doorway, at gate size.
-    const frameR = outer + 0.2;
-    const atGate = (localZ: number, angle: number): [number, number] => [
-      Math.sin(angle) * localZ,
-      Math.cos(angle) * localZ,
-    ];
-    for (const angle of gateAngles()) {
-      const [x, z] = atGate(frameR, angle);
-      // The rim of light sits on the frame's front face (0.25 m out), not
-      // inside it, where it would share the jamb's surface and flicker.
-      const [glowX, glowZ] = atGate(frameR + 0.25 + 0.025, angle);
-      solid.push(place(doorFrameGeometry(GATE_WIDTH, GATE_HEIGHT, GATE_MOUTH_FRAME, 0.5), x, 0, z, angle));
-      glow.push(place(doorFrameGeometry(GATE_WIDTH, GATE_HEIGHT, 0.05, 0.05), glowX, 0, glowZ, angle));
-    }
-
-    // A tall screen over every gate, facing the plaza. Explore and Discover
-    // alternate, each at its own picture's shape, in a deep white bezel.
-    const portrait = [cityMaterials.banners.explore, cityMaterials.banners.discover];
-    // Over the light band round the drum, at door height.
-    const bannerBottom = DOOR_TOP + 3.6;
-    // As tall as fits under the cornice.
-    const bannerH = Math.min(14, CITADEL_HEIGHT - bannerBottom - 1.6);
-    const banners: Mesh[] = [];
-    gateAngles().forEach((angle, index) => {
-      const art = portrait[index % portrait.length];
-      const bannerW = bannerH * art.aspect;
-      const y = bannerBottom + bannerH / 2;
-      const bezelZ = outer - 0.35;
-      const faceZ = outer + 0.37;
-      solid.push(place(new BoxGeometry(bannerW + 0.6, bannerH + 0.6, 1.4), Math.sin(angle) * bezelZ, y, Math.cos(angle) * bezelZ, angle));
-      glow.push(place(new BoxGeometry(bannerW + 0.6, 0.05, 0.05), Math.sin(angle) * faceZ, bannerBottom - 0.35, Math.cos(angle) * faceZ, angle));
-      const banner = new Mesh(new PlaneGeometry(bannerW, bannerH), art.material);
-      banner.position.set(Math.sin(angle) * faceZ, y, Math.cos(angle) * faceZ);
-      banner.rotation.y = angle;
-      banners.push(banner);
-    });
-
-    hangInteriorBanners(radius);
-
-    const add = (geometries: BufferGeometry[], material: MeshStandardMaterial | typeof cityMaterials.glow) => {
-      const mesh = new Mesh(mergeGeometries(geometries), material);
-      for (const geometry of geometries) geometry.dispose();
-      scene.add(mesh);
-      trim.push(mesh);
-    };
-    add(solid, wallMaterial);
-    add(glow, cityMaterials.glow);
-
-    for (const mesh of banners) {
-      scene.add(mesh);
-      trim.push(mesh);
-    }
-  }
-
-  /**
-   * The hall's wall between the gates, dressed as storefronts like the
-   * city's blocks: a bay with a fascia sign for each door, panelled bays
-   * between, piers flanking each gate, and one beam round the whole hall
-   * with its line of light, just under the screens.
-   */
-  function dressHallWall(radius: number, angles: number[]): void {
-    const facade = dressHall(
-      radius,
-      gateAngles(),
-      GATE_HALF_SPAN,
-      angles.map((angle, slot) => {
-        const door = hallPlaces[slot];
-        door?.group.updateMatrix();
-        return { angle, toDoor: door ? door.group.matrix.clone().invert() : new Matrix4() };
-      }),
-      MEDIA_BOTTOM,
-    );
-    for (const [geometries, material] of [[facade.trim, facadeMaterial], [facade.glow, cityMaterials.glow]] as const) {
-      const mesh = new Mesh(mergeGeometries(geometries), material);
-      for (const geometry of geometries) geometry.dispose();
-      scene.add(mesh);
-      trim.push(mesh);
-    }
-    // The piers stop walkers like the wall does; never drawn.
-    const piers = new Mesh(mergeGeometries(facade.colliders), colliderMaterial);
-    for (const geometry of facade.colliders) geometry.dispose();
-    piers.updateMatrixWorld(true);
-    wall.push(piers);
-    hallPlaces.forEach((door, slot) => {
-      const sign = facade.signs[slot];
-      door.setSign(sign?.geometry ?? null, sign?.aspect);
-    });
-  }
-
-  /**
-   * Every citadel banner, curved onto the inside wall above the
-   * galleries: a band of screens under the dome. The set repeats as often as it
-   * takes to keep the band no taller than MEDIA_MAX_HEIGHT. The ring still
-   * drifts slowly.
-   */
-  function hangInteriorBanners(radius: number): void {
-    if (interiorBannerRing) {
-      interiorBannerRing.traverse((obj) => {
-        if (obj instanceof Mesh) obj.geometry.dispose();
-      });
-      interiorBannerRing.removeFromParent();
-      interiorBannerRing = null;
-    }
-    const { platform, explore, discover } = cityMaterials.banners;
-    const portraits = [explore, discover];
-    // Native aspects, packed edge to edge so the band fills the drum with no gutters.
-    const setAspect = portraits.reduce((sum, art) => sum + art.aspect, 0) + platform.aspect * portraits.length;
-    const repeats = Math.ceil((Math.PI * 2 * radius) / (setAspect * MEDIA_MAX_HEIGHT));
-    const height = (Math.PI * 2 * radius) / (setAspect * repeats);
-    const bottom = MEDIA_BOTTOM;
-    const ringGroup = new Group();
-    ringGroup.name = 'interior-banners';
-    ringGroup.rotation.y = interiorBannerAngle;
-
-    const addPanel = (art: (typeof platform), theta0: number, width: number, panelH: number, yBottom: number) => {
-      const arc = width / radius;
-      const segments = Math.max(16, Math.ceil(arc * 32));
-      const pad = 0.08;
-      const y = yBottom + panelH / 2;
-      const bezel = new Mesh(
-        flipInside(new CylinderGeometry(radius - 0.05, radius - 0.05, panelH + pad * 2, segments, 1, true, theta0, arc)),
-        innerWallMaterial,
-      );
-      bezel.position.y = y;
-      const screenGeometry = flipInside(new CylinderGeometry(radius - 0.2, radius - 0.2, panelH, segments, 1, true, theta0, arc));
-      const uv = screenGeometry.getAttribute('uv');
-      for (let j = 0; j < uv.count; j++) uv.setX(j, 1 - uv.getX(j));
-      const screen = new Mesh(screenGeometry, art.material);
-      screen.position.y = y;
-      ringGroup.add(bezel, screen);
-    };
-
-    let theta = 0;
-    for (let i = 0; i < repeats; i++) {
-      portraits.forEach((portrait) => {
-        const portraitW = height * portrait.aspect;
-        addPanel(portrait, theta, portraitW, height, bottom);
-        theta += portraitW / radius;
-        const landscapeW = height * platform.aspect;
-        addPanel(platform, theta, landscapeW, height, bottom);
-        theta += landscapeW / radius;
-      });
-    }
-    scene.add(ringGroup);
-    interiorBannerRing = ringGroup;
-  }
-
-  /**
-   * The city round the citadel: an avenue straight out of every gate, ring
-   * streets crossing them, and blocks between, dressed as storefronts round
-   * the worlds' doors. One mesh each for the walls, the storefronts' trim and
-   * the light, like the citadel's trim; each door carries its own sign.
-   */
-  function buildCity(outer: number): void {
-    billboards?.setSlots(billboardSlots);
-    buildings.setLots([]);
-    for (const mesh of [...cityMeshes, ...cityColliders, ...lotColliders]) {
+  function buildStreet(urls: string[]): void {
+    for (const mesh of [...streetMeshes, ...streetColliders]) {
       mesh.geometry.dispose();
       mesh.removeFromParent();
     }
-    cityMeshes.length = 0;
-    cityColliders.length = 0;
-    lotColliders.length = 0;
-    cityOuter = outer;
-    // Blocks a building replaces: approved worlds' own and the demo worlds', or the demo buildings on the first doors of the city.
-    const sources = new Map<number, BuildingSource>();
-    if (options.buildings === 'demo') DEMO_BUILDINGS.slice(0, cityDoors.length).forEach((source, i) => sources.set(i, source));
-    else cityDoors.forEach((door, i) => {
-      const url = door.world && canonicalUrl(door.world.url);
-      if (url && approvedBuildings.has(url)) sources.set(i, { world: url, sha256: approvedBuildings.get(url) ?? undefined });
-      else {
-        const own = door.world && demoBuilding(known.get(door.world.url) as LobbyWorld | undefined);
-        if (own) sources.set(i, own);
-      }
-    });
-    const blocks = buildAvenues(city, cityDoors.length, new Set(sources.keys()));
+    streetMeshes.length = 0;
+    streetColliders.length = 0;
+    const blocks = buildAvenues(street, urls.length);
     // Each storefront's sign hangs from its door, so it comes and goes with the world.
-    cityDoors.forEach((door, i) => {
+    urls.forEach((url, i) => {
       const sign = blocks.signs[i];
-      door.setSign(sign?.geometry ?? null, sign?.aspect);
+      doors.get(url)?.setSign(sign?.geometry ?? null, sign?.aspect);
     });
     for (const [geometries, material] of [[blocks.solid, wallMaterial], [blocks.trim, facadeMaterial], [blocks.glow, cityMaterials.glow]] as const) {
-      const mesh = new Mesh(mergeGeometries(geometries), material);
+      const mesh = new Mesh(mergeGeometries(geometries as BufferGeometry[]), material);
       for (const geometry of geometries) geometry.dispose();
       scene.add(mesh);
-      cityMeshes.push(mesh);
+      streetMeshes.push(mesh);
     }
     // Colliders need world matrices, but are never drawn: keep them out of the scene.
     for (const geometry of blocks.colliders) {
       const collider = new Mesh(geometry, colliderMaterial);
       collider.updateMatrixWorld(true);
-      cityColliders.push(collider);
+      streetColliders.push(collider);
     }
-    // Each of those blocks as its own meshes, so it can step aside for the building.
-    const lots: BuildingLot[] = [];
-    for (const [index, block] of blocks.lots) {
-      const parts: Array<[BufferGeometry[], Material]> = [[block.solid, wallMaterial], [block.trim, facadeMaterial], [block.glow, cityMaterials.glow]];
-      const meshes = parts.map(([geometries, material]) => {
-        const mesh = new Mesh(mergeGeometries(geometries), material);
-        for (const geometry of geometries) geometry.dispose();
-        scene.add(mesh);
-        cityMeshes.push(mesh);
-        return mesh;
-      });
-      const collider = new Mesh(block.collider, colliderMaterial);
-      collider.updateMatrixWorld(true);
-      lotColliders.push(collider);
-      const lot = { width: block.width, depth: block.depth, forecourt: LOT_FORECOURT, height: LOT_HEIGHT };
-      lots.push({ door: cityDoors[index], lot, out: city.slots[index].out, block: { meshes, collider }, source: sources.get(index)!, ring: city.slots[index].ring });
-    }
-    buildings.setLots(lots);
-    // The walkable ground reaches past the corners of the outermost streets; the mirror floor under it too.
-    const reach = Math.max(PLAZA_RADIUS, outer + PLAZA_RADIUS / 2, city.radius + 30);
-    ground.scale.setScalar(reach);
-    ground.updateMatrixWorld(true);
-    mirror.scale.setScalar(Math.max(1, (reach * 2 + 60) / FLOOR_SIZE));
   }
 
   function dispose(): void {
-    window.removeEventListener(CHARACTER_CHANGE_EVENT, onCharacterChange);
     walkThrough.dispose();
     liveDoors.dispose();
-    disposed = true;
     window.clearTimeout(warpTimer);
-    window.clearTimeout(privateTimer);
-    sharedCharacter.dispose();
-    if (billboardTimer) window.clearInterval(billboardTimer);
-    if (occupancyTimer) window.clearInterval(occupancyTimer);
-    document.removeEventListener('visibilitychange', handleOccupancyVisibility);
-    occupancyFetch?.abort();
-    billboardFetch?.abort();
-    adModal?.close();
-    claimModal?.close();
-    billboards?.dispose();
-    adPrompt.remove();
-    peerPrompt.remove();
     window.removeEventListener('pageshow', handlePageShow);
     window.removeEventListener('resize', handleResize);
-    renderer.domElement.removeEventListener('pointerdown', handlePointerDown);
-    renderer.domElement.removeEventListener('pointerup', handlePointerUp);
     world.dispose();
-    for (const door of [...doors.values(), ...emptyDoors, ...galleryDoors]) door.dispose();
+    for (const door of doors.values()) door.dispose();
     doors.clear();
-    emptyDoors.length = 0;
-    addPrompt.remove();
-    characterNote.remove();
-    window.removeEventListener('keydown', handleChatKey);
-    window.removeEventListener('keydown', handleLiftKey);
-    document.removeEventListener('mousemove', holdLook, true);
-    document.removeEventListener('wheel', holdLook, true);
-    document.documentElement.classList.remove('chatting', 'birds-eye');
-    chatBubble.remove();
-    chatBtn?.remove();
-    window.removeEventListener('keydown', handleTalkKey);
-    window.removeEventListener('keyup', handleTalkKey);
-    window.removeEventListener('blur', releaseTalk);
-    talkBadge.remove();
-    talkBtn?.remove();
-    talkKey?.remove();
-    for (const mesh of [...wall, ...trim]) {
-      if (mesh.userData.ownMaterial) {
-        const material = mesh.material as MeshBasicMaterial;
-        material.map?.dispose();
-        material.dispose();
-      }
-      mesh.geometry.dispose();
-    }
-    buildings.dispose();
-    for (const mesh of [...cityMeshes, ...cityColliders, ...lotColliders]) mesh.geometry.dispose();
-    if (interiorBannerRing) {
-      interiorBannerRing.traverse((obj) => {
-        if (obj instanceof Mesh) obj.geometry.dispose();
-      });
-      interiorBannerRing.removeFromParent();
-      interiorBannerRing = null;
-    }
-    for (const group of gateMouths) group.removeFromParent();
+    document.documentElement.classList.remove('birds-eye');
+    for (const mesh of [...streetMeshes, ...streetColliders]) mesh.geometry.dispose();
     wallMaterial.dispose();
-    innerWallMaterial.dispose();
-    gateFrameMaterial.dispose();
-    glassMaterial.dispose();
-    domeGlassMaterial.dispose();
-    deckGlassMaterial.dispose();
+    facadeMaterial.dispose();
     colliderMaterial.dispose();
-    for (const mesh of upper) mesh.geometry.dispose();
-    lifts.dispose();
-    liftTrim.dispose();
-    liftPrompt.remove();
-    callPrompt.remove();
-    departures.dispose();
     cityMaterials.dispose();
     sky.geometry.dispose();
     sky.material.dispose();
-    spawnPads.dispose();
     ground.geometry.dispose();
     (ground.material as MeshStandardMaterial).dispose();
     mirror.dispose();
@@ -3093,14 +844,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     renderer.forceContextLoss();
     renderer.domElement.remove();
     flash.remove();
-  }
-}
-
-function safeHost(url: string): string | null {
-  try {
-    return new URL(url).hostname.replace(/^www\./, '');
-  } catch {
-    return null;
   }
 }
 
@@ -3126,248 +869,13 @@ interface Emerging {
   orbit: boolean;
 }
 
-interface Ghost {
-  /** A slow hologram flicker. Call once per frame. `appear` scales 0–1 during spawn fade-in. */
-  shimmer(time: number, appear?: number): void;
-  /** Put every material back exactly as it was. */
-  restore(): void;
-}
-
-/**
- * Turns this visitor's own figure into a see-through, faintly glowing ghost.
- * Only this browser draws it that way: the presence server never hears about
- * it, so everyone else sees an ordinary figure.
- */
-const CLAIMS_KEY = 'worldmesh.lobby.claims';
-
-interface ClaimedWorld {
-  name: string;
-  url: string;
-  email: string;
-}
-
-interface DoorClaim {
-  angle: number;
-  /** 0 (or missing) on the hall floor, 1 and 2 on the galleries. */
-  level?: number;
-  name: string;
-  url: string;
-  cover?: string;
-}
-
-/** A demo world's own building: one of the hub's demo models, pinned to its hash. Only demo worlds have one. */
-function demoBuilding(world: LobbyWorld | undefined): BuildingSource | null {
-  if (world?.source !== 'demo' || !world.building) return null;
-  return DEMO_BUILDINGS.find((source) => source.modelUrl === world.building) ?? null;
-}
-
-/** What the departures board shows of a world. */
-function pick(world: DoorWorld): Omit<Flight, 'gate'> {
-  return { name: world.name, cover: world.cover, color: world.color };
-}
-
 function angleDelta(a: number, b: number): number {
   const turn = Math.PI * 2;
-  const d = Math.abs(a - b) % turn;
+  const d = (((a - b) % turn) + turn) % turn;
   return Math.min(d, turn - d);
 }
 
-/**
- * Doors used to open straight away for whoever placed a world, kept only in
- * their browser. Worlds now wait for review, so clear any left from before.
- */
-function loadClaims(): DoorClaim[] {
-  try {
-    localStorage.removeItem(CLAIMS_KEY);
-  } catch {
-    // Storage blocked: nothing was saved either.
-  }
-  return [];
-}
-
-/**
- * A window inside the lobby for the empty door in front of you. The first
- * person to place a world here keeps that doorway.
- */
-function openClaimModal(
-  light: boolean,
-  options: {
-    taken: (url: string) => boolean;
-    note?: string;
-    onClose: () => void;
-    onClaim: (world: ClaimedWorld) => void;
-  },
-): { close: () => void } {
-  const dialog = document.createElement('dialog');
-  dialog.className = 'world-claim';
-  dialog.setAttribute('aria-labelledby', 'world-claim-title');
-  if (light) dialog.dataset.theme = 'light';
-  for (const type of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'keydown', 'keyup', 'wheel', 'touchstart']) {
-    dialog.addEventListener(type, (event) => event.stopPropagation());
-  }
-
-  const title = document.createElement('h2');
-  title.id = 'world-claim-title';
-  title.textContent = 'Add your world';
-  const note = document.createElement('p');
-  note.textContent = options.note ?? 'Send your world for review. Once it is approved, it opens in the lobby and the gallery.';
-  const status = document.createElement('p');
-  status.className = 'world-claim-status';
-
-  const urlInput = document.createElement('input');
-  urlInput.type = 'url';
-  urlInput.required = true;
-  urlInput.placeholder = 'https://your-world.example';
-  urlInput.autocomplete = 'off';
-  const emailInput = document.createElement('input');
-  emailInput.type = 'email';
-  emailInput.required = true;
-  emailInput.placeholder = 'Email, so you can manage it';
-  emailInput.autocomplete = 'email';
-
-  const claim = document.createElement('button');
-  claim.type = 'button';
-  claim.className = 'world-claim-primary';
-  claim.textContent = 'Send for review';
-  const closeButton = document.createElement('button');
-  closeButton.type = 'button';
-  closeButton.className = 'world-claim-close';
-  closeButton.setAttribute('aria-label', 'Close');
-  closeButton.textContent = '×';
-
-  const actions = document.createElement('div');
-  actions.className = 'world-claim-actions';
-  actions.append(claim);
-  dialog.append(closeButton, title, note, urlInput, emailInput, status, actions);
-  document.body.appendChild(dialog);
-  window.dispatchEvent(new Event('blur'));
-  dialog.showModal();
-  urlInput.focus();
-
-  let closed = false;
-  const close = () => {
-    if (closed) return;
-    closed = true;
-    dialog.close();
-    dialog.remove();
-    options.onClose();
-  };
-  closeButton.addEventListener('click', close);
-  dialog.addEventListener('cancel', (event) => {
-    event.preventDefault();
-    close();
-  });
-  dialog.addEventListener('click', (event) => {
-    if (event.target === dialog) close();
-  });
-
-  const readUrl = (): URL | null => {
-    const raw = urlInput.value.trim();
-    if (!raw) return null;
-    try {
-      return new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
-    } catch {
-      return null;
-    }
-  };
-
-  let sent = false;
-  claim.addEventListener('click', () => {
-    if (sent) return;
-    const url = readUrl();
-    const email = emailInput.value.trim();
-    if (!url) {
-      status.textContent = 'That does not look like a URL.';
-      return;
-    }
-    if (options.taken(url.toString())) {
-      status.textContent = 'That world already has a door.';
-      return;
-    }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      status.textContent = 'Enter an email so you can manage this world.';
-      return;
-    }
-    options.onClaim({ name: url.hostname, url: url.toString(), email });
-    title.textContent = 'Sent for review';
-    note.textContent = 'Thanks! We will email you once your world is approved and live.';
-    urlInput.remove();
-    emailInput.remove();
-    status.textContent = '';
-    claim.textContent = 'Done';
-    claim.onclick = close;
-    sent = true;
-  });
-
-  return { close };
-}
-
-function makeGhost(root: Object3D | null): Ghost | null {
-  if (!root) return null;
-  const saved = new Map<Material, { opacity: number; transparent: boolean; depthWrite: boolean; emissive?: number }>();
-  root.traverse((child) => {
-    if (!(child instanceof Mesh)) return;
-    for (const material of Array.isArray(child.material) ? child.material : [child.material]) {
-      if (saved.has(material)) continue;
-      const standard = material instanceof MeshStandardMaterial ? material : null;
-      saved.set(material, {
-        opacity: material.opacity,
-        transparent: material.transparent,
-        depthWrite: material.depthWrite,
-        emissive: standard?.emissive.getHex(),
-      });
-      material.transparent = true;
-      // Let the far side of the body show through, like a hologram.
-      material.depthWrite = false;
-      standard?.emissive.set(GHOST_GLOW);
-      material.needsUpdate = true;
-    }
-  });
-  const shimmer = (time: number, appear = 1) => {
-    const opacity = (GHOST_OPACITY + Math.sin(time * 3.1) * Math.sin(time * 7.3) * GHOST_SHIMMER) * appear;
-    for (const material of saved.keys()) {
-      // The drawn-on face stays a little clearer than the body. The outline fades with the body.
-      material.opacity = isStrokeMaterial(material)
-        ? opacity
-        : material instanceof MeshBasicMaterial
-          ? Math.min(1, opacity * 1.8)
-          : opacity;
-    }
-    // A stroke added after the ghost was made is not in `saved`.
-    root.traverse((child) => {
-      if (!(child instanceof Mesh) || !isStrokeMaterial(child.material as Material)) return;
-      const material = child.material as Material;
-      if (saved.has(material)) return;
-      material.transparent = true;
-      material.depthWrite = false;
-      material.opacity = opacity;
-    });
-  };
-  shimmer(0);
-  return {
-    shimmer,
-    restore: () => {
-      for (const [material, was] of saved) {
-        material.opacity = was.opacity;
-        material.transparent = was.transparent;
-        material.depthWrite = was.depthWrite;
-        if (was.emissive !== undefined && material instanceof MeshStandardMaterial) material.emissive.setHex(was.emissive);
-        material.needsUpdate = true;
-      }
-      saved.clear();
-      root.traverse((child) => {
-        if (!(child instanceof Mesh) || !isStrokeMaterial(child.material as Material)) return;
-        const material = child.material as Material;
-        material.opacity = 1;
-        material.transparent = false;
-        material.depthWrite = true;
-        material.needsUpdate = true;
-      });
-    },
-  };
-}
-
-/** Fill the local figure in from scattered points. Custom avatars fade instead. */
+/** Fill the local figure in from scattered points. */
 function setLocalAppear(root: Object3D | null, amount: number, axis?: Vector3): void {
   if (!root) return;
   setStrokeOpacity(root, amount);
@@ -3383,15 +891,4 @@ function setLocalAppear(root: Object3D | null, amount: number, axis?: Vector3): 
       material.needsUpdate = true;
     }
   });
-}
-
-const ALIAS_WORDS = [
-  ['Quiet', 'Swift', 'Silver', 'Hidden', 'Misty', 'Gentle', 'Lucky', 'Sleepy', 'Brave', 'Distant', 'Wandering', 'Pale', 'Amber', 'Velvet', 'Cosmic', 'Lunar'],
-  ['Fox', 'Owl', 'Comet', 'Otter', 'Moth', 'Heron', 'Lynx', 'Raven', 'Koala', 'Falcon', 'Badger', 'Nomad', 'Shadow', 'Echo', 'Pebble', 'Drifter'],
-];
-
-/** A made-up name such as 'Quiet Fox'. Matches the presence server's alias rule. */
-function randomAlias(): string {
-  const pick = (words: string[]) => words[crypto.getRandomValues(new Uint32Array(1))[0] % words.length];
-  return `${pick(ALIAS_WORDS[0])} ${pick(ALIAS_WORDS[1])}`;
 }

@@ -48,19 +48,6 @@
       }
       code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
       .note { font-size: 12px; color: #777; }
-      .compare { overflow-x: auto; margin: 4px 0 12px; border: 1px solid #222; border-radius: 10px; }
-      .compare table { width: 100%; border-collapse: collapse; font-size: 13px; line-height: 1.45; }
-      .compare th, .compare td { padding: 8px 10px; text-align: left; vertical-align: top; border-top: 1px solid #222; }
-      .compare thead th { border-top: 0; background: #0d0d0d; color: #eee; font-weight: 600; }
-      .compare tbody th { font-weight: 400; color: #ccc; min-width: 9em; }
-      .compare td { color: #ddd; }
-      .compare .yes { color: #fff; }
-      .compare .you { color: #888; }
-      @media (max-width: 480px) {
-        .compare table { font-size: 12px; }
-        .compare th, .compare td { padding: 7px 6px; }
-        .compare tbody th { min-width: 0; }
-      }
       @media (prefers-color-scheme: light) {
         body { background: #fff; color: #222; }
         h1 { color: #111; }
@@ -84,7 +71,7 @@
     <main>
       <a class="back" href="/">← Back to WorldMesh</a>
       <h1>Connect your world</h1>
-      <p class="lead">Give your Three.js world the shared WorldMesh controls, portals to other worlds, and multiplayer, so visitors see each other. Your world stays on your own hosting. No account, no server.</p>
+      <p class="lead">Give your Three.js world the shared WorldMesh controls, portals to other worlds, and a live window both ways: its door in the WorldMesh street shows your world, and your world's way back shows the street. Your world stays on your own hosting. No account, no server.</p>
 
       <h2>Hand this to your AI coding agent</h2>
       <div class="prompt">
@@ -100,50 +87,21 @@
       <pre><code>npm i @worldmesh/runtime three</code></pre>
       <pre><code>import { loadWorldMesh } from '@worldmesh/runtime';
 
-const world = await loadWorldMesh({ scene, camera, renderer, multiplayer: true });</code></pre>
+const world = await loadWorldMesh({ scene, camera, renderer });</code></pre>
       <p>Pass the scene, camera and renderer you already have. <code>loadWorldMesh</code> runs the current WorldMesh runtime, so your world gets fixes and improvements without you updating or redeploying anything. Add <code>colliders</code> for the meshes visitors should stand on, and remove your own camera controls. <a href="/connect.md">The full instructions</a> cover the rest.</p>
 
       <h2>Then</h2>
       <ol>
         <li>Deploy your world wherever you host it.</li>
         <li>Submit its URL with <strong>Submit world</strong> on the <a href="/">WorldMesh homepage</a>. Submissions are reviewed before they appear.</li>
-        <li>Optionally, <a href="/build-a-building">make it a building</a> to stand in for its block in the city.</li>
       </ol>
-
-      <h2>Multiplayer: your choice</h2>
-      <p>WorldMesh gives your world its controls, portals and a place on the hub. Which server lets your visitors see each other is up to you, and you can switch any time:</p>
-      <ol>
-        <li><strong>WorldMesh's free relay.</strong> Pass <code>multiplayer: true</code>. Free within limits: up to 16 people in a world at once, and 240 active minutes per world each day (UTC; only time when someone is moving counts). After that, new visitors are single-player until midnight UTC.</li>
-        <li><strong>Your own relay.</strong> The same relay on your Cloudflare account: <a href="https://deploy.workers.cloudflare.com/?url=https://github.com/eliaswillnat/worldmesh/tree/main/templates/relay">deploy it in one click</a>, then pass <code>multiplayer: { server: 'wss://…' }</code>. Everything works the same, with no daily limit; the traffic is on your account, and the Workers free plan covers most worlds. <a href="https://github.com/eliaswillnat/worldmesh/tree/main/templates/relay">Settings and manual steps</a>.</li>
-        <li><strong>Your own backend.</strong> Already on Nakama, Colyseus, PartyKit, Firebase, Supabase, AWS or a server of your own? Pass a small <code>network</code> adapter instead, and nothing goes through WorldMesh. A few things the relay does for you, such as chat bubbles and “World is full”, are then yours to build. <a href="https://github.com/eliaswillnat/worldmesh/blob/main/docs/compatibility.md#your-own-network-layer">The guide</a> has a complete example.</li>
-      </ol>
-      <div class="compare">
-        <table>
-          <thead>
-            <tr><th scope="col"><span class="note">At a glance</span></th><th scope="col">Free relay</th><th scope="col">Your own relay</th><th scope="col">Your own backend</th></tr>
-          </thead>
-          <tbody>
-              <tr><th scope="row">Your player: controls, camera, portals</th><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-              <tr><th scope="row">Other people's figures, names and avatars</th><td class="yes">✓</td><td class="yes">✓</td><td class="you">Through your adapter</td></tr>
-              <tr><th scope="row">Chat bubbles</th><td class="yes">✓</td><td class="yes">✓</td><td class="you">You build it</td></tr>
-              <tr><th scope="row">Newcomers see everyone straight away</th><td class="yes">✓</td><td class="yes">✓</td><td class="you">You build it</td></tr>
-              <tr><th scope="row">Shared lifts and doors</th><td class="yes">✓</td><td class="yes">✓</td><td class="you">You build it</td></tr>
-              <tr><th scope="row">Fade-ins, footsteps, reconnecting</th><td class="yes">✓</td><td class="yes">✓</td><td class="you">You build it</td></tr>
-              <tr><th scope="row">“World is full” in the world</th><td class="yes">✓</td><td class="yes">✓</td><td class="you">You build it</td></tr>
-              <tr><th scope="row">“World is full” on hub doors</th><td class="yes">✓</td><td class="yes">✓</td><td class="you">Not possible</td></tr>
-              <tr><th scope="row">Setup</th><td><code>multiplayer: true</code></td><td>One click</td><td>A network adapter</td></tr>
-              <tr><th scope="row">Limits</th><td>16 people, 240 min a day</td><td>16 people (adjustable), no daily limit</td><td>Your backend's</td></tr>
-              <tr><th scope="row">Who pays</th><td>WorldMesh</td><td>You</td><td>You</td></tr>
-          </tbody>
-        </table>
-      </div>
 
       <p class="note">Interested in an independent 3D discovery city instead? Read <a href="/build-a-city">Build a city</a> and the <a href="/protocol">protocol overview</a>. Multi-city sign-in and federation are not available yet.</p>
 
       <h2>Good to know</h2>
       <ul>
         <li>Only Three.js worlds can use the runtime. Worlds made with other engines can still be listed if they use the standard controls.</li>
-        <li>See the <a href="/terms">terms</a> and what multiplayer shares in the <a href="/privacy">privacy policy</a>.</li>
+        <li>See the <a href="/terms">terms</a> and the <a href="/privacy">privacy policy</a>.</li>
       </ul>
     </main>
     <script>

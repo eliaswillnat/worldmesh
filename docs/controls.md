@@ -85,10 +85,10 @@ landscape:
 
 | Input | Action |
 | --- | --- |
-| Left half of the screen | Move. A joystick rests in the bottom-left corner; grab it there, or touch anywhere on the left and it comes to your thumb |
-| Drag on the right half | Look |
+| Bottom-left of the screen | Move. A joystick rests in the bottom-left corner; grab it there, or touch anywhere in the bottom-left part of the screen and it comes to your thumb |
+| Drag anywhere else | Look, including the top-left; a second finger while moving looks too |
 | ▲ button | Jump |
-| E button | Interact |
+| E button | Interact (a world can hide it with `ui: { interactButton: false }`) |
 | V button | Toggle first / third person |
 | Bird's-eye button (top right, beside ⏸) | Bird's-eye view, on and off (in worlds that offer it) |
 | ⏸ button (top right) | Pause |

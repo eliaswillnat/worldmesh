@@ -111,6 +111,7 @@ export function createWorldMesh(options: WorldMeshOptions): WorldMeshHandle {
     element: renderer.domElement,
     keymap: options.keymap,
     moveBeforeLock: options.ui?.moveBeforeLock === true,
+    interactButton: options.ui?.interactButton !== false,
     onPointerLockChange: (locked) => {
       overlay.setLocked(locked);
       events.emit('pointer:lock', { locked });
