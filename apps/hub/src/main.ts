@@ -167,9 +167,9 @@ const DEMO_WORLDS: WorldEntry[] = [
 let communityWorlds: WorldEntry[] = communityWorldsStatic as WorldEntry[];
 const ALL_WORLDS: WorldEntry[] = [...communityWorlds, ...DEMO_WORLDS];
 
-/** Lobby doors: community worlds plus the five demos, a building each down the street (demos stay in the gallery too). */
+/** Lobby doors: the five demos first, at the top of the street, then the community worlds (demos stay in the gallery too). */
 function lobbyWorlds(): WorldEntry[] {
-  return ALL_WORLDS;
+  return [...DEMO_WORLDS, ...communityWorlds];
 }
 
 import { accountDialogPending, beforeAccountDialogOpens, getAccountId, initAccount, onAccountChange } from './account';

@@ -13,8 +13,6 @@ export interface CityBlock {
   ring: number;
   /** Where the block stands in the plan. */
   index: number;
-  /** How tall it stands; the default height (avenues.ts) when left out. */
-  height?: number;
   /** The block's footprint, wall to wall (seen from above). */
   minX: number;
   maxX: number;

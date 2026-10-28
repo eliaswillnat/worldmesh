@@ -21,8 +21,6 @@ export interface StreetConfig {
   depth: number;
   /** Buildings on each side, at least, however few worlds there are. */
   minRows: number;
-  /** Heights the buildings take in turn, so the skyline is not one flat line. */
-  heights: number[];
 }
 
 export const STREET: StreetConfig = {
@@ -30,7 +28,6 @@ export const STREET: StreetConfig = {
   frontage: 18,
   depth: 16,
   minRows: 4,
-  heights: [14, 18, 12, 16, 20, 13, 17, 15],
 };
 
 /** Where the visitor arrives: this far before the first buildings, in the middle of the street. */
@@ -47,16 +44,11 @@ export interface StreetPlan extends CityPlan {
   spawn: { x: number; z: number; yaw: number };
 }
 
-/** A building's height, by where it stands: the same building is always the same height. */
-function heightAt(index: number, config: StreetConfig): number {
-  return config.heights[index % config.heights.length];
-}
-
 /** The street with a door for each of `worlds` worlds. */
 export function planStreet(worlds: number, config: StreetConfig = STREET): StreetPlan {
   const rows = Math.max(config.minRows, Math.ceil(worlds / 2));
   const half = config.width / 2;
-  const blocks: Array<CityBlock & { height: number }> = [];
+  const blocks: CityBlock[] = [];
   const slots: CitySlot[] = [];
   for (let row = 0; row < rows; row++) {
     const maxZ = -row * config.frontage;
@@ -71,7 +63,6 @@ export function planStreet(worlds: number, config: StreetConfig = STREET): Stree
         maxX: left ? -half : half + config.depth,
         minZ,
         maxZ,
-        height: heightAt(index, config),
       };
       blocks.push(block);
       if (row * 2 + side >= worlds) continue;
@@ -92,7 +83,6 @@ export function planStreet(worlds: number, config: StreetConfig = STREET): Stree
     maxX: half + config.depth,
     minZ: -length - config.depth,
     maxZ: -length,
-    height: heightAt(blocks.length, config) + 4,
   });
   const reach = Math.hypot(half + config.depth, length + config.depth);
   return {

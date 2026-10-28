@@ -22,13 +22,14 @@ import {
  * corner. No windows, no glass.
  */
 
-/** Height of a block that does not give its own. */
+/** Height of every block. */
 export const BLOCK_HEIGHT = 14;
 /** The cornice round the top: how far it stands out, and how tall it is (as on the drum). */
 const CORNICE_OUT = 0.5;
 const CORNICE_HEIGHT = 1.2;
 /** The corner piers stand a little prouder than the beam, which ends against them, and rise to the cornice. */
 const CORNER_DEPTH = 0.65;
+const CORNER_TOP = BLOCK_HEIGHT - CORNICE_HEIGHT;
 /** The sign's face, just in front of the fascia, inset from its edges. */
 const SIGN_INSET = 0.12;
 
@@ -251,9 +252,9 @@ function slotFrame(slot: CitySlot): Matrix4 {
 
 /**
  * A block's storefronts on all four walls, and a square pier at each corner
- * that both walls' beams end against, rising to `cornerTop`.
+ * that both walls' beams end against.
  */
-function dressBlock(faces: WallFace[], doors: Map<number, FacadeDoor[]>, cornerTop: number, out: Dressing): void {
+function dressBlock(faces: WallFace[], doors: Map<number, FacadeDoor[]>, out: Dressing): void {
   for (const face of faces) dressFace(face, doors.get(face.index) ?? [], STREET_LEVELS, out);
   // Where the walls meet: each wall ends at the corner where the next one begins.
   const corners = faces.map((face, i): [WallFace, number, WallFace, number] => [face, face.length, faces[(i + 1) % faces.length], 0]);
@@ -261,7 +262,7 @@ function dressBlock(faces: WallFace[], doors: Map<number, FacadeDoor[]>, cornerT
     // Along each wall from the corner, and out from both.
     const pier = (face: WallFace, along: number) => {
       const start = along === 0 ? 0 : along - CORNER_HALF;
-      return faceBox(face, start, start + CORNER_HALF, 0, cornerTop, 0, CORNER_DEPTH);
+      return faceBox(face, start, start + CORNER_HALF, 0, CORNER_TOP, 0, CORNER_DEPTH);
     };
     // The square where the two walls' piers would leave a notch, out beyond the corner.
     const [cx, cz] = a.at(alongA, 0);
@@ -274,8 +275,8 @@ function dressBlock(faces: WallFace[], doors: Map<number, FacadeDoor[]>, cornerT
       [cx + (ax + bx) * d, cz + (az + bz) * d],
       [cx + bx * d, cz + bz * d],
     ];
-    const parts = [pier(a, alongA), pier(b, alongB), prismWalls(post, 0, cornerTop)];
-    out.trim.push(...parts, prismRoof(post, cornerTop));
+    const parts = [pier(a, alongA), pier(b, alongB), prismWalls(post, 0, CORNER_TOP)];
+    out.trim.push(...parts, prismRoof(post, CORNER_TOP));
     out.colliders.push(...parts.map((part) => part.clone()));
   }
 }
@@ -310,15 +311,14 @@ export function buildAvenues(
     walls.set(slot.face, [...(walls.get(slot.face) ?? []), { along: slot.along, index, toDoor: slotFrame(slot) }]);
   });
   plan.blocks.forEach((block, index) => {
-    const height = block.height ?? BLOCK_HEIGHT;
     const footprint = blockOutline(block);
-    solid.push(prismWalls(footprint, 0, height - CORNICE_HEIGHT));
+    solid.push(prismWalls(footprint, 0, BLOCK_HEIGHT - CORNICE_HEIGHT));
     const crown = blockOutline(block, CORNICE_OUT);
-    solid.push(prismWalls(crown, height - CORNICE_HEIGHT, height));
-    solid.push(prismRoof(crown, height));
+    solid.push(prismWalls(crown, BLOCK_HEIGHT - CORNICE_HEIGHT, BLOCK_HEIGHT));
+    solid.push(prismRoof(crown, BLOCK_HEIGHT));
     // The roof too, so someone flying over can land on it.
-    const solids: BufferGeometry[] = [prismWalls(footprint, 0, height), prismRoof(crown, height)];
-    dressBlock(blockFaces(block), byWall.get(index) ?? new Map(), height - CORNICE_HEIGHT, { trim, glow, colliders: solids, signs });
+    const solids: BufferGeometry[] = [prismWalls(footprint, 0, BLOCK_HEIGHT), prismRoof(crown, BLOCK_HEIGHT)];
+    dressBlock(blockFaces(block), byWall.get(index) ?? new Map(), { trim, glow, colliders: solids, signs });
     colliders.push(mergeAll(solids));
   });
   return { solid, trim, glow, colliders, signs };

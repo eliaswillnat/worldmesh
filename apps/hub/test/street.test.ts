@@ -81,12 +81,6 @@ describe('street plan', () => {
     for (const block of plan.blocks) expect(inside(block, plan.spawn.x, plan.spawn.z)).toBe(false);
   });
 
-  it('gives the buildings different heights, the same each time', () => {
-    const a = planStreet(10).blocks.map((block) => block.height);
-    const b = planStreet(10).blocks.map((block) => block.height);
-    expect(a).toEqual(b);
-    expect(new Set(a).size).toBeGreaterThan(2);
-  });
 });
 
 describe('block geometry', () => {
@@ -167,12 +161,12 @@ describe('storefront geometry', () => {
     }
   });
 
-  it('builds each building as tall as the plan says, with one collider each', () => {
+  it('builds every building the same default height, with one collider each', () => {
     const built = buildAvenues(plan, plan.slots.length);
     expect(built.colliders).toHaveLength(plan.blocks.length);
-    built.colliders.forEach((collider, i) => {
+    for (const collider of built.colliders) {
       collider.computeBoundingBox();
-      expect(collider.boundingBox!.max.y).toBeCloseTo(plan.blocks[i].height ?? BLOCK_HEIGHT);
-    });
+      expect(collider.boundingBox!.max.y).toBeCloseTo(BLOCK_HEIGHT);
+    }
   });
 });

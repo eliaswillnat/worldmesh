@@ -21,7 +21,6 @@ import {
   Raycaster,
   Scene,
   ShaderMaterial,
-  Vector2,
   Vector3,
   WebGLRenderer,
   type Object3D,
@@ -63,7 +62,7 @@ export interface LobbyOptions {
    * opens no live doors of its own and never travels.
    */
   doorwayView?: boolean;
-  /** Draw the lobby white with dark lines instead of black with light ones. */
+  /** Draw the lobby white instead of black. */
   light?: boolean;
   /** Default-character tint. Forgotten on refresh; only a return from a world restores it. */
   color?: string | null;
@@ -123,9 +122,8 @@ const EXIT_CLEAR = 4;
 const FLOOR_ROUGHNESS = 1;
 
 /**
- * The street's floor: one mirror plane, slightly rough, with paving joints
- * across the street every few metres and a line along each row of
- * buildings, all fading out with distance.
+ * The street's floor: one plain mirror plane, slightly rough, with no lines
+ * on it.
  */
 const floorShader = {
   name: 'WorldMeshStreet',
@@ -133,13 +131,10 @@ const floorShader = {
     color: { value: null },
     tDiffuse: { value: null },
     textureMatrix: { value: null },
-    uPlayer: { value: new Vector2() },
     uLight: { value: 0 },
     uBackground: { value: new Color() },
     uHaze: { value: new Color() },
     uRough: { value: FLOOR_ROUGHNESS },
-    uHalf: { value: 0 },
-    uLength: { value: 0 },
   },
   vertexShader: /* glsl */ `
     uniform mat4 textureMatrix;
@@ -158,21 +153,14 @@ const floorShader = {
   `,
   fragmentShader: /* glsl */ `
     uniform sampler2D tDiffuse;
-    uniform vec2 uPlayer;
     uniform float uLight;
     uniform vec3 uBackground;
     uniform vec3 uHaze;
     uniform float uRough;
-    uniform float uHalf;
-    uniform float uLength;
     varying vec4 vUv;
     varying vec3 vWorld;
 
     #include <logdepthbuf_pars_fragment>
-
-    float line1(float coord, float width) {
-      return 1.0 - min(abs(fract(coord - 0.5) - 0.5) / max(width, 1e-4), 1.0);
-    }
 
     float hash(vec2 p) {
       vec3 q = fract(vec3(p.xyx) * 0.1031);
@@ -229,32 +217,18 @@ const floorShader = {
       float grain = (valueNoise(grainCoord) - 0.5) * grainVisible;
       float rough = ((patches - 0.5) * 0.9 + grain * 1.2) * uRough;
 
-      // Fade out well before the horizon, where dense lines would add up to a bright band.
       float dist = distance(vWorld.xz, cameraPosition.xz);
-      float fade = 1.0 - smoothstep(12.0, 75.0, dist);
-      // Lines light up a little around the player.
-      float glow = 1.0 - smoothstep(0.0, 14.0, distance(vWorld.xz, uPlayer));
-      // On the street: a joint across it every 3 m, from the top of the street to its far end.
-      float onStreet = (1.0 - smoothstep(uHalf - 0.6, uHalf, abs(vWorld.x)))
-        * step(-uLength, vWorld.z) * (1.0 - smoothstep(-0.5, 0.0, vWorld.z));
-      float joints = line1(vWorld.z / 3.0, fwidth(vWorld.z / 3.0)) * 0.1 * onStreet * fade * (1.0 + glow * 1.6);
-      // A line along the foot of each row of buildings, never thinner than two pixels.
-      float edgePixel = max(fwidth(vWorld.x), 1e-4);
-      float edgeHalf = max(0.02, edgePixel);
-      float edge = (1.0 - smoothstep(edgeHalf, edgeHalf + edgePixel, abs(abs(vWorld.x) - uHalf + 0.9)))
-        * step(-uLength, vWorld.z) * step(vWorld.z, 0.0);
-      float lines = max(joints, edge * 0.45);
 
       // A mirror under a tinted glaze: glossier at grazing angles, faint
       // looking straight down. The rough patches take some of the shine off.
       vec3 toCamera = normalize(cameraPosition - vWorld);
       float glaze = clamp(mix(0.78, 0.96, abs(toCamera.y)) + rough * 0.12, 0.0, 1.0);
 
-      // Dark: black stone with light lines. Light: white stone with ink lines.
+      // Dark: black stone. Light: white stone.
       // A faint speckle keeps the black from reading as a flat void.
-      vec3 darkFloor = reflection * (1.0 - glaze) * (1.0 - lines) + vec3(lines) + vec3(max(rough, 0.0) * 0.006);
+      vec3 darkFloor = reflection * (1.0 - glaze) + vec3(max(rough, 0.0) * 0.006);
       darkFloor *= 0.5;
-      vec3 lightFloor = mix(reflection, uBackground * (1.0 - rough * 0.035), glaze) * (1.0 - min(lines * 1.4, 1.0));
+      vec3 lightFloor = mix(reflection, uBackground * (1.0 - rough * 0.035), glaze);
       lightFloor *= 0.8;
 
       // Melt into the fog at the horizon, like everything else.
@@ -467,7 +441,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       }
       walkThrough.update();
       if (world.getViewMode() === 'third' && !renderer.xr.isPresenting) keepCameraOutOfDoorways(feet.set(x, y, z));
-      floorUniforms.uPlayer.value.set(x, z);
       // The sky is centred on the camera, so it stays around it however high they fly.
       sky.position.copy(camera.position);
       updateSky(sky, time);
@@ -477,8 +450,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       if (leavingAt >= 0) updateLens(time - leavingAt);
       // Into a portal, the figure smears through it, not up and down.
       if (appear !== null) setLocalAppear(world.avatar, appear, leavingAt >= 0 && warpDoor ? warpDoor.through(new Vector3()) : undefined);
-      // Keep the finite floor under the player. The joints are drawn in world
-      // space, so moving the plane does not move the lines.
+      // Keep the finite floor under the player. Its roughness is drawn in
+      // world space, so moving the plane does not move it.
       mirror.position.set(Math.round(x / 10) * 10, 0, Math.round(z / 10) * 10);
       // Last, with the camera where it will be drawn from: the worlds seen live through their doors.
       walkThrough.step(camera, feet.set(x, y, z));
@@ -610,10 +583,10 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     aimSpawn();
   }
 
-  /** Look down the street, with the body turned toward the camera. */
+  /** Look down the street, the body facing the same way, its back to the camera. */
   function aimSpawn(): void {
     const yaw = street.spawn.yaw;
-    world.setState({ yaw, facing: yaw + Math.PI });
+    world.setState({ yaw, facing: yaw });
   }
 
   /** The door of the world at `url` (address and path; any query or fragment aside), or null if it has none here. */
@@ -843,8 +816,6 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       collider.updateMatrixWorld(true);
       streetColliders.push(collider);
     }
-    floorUniforms.uHalf.value = street.halfWidth;
-    floorUniforms.uLength.value = street.length;
   }
 
   function dispose(): void {
