@@ -32,8 +32,7 @@ and an action.
 | Hub | https://preview.worldmesh.net |
 | Worlds | https://preview-forest.worldmesh.net, `preview-mars`, `preview-city`, `preview-medieval`, `preview-space` |
 | Admin dashboard | https://preview-admin.worldmesh.net |
-| Multiplayer relay (worlds) | `wss://preview-relay.worldmesh.net` |
-| Multiplayer relay (lobby) | `wss://preview-lobby-relay.worldmesh.net` |
+| Multiplayer relay (worlds and the lobby) | `wss://preview-relay.worldmesh.net` |
 
 The first visit asks for your email and sends a one-time code (Cloudflare
 Access). The login lasts 24 hours across all the preview addresses.

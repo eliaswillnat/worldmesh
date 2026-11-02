@@ -40,7 +40,9 @@ wall, one per listed world, each with its door facing the street. Visitors
 arrive at the top of the street as the default character and walk in through
 any door. Where a world supports it ([Doorway](docs/specs/doorway.md)), its
 door shows the world live, and the world's way back shows the street live.
-Walk mode is single-player and black or white depending on each visitor's own
+Everyone in walk mode sees everyone else: the default figure, in the colour
+they picked, through the presence relay at `wss://relay.worldmesh.net` (the
+`lobby` room). The street is black or white depending on each visitor's own
 light/dark setting. The billboard ad system (`workers/ads`, see
 [docs/advertising.md](docs/advertising.md)) is kept, but the street has no
 screens for it, and the hub ads UI stays off.
@@ -95,7 +97,8 @@ npm run dev:forest
 ```
 
 Open <http://localhost:5170>. Portals between worlds assume all six dev servers
-are running.
+are running. To see other visitors in walk mode locally, also run
+`npm run dev:presence`.
 
 ## Making a Three.js project WorldMesh-compatible
 

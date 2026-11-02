@@ -130,8 +130,8 @@ runs here as two Workers whose `main` points at it:
 
 | Worker | Address | Serves |
 | :--- | :--- | :--- |
-| `worldmesh-lobby` (`workers/lobby`) | `lobby-relay.worldmesh.net` | The hub lobby only. WorldMesh's own city: no daily limit. |
-| `worldmesh-presence` (`workers/presence`) | `relay.worldmesh.net` | World rooms only: the free relay, and the runtime's default server (`DEFAULT_PRESENCE_SERVER`). Daily allowance per world, rate limits, blocklist. |
+| `worldmesh-lobby` (`workers/lobby`) | `lobby-relay.worldmesh.net` | Same code as the presence relay. The hub does not join it. |
+| `worldmesh-presence` (`workers/presence`) | `relay.worldmesh.net` | World rooms, and the hub lobby's named room `lobby`. The runtime's default server (`DEFAULT_PRESENCE_SERVER`). Daily allowance per world (the lobby room has none), rate limits, blocklist. |
 
 1. Deploy both (SQLite-backed Durable Objects and rate limit bindings work on
    the Workers free plan). The Deploy Workers workflow does this on merges;
@@ -144,13 +144,11 @@ runs here as two Workers whose `main` points at it:
    ```
    `workers/lobby` creates its custom domain `lobby-relay.worldmesh.net`
    itself. `relay.worldmesh.net` is set on `worldmesh-presence` in the
-   dashboard (Worker → Settings → Domains & Routes). To point the hub
-   somewhere else, set on **`worldmesh-hub`**:
-   ```env
-   VITE_LOBBY_RELAY_ENDPOINT=wss://lobby-relay.example.com
-   VITE_PRESENCE_ENDPOINT=wss://relay.example.com
-   ```
-   `VITE_PRESENCE_ENDPOINT` is the free relay, as in the world apps.
+   dashboard (Worker → Settings → Domains & Routes). The hub joins
+   `wss://relay.worldmesh.net/room/lobby` unless **`worldmesh-hub`** sets
+   `VITE_PRESENCE_ENDPOINT` (the same variable the world apps use, for example
+   `wss://relay.example.com`). `NAMED_ROOMS` on this Worker must include
+   `lobby` or that room answers 404.
 2. Keep `worldmesh-presence`'s `workers.dev` address switched on.
    `@worldmesh/runtime@0.2.0` has `wss://worldmesh-presence.elias-willnat.workers.dev`
    built in, so worlds still on that version lose multiplayer without it.

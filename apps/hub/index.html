@@ -931,6 +931,44 @@
       html.walking .walk-mark { display: block; }
       html.walking .city-chip { top: calc(max(16px, env(safe-area-inset-top)) + 22px); }
       html.walking[data-walk-theme="light"] .walk-mark { color: rgba(0, 0, 0, 0.55); }
+      .walk-online {
+        position: fixed;
+        top: max(18px, env(safe-area-inset-top));
+        right: max(16px, env(safe-area-inset-right));
+        z-index: 2147483002;
+        display: none;
+        align-items: center;
+        gap: 6px;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        background: none;
+        font: 600 10px/1 "Urbanist", ui-sans-serif, system-ui, sans-serif;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.72);
+        pointer-events: none;
+      }
+      .walk-online::before {
+        content: "";
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: currentColor;
+      }
+      html.walking .walk-online[data-count] { display: flex; }
+      @keyframes online-glow {
+        0% { color: rgba(130, 255, 180, 1); text-shadow: 0 0 6px rgba(130, 255, 180, 0.8); }
+        100% { color: rgba(255, 255, 255, 0.72); text-shadow: none; }
+      }
+      .walk-online.glow { animation: online-glow 1.2s ease-out forwards; }
+      html.walking[data-walk-theme="light"] .walk-online { color: rgba(0, 0, 0, 0.55); }
+      html.walking[data-walk-theme="light"] .walk-online::before { background: currentColor; }
+      html.walking[data-walk-theme="light"] .walk-online.glow { animation-name: online-glow-light; }
+      @keyframes online-glow-light {
+        0% { color: rgba(0, 180, 80, 1); text-shadow: 0 0 6px rgba(0, 180, 80, 0.6); }
+        100% { color: rgba(0, 0, 0, 0.55); text-shadow: none; }
+      }
       /* Phones have no Esc key: the runtime's menu button opens the same pause screen, drawn as a settings gear. */
       html.walking .wm-touch-menu-btn {
         top: max(16px, env(safe-area-inset-top));
@@ -960,6 +998,12 @@
         color: #111;
         background: rgba(255, 255, 255, 0.6);
         border-color: rgba(0, 0, 0, 0.14);
+      }
+      @media (pointer: coarse) {
+        /* The gear takes the corner; the online count sits beside it, level with the WorldMesh mark. */
+        html.walking .walk-online {
+          right: calc(max(16px, env(safe-area-inset-right)) + 58px);
+        }
       }
       @media (pointer: coarse) {
         /* "Tap ⏸ to open the menu" no longer matches the gear. */
@@ -1575,6 +1619,7 @@
       </div>
     </div>
     <p class="walk-mark">WorldMesh</p>
+    <div class="walk-online" id="walk-online" aria-live="polite"></div>
     <div class="walk-theme" role="group" aria-label="Light, dark, or this device">
       <button type="button" data-theme-choice="light">Light</button>
       <button type="button" data-theme-choice="dark">Dark</button>

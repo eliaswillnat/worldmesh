@@ -88,6 +88,14 @@ try {
  * serverless function. Leave unset to skip notifications.
  */
 const NOTIFY_WEBHOOK = import.meta.env.VITE_NOTIFY_WEBHOOK as string | undefined;
+/**
+ * WebSocket base of the presence relay. Walk mode joins its lobby room
+ * (`/room/lobby`). Preview builds set VITE_PRESENCE_ENDPOINT to their own
+ * relay (docs/previews.md); production uses relay.worldmesh.net.
+ */
+const PRESENCE_ENDPOINT =
+  (import.meta.env.VITE_PRESENCE_ENDPOINT as string | undefined) ||
+  (import.meta.env.DEV ? 'ws://localhost:8787' : 'wss://relay.worldmesh.net');
 function getDemoWorldUrl(envKey: string, localPort: number, defaultSubdomain: string): string {
   const envVal = import.meta.env[envKey] as string | undefined;
   if (envVal) return envVal;
@@ -111,7 +119,7 @@ const DEMO_WORLDS: WorldEntry[] = [
     creator: 'Elias Willnat',
     portfolio: 'https://x.com/eliaswillnat',
     categories: ['explore'],
-    tags: ['vr'],
+    tags: ['multiplayer', 'vr'],
     source: 'demo',
   },
   {
@@ -123,7 +131,7 @@ const DEMO_WORLDS: WorldEntry[] = [
     creator: 'Elias Willnat',
     portfolio: 'https://x.com/eliaswillnat',
     categories: ['space'],
-    tags: ['vr'],
+    tags: ['multiplayer', 'vr'],
     source: 'demo',
   },
   {
@@ -135,7 +143,7 @@ const DEMO_WORLDS: WorldEntry[] = [
     creator: 'Elias Willnat',
     portfolio: 'https://x.com/eliaswillnat',
     categories: ['explore'],
-    tags: ['vr'],
+    tags: ['multiplayer', 'vr'],
     source: 'demo',
   },
   {
@@ -147,7 +155,7 @@ const DEMO_WORLDS: WorldEntry[] = [
     creator: 'Elias Willnat',
     portfolio: 'https://x.com/eliaswillnat',
     categories: ['explore'],
-    tags: ['vr'],
+    tags: ['multiplayer', 'vr'],
     source: 'demo',
   },
   {
@@ -159,7 +167,7 @@ const DEMO_WORLDS: WorldEntry[] = [
     creator: 'Elias Willnat',
     portfolio: 'https://x.com/eliaswillnat',
     categories: ['space'],
-    tags: ['vr'],
+    tags: ['multiplayer', 'vr'],
     source: 'demo',
   },
 ];
@@ -172,7 +180,7 @@ function lobbyWorlds(): WorldEntry[] {
   return [...DEMO_WORLDS, ...communityWorlds];
 }
 
-import { accountDialogPending, beforeAccountDialogOpens, getAccountId, initAccount, onAccountChange } from './account';
+import { accountDialogPending, beforeAccountDialogOpens, getAccountId, getUsername, initAccount, onAccountChange } from './account';
 
 initAccount();
 
@@ -380,6 +388,7 @@ if (!DOORWAY_VIEW) recordHubVisit();
 // and the runtime load only when someone asks for it.
 
 const walkToggle = document.querySelector<HTMLButtonElement>('#walk-toggle')!;
+const walkOnline = document.querySelector<HTMLDivElement>('#walk-online')!;
 const walkColors = document.querySelector<HTMLDivElement>('#walk-colors')!;
 /** How long walk mode waits for the full world list before bringing someone out of a world's door. */
 const COMMUNITY_WAIT_MS = 2000;
@@ -477,6 +486,7 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
     ]);
     imported = true;
     if (walkAbandoned) return;
+    walkColor = color && WALK_COLORS.includes(color) ? color : savedWalkColor() ?? randomWalkColor();
     walkRoot = document.createElement('div');
     walkRoot.className = 'walk-root';
     document.body.appendChild(walkRoot);
@@ -487,6 +497,25 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
       from: FROM_WORLD,
       doorwayView: DOORWAY_VIEW,
       light: walkIsLight(),
+      color: walkColor,
+      presenceEndpoint: PRESENCE_ENDPOINT,
+      playerName: getUsername,
+      onPresenceCount: (count) => {
+        const prev = walkOnline.dataset.count != null ? Number(walkOnline.dataset.count) : null;
+        if (count === null) {
+          delete walkOnline.dataset.count;
+          walkOnline.textContent = '';
+          walkOnline.classList.remove('glow');
+        } else {
+          walkOnline.dataset.count = String(count);
+          showWalkOnline();
+          if (prev !== null && count > prev) {
+            walkOnline.classList.remove('glow');
+            void walkOnline.offsetWidth;
+            walkOnline.classList.add('glow');
+          }
+        }
+      },
       onListener: (x, y, z, radius) => lobbyMusic.setListener(x, y, z, radius),
       onEnterWorld: (world, returnTo) => {
         trackClick(world.url);
@@ -501,7 +530,6 @@ async function enterWalkMode(start: import('./walk/lobby').WalkSpot | null = nul
     applyWalkTheme();
     mountPauseActions();
     if (!DOORWAY_VIEW) lobbyMusic.setActive(true);
-    walkColor = color && WALK_COLORS.includes(color) ? color : savedWalkColor() ?? randomWalkColor();
     lobby.setColor(walkColor);
     showWalkColor(walkColor);
     // `from` has been used: a reload starts at the top of the street, as any other.
@@ -552,6 +580,14 @@ function reloadIntoWalk(): boolean {
   return true;
 }
 
+/** "3 online", plus the hub's all-time visits once they have loaded. */
+function showWalkOnline(): void {
+  const count = walkOnline.dataset.count;
+  if (count == null) return;
+  const visits = viewCounts[HUB_VISIT_KEY];
+  walkOnline.textContent = visits ? `${count} online · ${visits.toLocaleString('en')} visits` : `${count} online`;
+}
+
 function exitWalkMode(): void {
   lobbyMusic.setActive(false);
   lobby?.dispose();
@@ -561,6 +597,9 @@ function exitWalkMode(): void {
   document.documentElement.classList.remove('walking', 'walk-ready', 'walk-stalled');
   delete document.documentElement.dataset.walkTheme;
   setThemeColor(null);
+  delete walkOnline.dataset.count;
+  walkOnline.textContent = '';
+  walkOnline.classList.remove('glow');
   history.replaceState(null, '', `${window.location.pathname}${window.location.search}#list`);
   setWalkToggleLabel('Walk between worlds');
 }
@@ -1098,6 +1137,7 @@ function trackClick(url: string): void {
         viewCounts[url] = data.views;
         render();
         lobby?.refreshEntries();
+        showWalkOnline();
       }
     })
     .catch(() => {});
@@ -1114,6 +1154,7 @@ async function fetchViewCounts(urls: string[]): Promise<void> {
     }
     render();
     lobby?.refreshEntries();
+    if (HUB_VISIT_KEY in counts) showWalkOnline();
   } catch {
     // Network or server error — keep existing counts.
   }

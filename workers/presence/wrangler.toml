@@ -1,7 +1,7 @@
 # The free shared relay for independent worlds: relay.worldmesh.net, and the
-# runtime's DEFAULT_PRESENCE_SERVER. World rooms only. The hub's own lobby runs
-# on workers/lobby (same code), so nothing here can use up or take down
-# WorldMesh's city. Limits: docs/compatibility.md#multiplayer.
+# runtime's DEFAULT_PRESENCE_SERVER. World rooms, plus the hub lobby's named
+# room (`/room/lobby`). The lobby has its own cap (MAX_ROOM_PEERS, default 64)
+# and no daily allowance. Limits: docs/compatibility.md#multiplayer.
 # The code is templates/relay, the template anyone deploys as their own relay;
 # the vars below are what make this one WorldMesh's.
 name = "worldmesh-presence"
@@ -9,8 +9,8 @@ main = "../../templates/relay/src/index.ts"
 compatibility_date = "2025-06-01"
 
 [vars]
-# No named rooms here: the lobby moved to workers/lobby.
-NAMED_ROOMS = ""
+# The hub lobby. World rooms stay origin-keyed and cannot land in this name.
+NAMED_ROOMS = "lobby"
 # Each world's room may be active this many minutes per UTC day.
 WORLD_DAILY_MINUTES = "240"
 # WorldMesh's own demo worlds, which WorldMesh pays for: no daily limit.
@@ -55,7 +55,7 @@ routes = [
 workers_dev = false
 
 [env.preview.vars]
-NAMED_ROOMS = ""
+NAMED_ROOMS = "lobby"
 WORLD_DAILY_MINUTES = "240"
 OWN_ORIGINS = "*.worldmesh.net"
 
