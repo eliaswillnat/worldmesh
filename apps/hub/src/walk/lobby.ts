@@ -1,6 +1,7 @@
 import {
   buildTravelUrl,
   createWorldMesh,
+  Presence,
   setAvatarAppear,
   setAvatarColor,
   setStrokeOpacity,
@@ -64,6 +65,15 @@ export interface LobbyOptions {
   doorwayView?: boolean;
   /** Draw the lobby white instead of black. */
   light?: boolean;
+  /**
+   * WebSocket base of the presence relay (`wss://relay.worldmesh.net`). The
+   * lobby joins its `lobby` room. Leave empty to stay single-player.
+   */
+  presenceEndpoint?: string;
+  /** Name shown above this visitor for everyone else; null shows them as a guest. */
+  playerName?: () => string | null;
+  /** Called with how many people are in the lobby, or null while offline. */
+  onPresenceCount?: (count: number | null) => void;
   /** Default-character tint. Forgotten on refresh; only a return from a world restores it. */
   color?: string | null;
   /**
@@ -331,6 +341,8 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
       world.stop();
     },
     entered: (door) => {
+      // The world takes the page: leave the lobby room so this visitor is not still standing in it.
+      presence?.detach();
       const out = door.inFront(RETURN_STEP * door.group.scale.x);
       returnTo = { position: [out.x, door.group.position.y, out.z], yaw: out.yaw };
       if (door.world) options.onEnterWorld?.(door.world, returnTo);
@@ -392,6 +404,27 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
 
   const spawn = (): Vec3Tuple => [street.spawn.x, 0, street.spawn.z];
 
+  // Other visitors, as the default figure in the colour they picked, through the
+  // presence relay's lobby room. Chat, voice, private mode and per-door "world
+  // is full" polling stay out: they need their own UI. A full lobby room still
+  // shows the runtime's "Lobby is full" overlay, because this is the network.
+  const listenerPoint = new Vector3();
+  const presence = options.presenceEndpoint
+    ? new Presence({
+        url: `${options.presenceEndpoint.replace(/\/$/, '')}/room/lobby`,
+        // In a world's lobby portal: everyone shows through it, and nobody sees the visitor.
+        watch: viewOnly,
+        scene,
+        onCount: (count) => options.onPresenceCount?.(count),
+        getName: () => options.playerName?.() ?? null,
+        getColor: () => color,
+        // No imported characters: everyone is the default figure.
+        showAvatars: false,
+        // Everyone else's footsteps, jumps and landings, heard from where we stand.
+        listener: viewOnly ? undefined : () => listenerPoint.fromArray(world.getState().position),
+      })
+    : undefined;
+
   const world = createWorldMesh({
     footsteps: !viewOnly,
     scene,
@@ -415,6 +448,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
     movement: { walkSpeed: 10.4, sprintSpeed: 18 },
     // Nothing in the street to interact with: no E button on touch screens.
     ui: { title: 'WorldMesh', badge: false, crosshair: false, deferLockPanel: true, moveBeforeLock: true, interactButton: false },
+    network: presence,
     colliders: () => [
       ground,
       ...(exitDoor ? [exitDoor.face] : []),
@@ -501,6 +535,7 @@ export function createLobby(container: HTMLElement, options: LobbyOptions): Lobb
   /** Into a world: flash, then go to its own URL. `spot` is where to come back out. */
   function travel(target: DoorWorld, spot: WalkSpot, door: Door): void {
     if (warping) return;
+    presence?.detach();
     warping = true;
     leavingAt = time;
     playWarpSound(false);

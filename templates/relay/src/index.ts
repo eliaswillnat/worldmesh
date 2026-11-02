@@ -51,9 +51,9 @@ import { chatRejection } from './chatFilter';
  *
  * This directory (templates/relay) is also the one-click template anyone can
  * deploy as their own relay (README.md). WorldMesh runs the same code as two
- * Workers: workers/lobby (the hub's own lobby, named rooms only) and
- * workers/presence (relay.worldmesh.net, the free relay for independent
- * worlds, world rooms only). The vars below say which, and set the room caps.
+ * Workers: workers/presence (relay.worldmesh.net, the free relay: world rooms,
+ * plus the hub lobby's named room) and workers/lobby (a separate named-room
+ * relay the hub no longer joins). The vars below say which, and set the room caps.
  * On the free relay each world has a daily allowance of active minutes; past
  * it, new visitors get 429 and stay single-player until the next UTC day.
  * A relay can also serve only the worlds in ALLOWED_ORIGINS; others get 403.

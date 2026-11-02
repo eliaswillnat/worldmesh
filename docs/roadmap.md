@@ -10,8 +10,8 @@
 - A tiny optional `worldmesh.json` manifest convention.
 - Hub walk mode: the directory as one street, a default building per world
   standing wall to wall down both sides, each with a door that shows its
-  world live where the world supports it. Single-player, with the default
-  character.
+  world live where the world supports it. Other visitors show as the default
+  character, in the colour they picked, through the presence relay.
 
 - Optional accounts (Google, Apple, GitHub, Discord via Better Auth on D1) with a one-time
   username, and a minimal ActivityPub foundation: creators are followable as

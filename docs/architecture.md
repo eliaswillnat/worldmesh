@@ -121,15 +121,17 @@ cheap: rooms with nobody in them, or where nobody moves (clients send only a
 keep-alive the relay answers without waking the room), hibernate and cost
 nothing.
 
-The hub's own lobby no longer uses it (October 2026: the lobby is a
-single-player street). The relay below still serves worlds that already pass
-`multiplayer`, but the connect instructions no longer offer it. WorldMesh
-offered a bounded free relay to everyone else, so third-party growth cannot become an open-ended bill or
-take the hub down:
+The hub lobby joins the named room `lobby` on that same relay
+(`wss://relay.worldmesh.net/room/lobby`): other visitors appear as the default
+figure, in the colour they picked. `workers/presence` lists `lobby` in
+`NAMED_ROOMS`. `workers/lobby` (`lobby-relay.worldmesh.net`) is the same code
+and is not what the hub joins. The connect instructions do not offer
+multiplayer. WorldMesh offers a bounded free relay to everyone else, so
+third-party growth stays a bounded bill:
 
-- the hub lobby runs on its own Worker (`workers/lobby`, `lobby-relay.worldmesh.net`),
-  separate from the free relay for independent worlds (`workers/presence`,
-  `relay.worldmesh.net`, the runtime's default). Same code, different config;
+- the hub lobby is a named room on the free relay (`workers/presence`,
+  `relay.worldmesh.net`, the runtime's default), with its own cap and no daily
+  allowance. World rooms stay origin-keyed and cannot land in that name;
 - on the free relay a world's room holds 16 people and may be active 240
   minutes a day; named rooms are an allowlist, joins and reads are rate
   limited per IP, origins can be blocked, and occupancy reads are cached at
