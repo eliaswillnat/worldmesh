@@ -223,8 +223,8 @@ database: the first deploy, or after "Tear down the preview completely".
   what the world can do in a doorway. Each world also needs an Access login
   for its own address before it can load in a frame, as the login can't be
   shown there: open it once (walking in through its door travels there the
-  usual way), and for 24 hours that door is live. Leniverse needs neither:
-  it's public. On worldmesh.net the demo worlds are public too.
+  usual way), and for 24 hours that door is live. Public community worlds need
+  neither. On worldmesh.net the demo worlds are public too.
 - **The views and screenshot Workers are public on `workers.dev`.** They hold only
   preview view counts and covers.
 - **Production builds the same commit with production settings.** Endpoints are
