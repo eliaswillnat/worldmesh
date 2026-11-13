@@ -30,7 +30,7 @@ import communityWorldsJson from './community.json';
 import { createLobbyMusic } from './music/player';
 
 /**
- * Dev only: VITE_DEV_WORLD_ORIGINS="https://leniverse.com=http://localhost:3000,…"
+ * Dev only: VITE_DEV_WORLD_ORIGINS="https://example.com=http://localhost:3000,…"
  * points listed worlds at local servers (same path and query), to try a
  * world's changes in the lobby.
  */
